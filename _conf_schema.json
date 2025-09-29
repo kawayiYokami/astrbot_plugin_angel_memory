@@ -1,0 +1,30 @@
+{
+  "min_message_length": {
+    "type": "int",
+    "title": "最小消息长度",
+    "description": "触发记忆处理的最小消息字符数",
+    "default": 5,
+    "hint": "过滤过短的消息，提高记忆质量"
+  },
+  "short_term_memory_capacity": {
+    "type": "int",
+    "title": "短期记忆容量倍数",
+    "description": "短期记忆通道的容量倍数",
+    "default": 1,
+    "hint": "设置为2则容量翻倍，设置为3则容量变为3倍"
+  },
+  "sleep_interval": {
+    "type": "int",
+    "title": "睡眠间隔",
+    "description": "记忆巩固（睡眠）的执行间隔，单位为秒",
+    "default": 3600,
+    "hint": "默认1小时执行一次记忆巩固，设置为0则禁用定期睡眠"
+  },
+  "provider_id": {
+    "type": "string",
+    "title": "记忆整理LLM提供商ID",
+    "description": "用于记忆整理的LLM提供商ID，建议为快速的小模型",
+    "default": "",
+    "hint": "留空则只召回记忆不进行整理，填写提供商ID则会调用LLM进行记忆筛选和整理"
+  }
+}

@@ -1,0 +1,5 @@
+name: astrbot_plugin_angel_memory
+description: 基于双层认知架构的AI记忆系统插件，为AstrBot提供记忆能力
+author: kawayiYokami
+version: 1.0.0
+repo: https://github.com/kawayiYokami/astrbot_plugin_angel_memory
