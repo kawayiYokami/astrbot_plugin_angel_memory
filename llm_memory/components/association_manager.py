@@ -5,13 +5,13 @@
 关联关系现在存储在每个记忆对象的内部关联字段中，而非独立的记忆类型。
 """
 
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional
 from itertools import combinations
 
+# 导入日志记录器
+from astrbot.api import logger
 from .vector_store import VectorStore
 from ..models.data_models import BaseMemory
-from ...core.logger import get_logger
-
 
 class AssociationManager:
     """
@@ -21,17 +21,19 @@ class AssociationManager:
     现在通过操作记忆内部的关联字段来实现关联功能，而非创建独立的关联对象。
     """
 
-    def __init__(self, vector_store: VectorStore):
+    def __init__(self, main_collection, vector_store: VectorStore):
         """
         初始化关联管理器。
 
         Args:
-            vector_store: VectorStore 实例
+            main_collection: 用于操作的主集合实例
+            vector_store: VectorStore 实例 (用于重新生成嵌入等)
         """
+        self.collection = main_collection
         self.vector_store = vector_store
 
         # 设置日志记录器
-        self.logger = get_logger()
+        self.logger = logger
 
     def reinforce_association(self, memory_ids: List[str]):
         """
@@ -50,7 +52,7 @@ class AssociationManager:
         memories = []
         for memory_id in memory_ids:
             try:
-                memory_results = self.vector_store.collection.get(ids=[memory_id])
+                memory_results = self.collection.get(ids=[memory_id])
                 if memory_results and memory_results['metadatas']:
                     memory_data = memory_results['metadatas'][0]
                     memory_obj = BaseMemory.from_dict(memory_data)
@@ -99,7 +101,7 @@ class AssociationManager:
         """
         try:
             # 获取源记忆
-            memory_results = self.vector_store.collection.get(ids=[id1])
+            memory_results = self.collection.get(ids=[id1])
             if not memory_results or not memory_results['metadatas']:
                 self.logger.warning(f"记忆 {id1} 不存在，无法建立关联")
                 return
@@ -128,7 +130,7 @@ class AssociationManager:
         """
         try:
             # 获取记忆的完整信息
-            current_data = self.vector_store.collection.get(ids=[memory.id])
+            current_data = self.collection.get(ids=[memory.id])
             if not current_data or not current_data['metadatas']:
                 self.logger.warning(f"记忆 {memory.id} 不存在，无法更新关联")
                 return
@@ -149,7 +151,7 @@ class AssociationManager:
             current_meta['associations'] = json.dumps(memory.associations) if memory.associations else "{}"
 
             # 重新存储
-            self.vector_store.collection.upsert(
+            self.collection.upsert(
                 ids=[memory.id],
                 embeddings=[current_embedding],
                 metadatas=[current_meta],
@@ -172,7 +174,7 @@ class AssociationManager:
         """
         try:
             # 获取指定记忆的关联信息
-            memory_results = self.vector_store.collection.get(ids=[memory_id])
+            memory_results = self.collection.get(ids=[memory_id])
             if not memory_results or not memory_results['metadatas']:
                 return []
 
@@ -188,7 +190,7 @@ class AssociationManager:
             associated_memories = []
             for assoc_id in strong_associations.keys():
                 try:
-                    assoc_results = self.vector_store.collection.get(ids=[assoc_id])
+                    assoc_results = self.collection.get(ids=[assoc_id])
                     if assoc_results and assoc_results['metadatas']:
                         assoc_memory = BaseMemory.from_dict(assoc_results['metadatas'][0])
                         associated_memories.append(assoc_memory)
@@ -215,7 +217,7 @@ class AssociationManager:
         """
         try:
             # 获取第一个记忆的关联信息
-            memory_results = self.vector_store.collection.get(ids=[id1])
+            memory_results = self.collection.get(ids=[id1])
             if not memory_results or not memory_results['metadatas']:
                 return None
 
@@ -239,7 +241,7 @@ class AssociationManager:
         """
         try:
             # 获取所有记忆
-            all_results = self.vector_store.collection.get()
+            all_results = self.collection.get()
             if not all_results or not all_results['metadatas']:
                 return
 
@@ -271,7 +273,7 @@ class AssociationManager:
                         current_embedding = self.vector_store.embedding_model.encode(semantic_core).tolist()
 
                     # 更新存储
-                    self.vector_store.collection.upsert(
+                    self.collection.upsert(
                         ids=[memory_id],
                         embeddings=[current_embedding],
                         metadatas=[metadata],

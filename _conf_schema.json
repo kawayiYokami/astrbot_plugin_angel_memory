@@ -26,5 +26,26 @@
     "description": "用于记忆整理的LLM提供商ID，建议为快速的小模型",
     "default": "",
     "hint": "留空则只召回记忆不进行整理，填写提供商ID则会调用LLM进行记忆筛选和整理"
+  },
+  "note_search_token_limit": {
+    "type": "int",
+    "title": "笔记检索token限制",
+    "description": "AI挑选笔记的时候，一次挑出多少内容",
+    "default": 10000,
+    "hint": "根据AI模型的上下文长度设置，建议8000-16000之间"
+  },
+  "small_model_note_budget": {
+    "type": "int",
+    "title": "潜意识模型Token预算",
+    "description": "小模型用于笔记选择的Token预算",
+    "default": 8000,
+    "hint": "建议设为8000-12000之间"
+  },
+  "large_model_note_budget": {
+    "type": "int",
+    "title": "应答模型Token预算",
+    "description": "大模型用于笔记上下文的Token预算",
+    "default": 12000,
+    "hint": "建议设为8000-16000之间"
   }
 }

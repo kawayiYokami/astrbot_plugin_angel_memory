@@ -5,46 +5,66 @@ DeepMind核心模块
 """
 
 import time
-import re
 import json
-import os
 import threading
-from typing import List, Dict, Any, Optional, Tuple
-from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.provider import ProviderRequest, LLMResponse
+from typing import List, Dict, Any, Optional
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.provider import ProviderRequest
 
 from ..llm_memory import CognitiveService
-from ..llm_memory.models.data_models import BaseMemory
 from ..llm_memory.utils.json_parser import JsonParser
-from ..llm_memory.config.system_config import MemorySystemConfig
 from .session_memory import SessionMemoryManager
-from .utils import SmallModelPromptBuilder, MemoryInjector
-from .logger import get_logger
+from .utils import SmallModelPromptBuilder, MemoryInjector, MemoryIDResolver
+from astrbot.api import logger
 
 
 class DeepMind:
-    """DeepMind记忆整理核心类"""
+    """DeepMind记忆整理核心类
 
-    def __init__(self, config: MemorySystemConfig, context, provider_id: str = ""):
+    负责实现双层认知架构中的意识层，处理整个记忆工作流：
+    - 观察阶段：事件驱动记忆召回
+    - 回忆阶段：筛选并注入相关记忆
+    - 反馈阶段：更新记忆网络权重
+    - 睡眠阶段：定期巩固和优化记忆
+
+    相比底层llm_memory系统，DeepMind主要负责会话级别的记忆管理、
+    记忆筛选逻辑、以及用户事件响应。
+
+    设计原则：
+    1. 插件级别仅处理会话状态和配置
+    2. 记忆存储和索引交给llm_memory子系统
+    3. 错误容忍机制确保不影响主流程
+    4. 通过provider_id开关决定是否使用LLM进行记忆整理
+    """
+
+    def __init__(self, config, context, vector_store, note_service, provider_id: str = ""):
         """
         初始化DeepMind
 
         Args:
             config: 配置管理器
             context: AstrBot上下文对象
+            vector_store: 共享的VectorStore实例
+            note_service: 笔记服务实例
             provider_id: LLM提供商ID，留空则跳过记忆整理
         """
         self.config = config
         self.memory_system: Optional[CognitiveService] = None
+        self.note_service = note_service
         self.context = context
+        self.vector_store = vector_store
         self.provider_id = provider_id
         # 从全局容器获取logger
-        self.logger = get_logger()
+        self.logger = logger
         self.json_parser = JsonParser()
+
+        # 获取配置值
+        self.min_message_length = getattr(config, 'min_message_length', 5)
+        self.short_term_memory_capacity = getattr(config, 'short_term_memory_capacity', 1.0)
 
         # 初始化短期记忆管理器
         self.session_memory_manager = SessionMemoryManager(
-            capacity_multiplier=getattr(config, 'short_term_memory_capacity', 1)
+            capacity_multiplier=self.short_term_memory_capacity
         )
 
         # 初始化工具类
@@ -58,10 +78,10 @@ class DeepMind:
         # 初始化记忆系统
         self._init_memory_system()
 
-    def _init_memory_system(self):
+    def _init_memory_system(self) -> None:
         """初始化记忆系统"""
         try:
-            self.memory_system = CognitiveService()
+            self.memory_system = CognitiveService(vector_store=self.vector_store)
             self.logger.info("Memory system initialized successfully")
 
             # 初始化时执行一次睡眠
@@ -101,8 +121,8 @@ class DeepMind:
         message_text = message_text.strip()
 
         # 检查最小消息长度
-        if len(message_text) < getattr(self.config, 'min_message_length', 5):
-            self.logger.debug(f"消息被过滤: 长度过短 ({len(message_text)} < {getattr(self.config, 'min_message_length', 5)})")
+        if len(message_text) < self.min_message_length:
+            self.logger.debug(f"消息被过滤: 长度过短 ({len(message_text)} < {self.min_message_length})")
             return False
 
         # 忽略纯指令消息（以/开头）
@@ -134,6 +154,9 @@ class DeepMind:
                 except (json.JSONDecodeError, KeyError):
                     self.logger.warning(f"Failed to parse angelheart_context for session {session_id}")
 
+            # 初始化 user_list 为空列表
+            user_list = []
+
             # 如果没有对话记录，使用当前消息文本
             if not chat_records:
                 message_text = self._extract_message_text(event)
@@ -142,31 +165,54 @@ class DeepMind:
                # 2. 格式化对话历史为查询字符串
                query, user_list = self.prompt_builder.format_chat_records(chat_records)
 
-            # 3. 使用格式化的查询进行链式回忆
-            memories = self.memory_system.chained_recall(query=query)
-
-            # 4. 将召回的记忆加入短期记忆
-            self.session_memory_manager.add_memories_to_session(session_id, memories)
-
-            # 5. 从短期记忆中获取记忆
+            # 3. 读取主意识的短期记忆（供其他模块参考，不进行长期记忆召回）
             session_memories = self.session_memory_manager.get_session_memories(session_id)
 
-            # 6. 转换为JSON格式
+            # 4. 转换为JSON格式
             memories_json = self._session_memories_to_json(session_memories)
 
             # 注入到事件中（使用angelmemory_context）
             event.angelmemory_context = json.dumps({
                 'memories': memories_json,
-                'recall_query': query,
+                'recall_query': query,  # 保留查询字符串供后续使用
                 'recall_time': time.time(),
                 'session_id': session_id,
-                'user_list': user_list  # 将新生成的“用户清单”存入上下文
+                'user_list': user_list  # 将新生成的"用户清单"存入上下文
             })
 
-            self.logger.info(f"Memory recall completed for session {session_id}: recalled {len(session_memories)} memories")
+            self.logger.info(f"读取短期记忆：{len(session_memories)}条（供其他模块参考）")
+
+            # debug级别显示具体记忆内容
+            if session_memories:
+                memory_summaries = [f'"{m.judgment}"' for m in session_memories[:3]]
+                self.logger.debug(f"短期记忆详情：{', '.join(memory_summaries)}{'...' if len(session_memories) > 3 else ''}")
 
         except Exception as e:
             self.logger.error(f"Memory recall failed for session {session_id}: {e}")
+
+    def _extract_core_topic(self, event: AstrMessageEvent) -> str:
+        """
+        从天使之心上下文中提取核心话题
+
+        Args:
+            event: 消息事件
+
+        Returns:
+            核心话题字符串，如果没有则返回空字符串
+        """
+        try:
+            if hasattr(event, 'angelheart_context'):
+                angelheart_data = json.loads(event.angelheart_context)
+                secretary_decision = angelheart_data.get('secretary_decision', {})
+                core_topic = secretary_decision.get('topic', '')
+
+                if core_topic and core_topic.strip():
+                    self.logger.info(f"识别到核心话题用于笔记检索: {core_topic}")
+                    return core_topic.strip()
+        except (json.JSONDecodeError, KeyError) as e:
+            self.logger.debug(f"无法提取核心话题: {e}")
+
+        return ""
 
     async def organize_and_inject_memories(self, event: AstrMessageEvent, request: ProviderRequest):
         """
@@ -188,16 +234,47 @@ class DeepMind:
             context_data = json.loads(event.angelmemory_context)
             session_id = context_data['session_id']
             query = context_data.get('recall_query', '')
-            user_list = context_data.get('user_list', [])  # 从上下文中恢复“用户清单”
+            user_list = context_data.get('user_list', [])  # 从上下文中恢复"用户清单"
         except (json.JSONDecodeError, KeyError):
             return
 
-        # 从短期记忆获取记忆
-        session_memories = self.session_memory_manager.get_session_memories(session_id)
+        # 使用链式召回从长期记忆检索相关记忆
+        long_term_memories = self.memory_system.chained_recall(query=query, per_type_limit=7, final_limit=7)
+
+        # 获取 secretary_decision 信息
+        secretary_decision = {}
+        try:
+            if hasattr(event, 'angelheart_context'):
+                angelheart_data = json.loads(event.angelheart_context)
+                secretary_decision = angelheart_data.get('secretary_decision', {})
+        except (json.JSONDecodeError, KeyError):
+            self.logger.debug("无法获取 secretary_decision 信息")
 
         try:
+            # 优先使用天使之心核心话题进行笔记检索
+            note_query = self._extract_core_topic(event)
+            if not note_query or note_query.strip() == "":
+                # 如果没有核心话题，回退使用聊天记录查询
+                note_query = query
+                self.logger.debug(f"未找到核心话题，使用聊天记录查询: {note_query}")
+            else:
+                self.logger.info(f"使用核心话题进行笔记检索: {note_query}")
+
+            # 获取候选笔记（用于小模型的选择）
+            candidate_notes = self.note_service.search_notes_by_token_limit(
+                query=note_query,
+                max_tokens=self.config.small_model_note_budget,  # 使用配置的Token预算
+                recall_count=50  # 提供足够多的候选片段供选择
+            )
+
+            # 创建短ID到完整ID的映射（用于后续上下文扩展）
+            note_id_mapping = {}
+            for note in candidate_notes:
+                short_id = MemoryIDResolver.generate_short_id(note['id'])
+                note_id_mapping[short_id] = note['id']
+
             # 构建小模型提示词
-            prompt = self.prompt_builder.build_memory_prompt(query, session_memories, user_list)
+            prompt = self.prompt_builder.build_memory_prompt(query, long_term_memories, user_list, candidate_notes, secretary_decision)
 
             # 输出小模型的请求内容
             self.logger.debug(f"Small model request content for session {session_id}:\n{prompt}")
@@ -221,24 +298,40 @@ class DeepMind:
             # 输出小模型的原始响应
             self.logger.info(f"Small model raw response for session {session_id}:\n{response_text}")
 
-            # 解析结构化输出
-            feedback_data = self.json_parser.parse_llm_response(response_text)
-            self.logger.debug(f"Parsed feedback_data type: {type(feedback_data)}, value: {feedback_data}")
+            # 解析完整的结构化输出
+            full_json_data = self.json_parser._safe_extract_json(response_text)
+            self.logger.debug(f"Parsed full_json_data: {full_json_data}")
 
-            if feedback_data is None:
-                self.logger.error(f"JSON parsing failed for session {session_id}")
+            if not isinstance(full_json_data, dict):
+                self.logger.error(f"JSON parsing failed or did not return a dict for session {session_id}")
                 return
 
-            # 确保 feedback_data 是字典
+            # 分别提取 useful_notes 和 feedback_data
+            useful_note_short_ids = full_json_data.get('useful_notes', [])
+            feedback_data = full_json_data.get('feedback_data', {})
+
             if not isinstance(feedback_data, dict):
                 self.logger.error(f"feedback_data is not a dict, it's {type(feedback_data)}: {feedback_data}")
-                return
+                feedback_data = {} # 安全降级
 
-            # ID解析：将短ID转换为完整ID
+            # ID解析：将短ID转换为完整ID (现在作用于 feedback_data)
             if 'useful_memory_ids' in feedback_data:
-                feedback_data['useful_memory_ids'] = self._resolve_memory_ids(
-                    feedback_data['useful_memory_ids'],
-                    session_memories
+                feedback_data['useful_memory_ids'] = MemoryIDResolver.resolve_memory_ids(
+                    feedback_data.get('useful_memory_ids', []),
+                    long_term_memories,
+                    self.logger
+                )
+
+            # 处理选中的笔记ID，进行上下文扩展 (现在作用于顶层提取的 useful_note_short_ids)
+            note_context = ""
+            if useful_note_short_ids:
+                # 进行上下文扩展
+                from .utils.note_context_builder import NoteContextBuilder
+                note_context = NoteContextBuilder.expand_context_from_note_ids(
+                    useful_note_short_ids,
+                    self.note_service,
+                    self.config.large_model_note_budget,  # 使用配置的Token预算
+                    note_id_mapping  # 传递短ID到完整ID的映射
                 )
 
             # 将反馈数据保存到事件中，供后续更新使用
@@ -247,12 +340,21 @@ class DeepMind:
                 'session_id': session_id
             }
 
-            # 注入有用的记忆到提示词
-            memory_context = self.memory_injector.format_memories_for_prompt(feedback_data, session_memories)
-            if memory_context:
+            # 4. 从短期记忆推送给主意识（潜意识筛选后的精选记忆）
+            short_term_memories = self.session_memory_manager.get_session_memories(session_id)
+            memory_context = self.memory_injector.format_fifo_memories_for_prompt(short_term_memories)
+            if memory_context or note_context:
+                combined_context = ""
+                if memory_context:
+                    combined_context += memory_context
+                if note_context:
+                    if combined_context:
+                        combined_context += "\n\n---\n\n"
+                    combined_context += f"相关笔记上下文：\n{note_context}"
+
                 request.system_prompt = self.memory_injector.inject_into_system_prompt(
                     request.system_prompt,
-                    memory_context
+                    combined_context
                 )
 
             # 更新长期记忆系统
@@ -260,34 +362,9 @@ class DeepMind:
             new_memories_raw = feedback_data.get('new_memories', {})
             merge_groups_raw = feedback_data.get('merge_groups', [])
 
-            # 转换 new_memories 格式：从字典（按类型分组）转换为列表
-            new_memories = []
-            if isinstance(new_memories_raw, dict):
-                for memory_type, memories in new_memories_raw.items():
-                    if isinstance(memories, list):
-                        for memory in memories:
-                            # 检查 memory 是否是字典
-                            if not isinstance(memory, dict):
-                                self.logger.warning(f"Skipping non-dict memory in {memory_type}: {type(memory)} - {memory}")
-                                continue
-                            # 添加类型字段
-                            memory['type'] = memory_type
-                            new_memories.append(memory)
-            elif isinstance(new_memories_raw, list):
-                # 如果已经是列表，直接使用
-                new_memories = new_memories_raw
-
-            self.logger.debug(f"Converted new_memories: {new_memories}")
-
-            # 转换 merge_groups 格式：从对象列表提取 ids 字段
-            merge_groups = []
-            if isinstance(merge_groups_raw, list):
-                for group in merge_groups_raw:
-                    if isinstance(group, dict) and 'ids' in group:
-                        merge_groups.append(group['ids'])
-                    elif isinstance(group, list):
-                        # 如果已经是列表格式，直接使用
-                        merge_groups.append(group)
+            # 使用 MemoryIDResolver 处理数据格式转换
+            new_memories = MemoryIDResolver.normalize_new_memories_format(new_memories_raw, self.logger)
+            merge_groups = MemoryIDResolver.normalize_merge_groups_format(merge_groups_raw)
 
             if useful_memory_ids or new_memories or merge_groups:
                 # 调用 feedback（不传 query 参数）
@@ -298,12 +375,20 @@ class DeepMind:
                     merge_groups=merge_groups
                 )
 
-                # 更新短期记忆：重新召回并添加到会话
-                # 这样可以确保短期记忆中包含最新的记忆
-                updated_memories = self.memory_system.chained_recall(query=query)
-                self.session_memory_manager.add_memories_to_session(session_id, updated_memories)
+                # 3.2 把潜意识筛选的有用记忆加入短期记忆
+                if useful_memory_ids:
+                    useful_long_term_memories = []
+                    for memory_id in useful_memory_ids:
+                        for memory in long_term_memories:
+                            if memory.id == memory_id:
+                                useful_long_term_memories.append(memory)
+                                break
 
-            self.logger.info(f"Memory organization completed for session {session_id}: injected {len(feedback_data.get('useful_memory_ids', []))} useful memories")
+                    if useful_long_term_memories:
+                        self.session_memory_manager.add_memories_to_session(session_id, useful_long_term_memories)
+                        self.logger.debug(f"潜意识筛选：{len(useful_long_term_memories)}条有用记忆进入短期记忆")
+
+            self.logger.info(f"记忆整理完成（会话 {session_id}）：潜意识筛选出 {len(feedback_data.get('useful_memory_ids', []))} 条有用记忆进入短期记忆")
 
         except Exception as e:
             import traceback
@@ -349,13 +434,13 @@ class DeepMind:
 
         return f"{sender_id}_{group_id}"
 
-    def _session_memories_to_json(self, memories: List) -> List[Dict[str, Any]]:
-        """将短期记忆对象转换为JSON格式"""
+    def _base_memories_to_json(self, memories: List) -> List[Dict[str, Any]]:
+        """将BaseMemory对象转换为JSON格式"""
         memories_json = []
         for memory in memories:
             memory_data = {
                 'id': memory.id,
-                'type': memory.type,
+                'type': memory.memory_type.value,
                 'strength': memory.strength,
                 'judgment': memory.judgment,
                 'reasoning': memory.reasoning,
@@ -365,30 +450,24 @@ class DeepMind:
 
         return memories_json
 
-    def _resolve_memory_ids(self, short_ids: List[str], memories: List) -> List[str]:
-        """
-        将短ID转换为完整ID
+    def _session_memories_to_json(self, memories: List) -> List[Dict[str, Any]]:
+        """将短期记忆对象转换为JSON格式"""
+        memories_json = []
+        for memory in memories:
+            memory_data = {
+                'id': memory.id,
+                'type': memory.memory_type.value,
+                'strength': memory.strength,
+                'judgment': memory.judgment,
+                'reasoning': memory.reasoning,
+                'tags': memory.tags
+            }
+            memories_json.append(memory_data)
 
-        Args:
-            short_ids: 短ID列表（如 ["a1b2c3", "d4e5f6"]）
-            memories: 记忆列表
+        return memories_json
 
-        Returns:
-            完整ID列表
-        """
-        resolved_ids = []
 
-        for short_id in short_ids:
-            # 在记忆中查找匹配的完整ID
-            for memory in memories:
-                if memory.id.startswith(short_id):
-                    resolved_ids.append(memory.id)
-                    break
-            else:
-                # 如果没有找到匹配的ID，记录警告但继续处理
-                self.logger.warning(f"未找到匹配的完整ID: {short_id}")
-
-        return resolved_ids
+    # _resolve_memory_ids 方法已移至 MemoryIDResolver 类中
 
     def _sleep(self):
         """执行记忆巩固（睡眠）"""
@@ -406,7 +485,7 @@ class DeepMind:
         if not self.is_enabled():
             return
 
-        sleep_interval = self.config.consolidation_interval_hours * 3600  # 转换为秒
+        sleep_interval = self.config.sleep_interval  # 该属性已经是秒
         if sleep_interval <= 0:
             return
 

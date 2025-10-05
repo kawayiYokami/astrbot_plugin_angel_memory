@@ -1,0 +1,3 @@
+pywebio>=1.8.0
+chromadb>=0.4.0
+sentence-transformers>=2.2.0

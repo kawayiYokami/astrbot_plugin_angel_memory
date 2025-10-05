@@ -10,7 +10,6 @@ LLM记忆系统的数据模型 - 统一的三元组记忆体系。
 - 情感记忆：存储"AI感觉怎么样"
 """
 
-from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
 import uuid
@@ -124,7 +123,7 @@ class BaseMemory:
 
         # 验证必需字段
         if "id" not in data:
-            raise ValidationError(f"缺少必需字段: id")
+            raise ValidationError("缺少必需字段: id")
 
         # 解析memory_type
         memory_type_str = data.get("memory_type")

@@ -9,13 +9,12 @@ from typing import List, Optional, Dict
 import random
 import time
 from collections import defaultdict
-from datetime import datetime
 
+# 导入日志记录器
+from astrbot.api import logger
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
 from ..components.association_manager import AssociationManager
 from ..config.system_config import system_config
-from ...core.logger import get_logger
-
 
 class MemoryManager:
     """
@@ -25,17 +24,19 @@ class MemoryManager:
     这些功能不直接与特定记忆类型绑定，而是处理记忆的通用行为。
     """
 
-    def __init__(self, vector_store, association_manager: AssociationManager):
+    def __init__(self, main_collection, vector_store, association_manager: AssociationManager):
         """
         初始化记忆管理器。
 
         Args:
-            vector_store: 向量存储实例
+            main_collection: 用于操作的主集合实例
+            vector_store: 向量存储实例 (用于调用 recall, update_memory 等高级方法)
             association_manager: 关联管理器实例
         """
+        self.collection = main_collection
         self.store = vector_store
         self.association_manager = association_manager
-        self.logger = get_logger()
+        self.logger = logger
 
     # ===== 记忆巩固和强化 =====
 
@@ -54,11 +55,11 @@ class MemoryManager:
 
         try:
             # 将所有新鲜记忆转变为已巩固记忆
-            fresh_results = self.store.collection.get(where={"is_consolidated": False})
+            fresh_results = self.collection.get(where={"is_consolidated": False})
             consolidated_count = 0
             if fresh_results and fresh_results['ids']:
                 for memory_id in fresh_results['ids']:
-                    self.store.update_memory(memory_id, {"is_consolidated": True})
+                    self.store.update_memory(self.collection, memory_id, {"is_consolidated": True})
                     consolidated_count += 1
                 self.logger.debug(f"已巩固 {consolidated_count} 条新鲜记忆")
 
@@ -89,18 +90,18 @@ class MemoryManager:
         """
         try:
             # 1. 随机抽样检查
-            sample_size = min(20, self.store.collection.count())
+            sample_size = min(20, self.collection.count())
             if sample_size == 0:
                 return
 
-            samples = self.store.collection.get(limit=sample_size)
+            samples = self.collection.get(limit=sample_size)
             if 'created_at' in samples['metadatas'][0]:
                 self.logger.debug("数据库已包含 created_at 字段，无需迁移。")
                 return
 
             # 2. 如果需要，则执行全量更新
             self.logger.info("检测到旧版本数据库，开始补充 created_at 字段...")
-            all_results = self.store.collection.get()
+            all_results = self.collection.get()
             if all_results and all_results['ids']:
                 known_memory_types = [mt.value for mt in MemoryType]  # 获取所有已知的记忆类型值
                 ids_to_update = []
@@ -114,7 +115,7 @@ class MemoryManager:
                 if ids_to_update:
                     current_time = time.time()
                     for memory_id in ids_to_update:
-                        self.store.update_memory(memory_id, {"created_at": current_time})
+                        self.store.update_memory(self.collection, memory_id, {"created_at": current_time})
                     self.logger.info(f"数据迁移成功，共更新了 {len(ids_to_update)} 条记忆记录。")
         except Exception as e:
             self.logger.error(f"补充 created_at 字段失败: {e}")
@@ -131,11 +132,11 @@ class MemoryManager:
         for memory_id in memory_ids:
             try:
                 # 获取当前记忆的强度
-                current_meta = self.store.collection.get(ids=[memory_id])['metadatas'][0]
+                current_meta = self.collection.get(ids=[memory_id])['metadatas'][0]
                 if current_meta:
                     current_strength = current_meta.get('strength', 1)
                     # 强度 +1
-                    self.store.update_memory(memory_id, {"strength": current_strength + 1})
+                    self.store.update_memory(self.collection, memory_id, {"strength": current_strength + 1})
             except Exception as e:
                 self.logger.error(f"强化记忆 {memory_id} 失败: {str(e)}")
 
@@ -160,6 +161,7 @@ class MemoryManager:
 
         # 检索新鲜记忆
         fresh_memories = self.store.recall(
+            collection=self.collection,
             query=query,
             limit=fresh_limit,
             where_filter={"is_consolidated": False}
@@ -167,6 +169,7 @@ class MemoryManager:
 
         # 检索已巩固记忆
         consolidated_memories = self.store.recall(
+            collection=self.collection,
             query=query,
             limit=consolidated_limit,
             where_filter={"is_consolidated": True}
@@ -225,20 +228,17 @@ class MemoryManager:
         recalled_by_type = {}
         all_recalled_ids = set()
 
-        self.logger.debug(f"[链式回忆] 第一轮：分类型召回，每类最多 {per_type_limit} 个")
-
+        # 第一轮：分类型召回
         for memory_type, handler in memory_types:
-            if memory_type == "任务记忆" or not handler:
-                continue  # 排除任务记忆或未提供处理器
+            if not handler:
+                continue  # 排除未提供的处理器
 
             memories = handler.recall(query, limit=per_type_limit, include_consolidated=True)
             if memories:
                 recalled_by_type[memory_type] = memories
                 all_recalled_ids.update([m.id for m in memories])
-                self.logger.debug(f"  {memory_type}: 召回 {len(memories)} 条")
 
-        # 第二轮：从关联中补充
-        self.logger.debug(f"[链式回忆] 第二轮：从关联网络补充记忆")
+        # 第二轮：从关联中补充记忆
 
         for memory_type, memories in list(recalled_by_type.items()):
             for memory in memories:
@@ -252,15 +252,12 @@ class MemoryManager:
 
                     # 获取关联记忆
                     try:
-                        assoc_results = self.store.collection.get(ids=[assoc_id])
+                        assoc_results = self.collection.get(ids=[assoc_id])
                         if not assoc_results['metadatas']:
                             continue
 
                         metadata = assoc_results['metadatas'][0]
                         assoc_type = metadata.get('memory_type', '知识记忆')
-
-                        if assoc_type == "任务记忆":
-                            continue  # 排除任务记忆
 
                         # 根据类型构建记忆对象
                         assoc_memory = self._build_memory_from_metadata(assoc_id, metadata, assoc_results['documents'][0] if assoc_results['documents'] else "")
@@ -279,8 +276,6 @@ class MemoryManager:
                         continue
 
         # 统计权重：出现次数 × 强度
-        self.logger.debug(f"[链式回忆] 第三轮：统计权重（出现次数 × 强度）")
-
         memory_count = defaultdict(int)  # 记忆ID -> 出现次数
         memory_obj_map = {}  # 记忆ID -> 记忆对象
 
@@ -294,12 +289,9 @@ class MemoryManager:
         weights = {}
         for memory_id, count in memory_count.items():
             memory = memory_obj_map[memory_id]
-            weight = count * memory.strength
-            weights[memory_id] = weight
-            self.logger.debug(f"  {memory_id[:8]}: 出现{count}次 × 强度{memory.strength} = 权重{weight}")
+            weights[memory_id] = count * memory.strength
 
         # 加权随机抽取
-        self.logger.debug(f"[链式回忆] 第四轮：加权随机抽取 {final_limit} 个")
 
         if not weights:
             return []
@@ -325,7 +317,6 @@ class MemoryManager:
             if selected_id:
                 selected_memories.append(memory_obj_map[selected_id])
                 remaining_ids.remove(selected_id)
-                self.logger.debug(f"  抽取: {selected_id[:8]} (权重 {weights[selected_id]})")
 
         return selected_memories
 
@@ -339,10 +330,6 @@ class MemoryManager:
                 memory_type = MemoryType(memory_type_str)
             except ValueError:
                 memory_type = MemoryType.KNOWLEDGE  # 默认为知识记忆
-
-            # 排除任务记忆
-            if memory_type == MemoryType.TASK:
-                return None
 
             # 统一构建BaseMemory对象
             return BaseMemory(
@@ -398,7 +385,7 @@ class MemoryManager:
         for memory_id in memories_to_merge_ids:
             # 从存储中获取记忆元数据
             try:
-                memory_results = self.store.collection.get(ids=[memory_id])
+                memory_results = self.collection.get(ids=[memory_id])
                 if not memory_results['metadatas']:
                     self.logger.warning(f"记忆 {memory_id} 不存在，跳过合并")
                     continue
@@ -424,20 +411,23 @@ class MemoryManager:
             raise ValidationError(f"只有 {len(memories_to_merge)} 个有效记忆，无法合并")
 
         # 步骤 2: 创建新记忆（默认为知识记忆）
+        # 使用去重后的强度，避免相同ID重复累加
+        unique_strength = sum(memory_obj.strength for memory_obj in set(memories_to_merge))
+
         new_memory = BaseMemory(
             memory_type=MemoryType.KNOWLEDGE,
             judgment=new_judgment,
             reasoning=new_reasoning,
             tags=new_tags,
-            strength=total_strength,  # 强度等于所有旧记忆之和
+            strength=unique_strength,  # 强度等于去重后记忆之和
             is_consolidated=False  # 合并记忆作为新鲜记忆重新开始生命周期
         )
 
         # 步骤 3: 存储新记忆
-        self.store.remember(new_memory)
+        self.store.remember(self.collection, new_memory)
 
         # 步骤 4: 删除所有旧记忆
-        self.store.collection.delete(ids=memories_to_merge_ids)
+        self.collection.delete(ids=memories_to_merge_ids)
 
         self.logger.debug(f"成功合并 {len(memories_to_merge)} 条记忆为新记忆 '{new_judgment}'，强度为 {total_strength}")
 
@@ -508,42 +498,7 @@ class MemoryManager:
             # tags 是可选的，默认为空列表
             tags = mem_data.get("tags", [])
 
-            # *** 任务转换逻辑开始 ***
-            if mem_type == "task":
-                # 查找并获取当前的旧 task 记忆
-                old_task_memories = self.store.recall(
-                    query="",  # 查询所有
-                    limit=1,
-                    where_filter={"memory_type": MemoryType.TASK.value}
-                )
-
-                if old_task_memories:
-                    old_task = old_task_memories[0]
-                    event_handler = memory_handlers.get("event")
-
-                    if event_handler:
-                        # 使用旧 task 的创建时间来格式化新 event 的 judgment
-                        completion_time = datetime.fromtimestamp(old_task.created_at).strftime('%Y-%m-%d %H:%M:%S')
-                        event_judgment = f"{completion_time}: {old_task.judgment}"
-
-                        # 创建新 event
-                        event_id = event_handler.remember(
-                            judgment=event_judgment,
-                            reasoning=f"该事件由完成前一个任务自动生成。",
-                            tags=["任务完成", "自动生成"] + old_task.tags
-                        )
-
-                        if event_id:
-                            created_ids.append(event_id)
-
-                        # 删除旧 task
-                        self.store.collection.delete(ids=[old_task.id])
-                        self.logger.debug(f"已将旧任务 {old_task.id[:8]} 转换为事件。")
-
-                        # 跳过创建新的 task 记忆，因为它已经被转换为 event
-                        continue
-            # *** 任务转换逻辑结束 ***
-
+            
             # 根据类型创建记忆，获取返回的ID
             memory_id = None
             handler = memory_handlers.get(mem_type)
@@ -554,6 +509,10 @@ class MemoryManager:
 
             if memory_id:
                 created_ids.append(memory_id)
+
+                # 任务记忆特殊状态管理：新任务记忆创建时，将之前最新的任务记忆转为已巩固状态
+                if mem_type == "task":
+                    self._consolidate_previous_task_memory(memory_id)
 
         # 3. 新记忆之间两两建立关联（初始强度1）
         for i in range(len(created_ids)):
@@ -582,3 +541,43 @@ class MemoryManager:
                         new_reasoning=metadata.get("reasoning", "合并多个相似记忆"),
                         new_tags=metadata.get("tags", "").split(", ") if metadata.get("tags") else []
                     )
+
+    def _consolidate_previous_task_memory(self, current_task_id: str):
+        """
+        任务记忆特殊状态管理：创建新任务记忆时，将之前最新的任务记忆转为已巩固状态
+
+        这样确保始终只有一个最新（新鲜的）任务记忆，其他都是已巩固的。
+
+        Args:
+            current_task_id: 当前新创建的任务记忆ID
+        """
+        try:
+            # 查找除了当前记忆之外的所有新鲜任务记忆
+            where_filter = {
+                "$and": [
+                    {"memory_type": "任务记忆"},
+                    {"is_consolidated": False}
+                ]
+            }
+
+            fresh_task_results = self.collection.get(where=where_filter)
+            if not fresh_task_results or not fresh_task_results['ids']:
+                return  # 没有其他新鲜任务记忆
+
+            # 过滤掉当前刚创建的任务记忆
+            previous_task_ids = [
+                mem_id for mem_id in fresh_task_results['ids']
+                if mem_id != current_task_id
+            ]
+
+            if not previous_task_ids:
+                return  # 没有之前的任务记忆需要巩固
+
+            # 将之前的新鲜任务记忆转为已巩固状态
+            for task_id in previous_task_ids:
+                self.store.update_memory(self.collection, task_id, {"is_consolidated": True})
+
+            self.logger.debug(f"已将 {len(previous_task_ids)} 个之前的任务记忆转为已巩固状态")
+
+        except Exception as e:
+            self.logger.error(f"巩固之前任务记忆失败: {str(e)}")

@@ -6,7 +6,7 @@ Angel Eye 插件 - JSON 解析工具
 import json
 from typing import Dict, Optional, Any, List
 
-from ...core.logger import get_logger
+from astrbot.api import logger
 
 
 
@@ -81,7 +81,7 @@ class JsonParser:
 
     def __init__(self):
         """初始化 JSON 解析器。"""
-        self.logger = get_logger()
+        self.logger = logger
 
     def parse_llm_response(self, response_text: str) -> Optional[Dict[str, Any]]:
         """

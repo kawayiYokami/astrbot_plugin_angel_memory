@@ -5,16 +5,16 @@
 为每种记忆类型提供专门的接口，同时支持跨记忆类型的复杂查询。
 """
 
-from typing import List, Optional
+from typing import List
 
-from ..models.data_models import BaseMemory, ValidationError
+# 导入日志记录器
+from astrbot.api import logger
+from ..models.data_models import BaseMemory
 from ..components.vector_store import VectorStore
 from ..components.association_manager import AssociationManager
 from ..config.system_config import system_config
 from .memory_handlers import MemoryHandlerFactory
 from .memory_manager import MemoryManager
-from ...core.logger import get_logger
-
 
 class CognitiveService:
     """
@@ -30,32 +30,37 @@ class CognitiveService:
     - 清醒睡眠：支持清醒模式（学习强化）和睡眠模式（巩固遗忘）
     """
 
-    def __init__(self):
+    def __init__(self, vector_store: VectorStore):
         """
         初始化认知服务。
 
-        为每种记忆类型创建独立的向量存储实例。
+        Args:
+            vector_store: 一个已经初始化好的、共享的 VectorStore 实例。
         """
         # 设置日志记录器
-        self.logger = get_logger()
+        self.logger = logger
 
-        # 创建统一的向量存储实例，用于存储所有类型的记忆
-        self.main_store = VectorStore(collection_name=system_config.collection_name)
+        if not vector_store:
+            raise ValueError("必须提供一个 VectorStore 实例。")
+        self.vector_store = vector_store
+
+        # 为认知服务获取主集合
+        self.main_collection = self.vector_store.get_or_create_collection_with_dimension_check(system_config.collection_name)
 
         # 创建关联管理器
-        self.association_manager = AssociationManager(self.main_store)
+        self.association_manager = AssociationManager(self.main_collection, self.vector_store)
 
         # 创建记忆处理器工厂
-        self.memory_handler_factory = MemoryHandlerFactory(self.main_store)
+        self.memory_handler_factory = MemoryHandlerFactory(self.main_collection, self.vector_store)
 
-        # 创建记忆管理器
-        self.memory_manager = MemoryManager(self.main_store, self.association_manager)
+        # 创建记忆管理器，并传入具体的 collection 对象
+        self.memory_manager = MemoryManager(self.main_collection, self.vector_store, self.association_manager)
 
         # 执行数据库健康性检查
         self.memory_manager.health_check()
 
         # 记录初始化状态以验证VectorStore
-        self.logger.info(f"认知服务初始化完成。向量存储客户端: {self.main_store.client}")
+        self.logger.info(f"认知服务初始化完成。向量存储客户端: {self.vector_store.client}")
 
     # ===== 存储管理接口 =====
 
@@ -73,7 +78,7 @@ class CognitiveService:
         """
         try:
             # 更新主存储路径
-            self.main_store.set_storage_path(new_path)
+            self.vector_store.set_storage_path(new_path)
 
             # 更新系统配置中的路径
             from pathlib import Path
@@ -153,7 +158,7 @@ class CognitiveService:
 
         这是一个危险操作，会永久删除所有存储的记忆。
         """
-        self.main_store.clear_all()
+        self.vector_store.clear_collection(self.main_collection)
         self.logger.info("所有记忆已被清空。")
 
     @staticmethod

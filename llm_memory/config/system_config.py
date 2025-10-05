@@ -21,9 +21,18 @@ class MemorySystemConfig:
         "MEMORY_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"
     ))
 
-    # 存储配置
+    # 集合名称配置
     collection_name: str = field(default_factory=lambda: os.getenv(
         "MEMORY_COLLECTION_NAME", "personal_memory_v1"
+    ))
+
+    # 笔记服务专用集合名称
+    notes_main_collection_name: str = field(default_factory=lambda: os.getenv(
+        "NOTES_MAIN_COLLECTION_NAME", "notes_main"
+    ))
+
+    notes_sub_collection_name: str = field(default_factory=lambda: os.getenv(
+        "NOTES_SUB_COLLECTION_NAME", "notes_sub"
     ))
 
     storage_dir: Path = field(default_factory=lambda: Path(os.getenv(

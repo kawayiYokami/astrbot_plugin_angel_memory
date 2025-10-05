@@ -5,11 +5,11 @@
 所有记忆类型使用相同的三元组结构（judgment, reasoning, tags）。
 """
 
-from typing import List, Optional
+from typing import List
 
+# 导入日志记录器
+from astrbot.api import logger
 from ..models.data_models import BaseMemory, MemoryType
-from ...core.logger import get_logger
-
 
 class MemoryHandler:
     """
@@ -18,17 +18,19 @@ class MemoryHandler:
     处理所有类型的记忆存储和检索，基于统一的三元组结构。
     """
 
-    def __init__(self, memory_type: MemoryType, vector_store):
+    def __init__(self, memory_type: MemoryType, main_collection, vector_store):
         """
         初始化记忆处理器。
 
         Args:
             memory_type: 记忆类型枚举
+            main_collection: 用于操作的主集合实例
             vector_store: 向量存储实例
         """
         self.memory_type = memory_type
+        self.collection = main_collection
         self.store = vector_store
-        self.logger = get_logger()
+        self.logger = logger
 
     def remember(self, judgment: str, reasoning: str, tags: List[str]) -> str:
         """
@@ -48,7 +50,7 @@ class MemoryHandler:
             reasoning=reasoning,
             tags=tags
         )
-        self.store.remember(memory)
+        self.store.remember(self.collection, memory)
         return memory.id
 
     def recall(self, query: str, limit: int = 10, include_consolidated: bool = True) -> List[BaseMemory]:
@@ -66,29 +68,31 @@ class MemoryHandler:
         where_filter = {"memory_type": self.memory_type.value}
         if not include_consolidated:
             where_filter["is_consolidated"] = False
-        return self.store.recall(query, limit, where_filter=where_filter)
+        return self.store.recall(self.collection, query, limit, where_filter=where_filter)
 
 
 class MemoryHandlerFactory:
     """记忆处理器工厂 - 创建和管理各种记忆处理器"""
 
-    def __init__(self, vector_store):
+    def __init__(self, main_collection, vector_store):
         """
         初始化记忆处理器工厂。
 
         Args:
+            main_collection: 用于操作的主集合实例
             vector_store: 向量存储实例
         """
+        self.collection = main_collection
         self.store = vector_store
-        self.logger = get_logger()
+        self.logger = logger
 
         # 创建各种记忆处理器
         self.handlers = {
-            "event": MemoryHandler(MemoryType.EVENT, vector_store),
-            "knowledge": MemoryHandler(MemoryType.KNOWLEDGE, vector_store),
-            "skill": MemoryHandler(MemoryType.SKILL, vector_store),
-            "emotional": MemoryHandler(MemoryType.EMOTIONAL, vector_store),
-            "task": MemoryHandler(MemoryType.TASK, vector_store)
+            "event": MemoryHandler(MemoryType.EVENT, self.collection, self.store),
+            "knowledge": MemoryHandler(MemoryType.KNOWLEDGE, self.collection, self.store),
+            "skill": MemoryHandler(MemoryType.SKILL, self.collection, self.store),
+            "emotional": MemoryHandler(MemoryType.EMOTIONAL, self.collection, self.store),
+            "task": MemoryHandler(MemoryType.TASK, self.collection, self.store)
         }
 
     def get_handler(self, memory_type: str) -> MemoryHandler:

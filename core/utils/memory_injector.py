@@ -7,6 +7,7 @@
 from typing import List, Dict, Any
 from ..session_memory import MemoryItem
 from .memory_formatter import MemoryFormatter
+from .memory_id_resolver import MemoryIDResolver
 
 
 class MemoryInjector:
@@ -27,25 +28,31 @@ class MemoryInjector:
         useful_memory_ids = feedback_data.get('useful_memory_ids', [])
         new_memories_raw = feedback_data.get('new_memories', {})
 
-        # 转换 new_memories 格式：从字典（按类型分组）转换为列表
-        new_memories = []
-        if isinstance(new_memories_raw, dict):
-            for memory_type, memories in new_memories_raw.items():
-                if isinstance(memories, list):
-                    for memory in memories:
-                        if isinstance(memory, dict):
-                            # 添加类型字段
-                            memory['type'] = memory_type
-                            new_memories.append(memory)
-        elif isinstance(new_memories_raw, list):
-            # 如果已经是列表，直接使用
-            new_memories = new_memories_raw
+        # 使用 MemoryIDResolver 处理数据格式转换
+        new_memories = MemoryIDResolver.normalize_new_memories_format(new_memories_raw)
 
-        # 使用新的记忆格式化器
+        # 使用记忆格式化器
         return MemoryFormatter.format_memories_for_prompt(
             memories=session_memories,
             useful_memory_ids=useful_memory_ids,
             new_memories=new_memories
+        )
+
+    @staticmethod
+    def format_fifo_memories_for_prompt(session_memories: List[MemoryItem]) -> str:
+        """
+        格式化FIFO记忆用于LLM提示词（按照设计，只从FIFO取）
+
+        Args:
+            session_memories: FIFO中的会话记忆列表
+
+        Returns:
+            格式化后的记忆上下文
+        """
+        return MemoryFormatter.format_memories_for_prompt(
+            memories=session_memories,
+            useful_memory_ids=[],  # 不过滤，FIFO中的都是有用的
+            new_memories={}       # 不包含新记忆
         )
 
     @staticmethod

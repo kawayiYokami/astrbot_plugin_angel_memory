@@ -6,20 +6,18 @@
 """
 
 import threading
-import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 from collections import deque
-from dataclasses import dataclass, asdict
-import json
-import os
+from dataclasses import dataclass
 from ..llm_memory.models.data_models import BaseMemory
+from .config import MemoryConstants, MemoryCapacityConfig
 
 
 @dataclass
 class MemoryItem:
     """记忆项数据结构"""
     id: str
-    type: str
+    memory_type: str
     judgment: str
     reasoning: str
     tags: List[str]
@@ -29,42 +27,24 @@ class MemoryItem:
 class SessionMemory:
     """单个会话的短期记忆管理"""
 
-    # 基础容量配置
-    BASE_CAPACITIES = {
-        'knowledge': 14,
-        'emotional': 1,
-        'skill': 7,
-        'task': 1,
-        'event': 3
-    }
-
-    # 中文枚举值到英文键的映射
-    MEMORY_TYPE_MAPPING = {
-        '知识记忆': 'knowledge',
-        '事件记忆': 'event',
-        '技能记忆': 'skill',
-        '任务记忆': 'task',
-        '情感记忆': 'emotional',
-        '元记忆': 'meta',
-        '感官记忆': 'sensory'
-    }
-
-    def __init__(self, session_id: str, capacity_multiplier: int = 1):
+    def __init__(self, session_id: str, capacity_config: MemoryCapacityConfig, capacity_multiplier: float = 1.0):
         """
         初始化会话记忆
 
         Args:
             session_id: 会话ID
+            capacity_config: 容量配置
             capacity_multiplier: 容量倍数
         """
         self.session_id = session_id
+        self.capacity_config = capacity_config
         self.capacity_multiplier = capacity_multiplier
         self.lock = threading.Lock()
 
         # 初始化各类型记忆通道（使用deque实现FIFO）
         self.memories = {
-            memory_type: deque(maxlen=self.BASE_CAPACITIES[memory_type] * capacity_multiplier)
-            for memory_type in self.BASE_CAPACITIES
+            memory_type: deque(maxlen=int(getattr(capacity_config, memory_type, 0) * capacity_multiplier))
+            for memory_type in ['knowledge', 'emotional', 'skill', 'task', 'event']
         }
 
         # 记忆ID到记忆项的映射（用于快速查找）
@@ -83,11 +63,11 @@ class SessionMemory:
                 memory_type_str = memory.memory_type.value if hasattr(memory.memory_type, 'value') else str(memory.memory_type)
 
                 # 将中文枚举值转换为英文键
-                memory_type_key = self.MEMORY_TYPE_MAPPING.get(memory_type_str, memory_type_str.lower())
+                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(memory_type_str, memory_type_str.lower())
 
                 memory_item = MemoryItem(
                     id=memory.id,
-                    type=memory_type_key,
+                    memory_type=memory_type_key,
                     judgment=getattr(memory, 'judgment', ''),
                     reasoning=getattr(memory, 'reasoning', ''),
                     tags=getattr(memory, 'tags', []),
@@ -97,9 +77,9 @@ class SessionMemory:
                 # 如果记忆已存在，先移除旧的
                 if memory.id in self.memory_map:
                     old_memory = self.memory_map[memory.id]
-                    if old_memory.type in self.memories:
+                    if old_memory.memory_type in self.memories:
                         try:
-                            self.memories[old_memory.type].remove(old_memory)
+                            self.memories[old_memory.memory_type].remove(old_memory)
                         except ValueError:
                             pass  # 记忆可能已经被FIFO移除
 
@@ -159,7 +139,8 @@ class SessionMemory:
             }
 
             for memory_type, memory_deque in self.memories.items():
-                capacity = self.BASE_CAPACITIES[memory_type] * self.capacity_multiplier
+                base_capacity = getattr(self.capacity_config, memory_type, 0)
+                capacity = int(base_capacity * self.capacity_multiplier)
                 stats['by_type'][memory_type] = {
                     'current': len(memory_deque),
                     'capacity': capacity,
@@ -172,7 +153,7 @@ class SessionMemory:
 class SessionMemoryManager:
     """会话记忆管理器 - 管理所有会话的短期记忆"""
 
-    def __init__(self, capacity_multiplier: int = 1):
+    def __init__(self, capacity_multiplier: float = 1.0):
         """
         初始化会话记忆管理器
 
@@ -180,6 +161,7 @@ class SessionMemoryManager:
             capacity_multiplier: 容量倍数
         """
         self.capacity_multiplier = capacity_multiplier
+        self.capacity_config = MemoryCapacityConfig()
         self.lock = threading.Lock()
         self.sessions: Dict[str, SessionMemory] = {}
 
@@ -197,6 +179,7 @@ class SessionMemoryManager:
             if session_id not in self.sessions:
                 self.sessions[session_id] = SessionMemory(
                     session_id,
+                    self.capacity_config,
                     self.capacity_multiplier
                 )
             return self.sessions[session_id]

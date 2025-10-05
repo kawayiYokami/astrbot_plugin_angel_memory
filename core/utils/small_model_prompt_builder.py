@@ -8,6 +8,7 @@ from typing import List, Dict, Tuple
 from datetime import datetime
 from ...llm_memory import CognitiveService
 from ..session_memory import MemoryItem
+from ..config import MemoryConstants
 from .memory_formatter import MemoryFormatter
 
 
@@ -31,17 +32,13 @@ class SmallModelPromptBuilder:
         now = datetime.now().timestamp()
         diff = now - timestamp
 
-        if diff < 60:
+        if diff < MemoryConstants.TIME_MINUTE:
             return "刚刚"
-        elif diff < 3600:
-            minutes = int(diff / 60)
-            return f"{minutes}分钟前"
-        elif diff < 86400:
-            hours = int(diff / 3600)
-            return f"{hours}小时前"
-        else:
-            days = int(diff / 86400)
-            return f"{days}天前"
+        if diff < MemoryConstants.TIME_HOUR:
+            return f"{int(diff / MemoryConstants.TIME_MINUTE)}分钟前"
+        if diff < MemoryConstants.TIME_DAY:
+            return f"{int(diff / MemoryConstants.TIME_HOUR)}小时前"
+        return f"{int(diff / MemoryConstants.TIME_DAY)}天前"
 
     @staticmethod
     def extract_text_from_content(content) -> str:
@@ -56,7 +53,7 @@ class SmallModelPromptBuilder:
         """
         if isinstance(content, str):
             return content
-        elif isinstance(content, list):
+        if isinstance(content, list):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
                     return item.get("text", "")
@@ -109,7 +106,30 @@ class SmallModelPromptBuilder:
         return "\n".join(formatted_lines), user_list
 
     @staticmethod
-    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict]) -> str:
+    def format_note_query(chat_records: List[Dict]) -> str:
+        """
+        格式化笔记查询文本，仅提取is_processed=false的最新对话记录内容。
+
+        Args:
+            chat_records: 对话记录列表
+
+        Returns:
+            格式化后的查询文本字符串（纯文本内容拼接）
+        """
+        # 过滤出未处理的记录
+        unprocessed_records = [msg for msg in chat_records if not msg.get("is_processed", True)]
+
+        # 如果没有未处理的记录，返回空字符串
+        if not unprocessed_records:
+            return ""
+
+        # 提取最新的未处理记录内容
+        return SmallModelPromptBuilder.extract_text_from_content(
+            unprocessed_records[-1].get("content", [])
+        ).strip()
+
+    @staticmethod
+    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None) -> str:
         """
         构建用于小模型的记忆整理提示词
 
@@ -117,46 +137,54 @@ class SmallModelPromptBuilder:
             formatted_query: 已格式化的对话历史字符串
             memories: 记忆列表
             user_list: 对话参与者清单
+            candidate_notes: 候选笔记列表（可选）
+            secretary_decision: 秘书决策信息，包含AI人格和别名（可选）
 
         Returns:
             完整的提示词字符串
         """
+        from .note_context_builder import NoteContextBuilder
+
         # 获取系统提示词
         system_prompt = CognitiveService.get_prompt()
 
-        # 1. 构建参与者信息
-        participants_section = "# 对话参与者\n"
-        if user_list:
-            for p in user_list:
-                participants_section += f"- {p.get('name', '未知')}: {p.get('id', '未知')}\n"
-        else:
-            participants_section += "暂无详细信息\n"
+        # 1. 构建参与者信息（使用列表推导式）
+        participants_section = "# 对话参与者\n" + (
+            "\n".join(f"- {p.get('name', '未知')}: {p.get('id', '未知')}" for p in user_list)
+            if user_list else "暂无详细信息\n"
+        )
 
         # 2. 构建新的规则
         rules_section = (
-            "\n重要规则： 在生成任何判断或记忆时，你必须使用“对话参与者”部分提供的具体用户昵称来指代人物。"
-            "绝对禁止使用“用户”、“提问者”等模糊代词。"
+            '\n重要规则： 在生成任何判断或记忆时，你必须使用"对话参与者"部分提供的具体用户昵称来指代人物。'
+            '绝对禁止使用"用户"、"提问者"等模糊代词。'
         )
 
-        # 3. 组装新的 system_prompt
-        final_system_prompt = f"{system_prompt}\n\n{participants_section}{rules_section}"
+        # 3. 构建AI身份信息
+        ai_identity_section = ""
+        if secretary_decision:
+            persona_name = secretary_decision.get('persona_name', '')
+            alias = secretary_decision.get('alias', '')
+            if persona_name or alias:
+                ai_info_parts = []
+                if persona_name:
+                    ai_info_parts.append(f"助理的名字是：{persona_name}")
+                if alias:
+                    ai_info_parts.append(f"昵称有：{alias}")
+                ai_identity_section = "\n# AI身份信息\n" + "\n".join(ai_info_parts) + "\n"
 
-        # 格式化记忆
-        memory_context = ""
-        if memories:
-            memory_context = "\n\n你回忆起了：\n"
-            formatted_display = MemoryFormatter.format_memories_for_display(memories)
-            memory_context += formatted_display
+        # 4. 构建候选笔记清单
+        notes_section = NoteContextBuilder.build_candidate_list_for_prompt(candidate_notes) if candidate_notes else ""
 
-        # 构建完整提示词
+        # 5. 组装新的 system_prompt
+        final_system_prompt = f"{system_prompt}\n\n{participants_section}{rules_section}{ai_identity_section}{notes_section}"
+
+        # 6. 构建完整提示词（简化记忆处理）
         parts = [final_system_prompt]
-
         if formatted_query:
             parts.append(f"\n\n对话历史：\n{formatted_query}")
-
-        if memory_context:
-            parts.append(memory_context)
-
+        if memories:
+            parts.append(f"\n\n你回忆起了：\n{MemoryFormatter.format_memories_for_display(memories)}")
         parts.append("\n\n请按照任务进行处理")
 
         return "".join(parts)
