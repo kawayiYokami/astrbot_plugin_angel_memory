@@ -15,6 +15,9 @@ from .exceptions import (
     ConfigurationError,
     SessionError
 )
+from .initialization_manager import InitializationManager, InitializationState
+from .background_initializer import BackgroundInitializer
+from .plugin_manager import PluginManager
 
 __all__ = [
     'DeepMind',
@@ -29,5 +32,9 @@ __all__ = [
     'MemoryFormatError',
     'MemoryProcessingError',
     'ConfigurationError',
-    'SessionError'
+    'SessionError',
+    'InitializationManager',
+    'InitializationState',
+    'BackgroundInitializer',
+    'PluginManager'
 ]
