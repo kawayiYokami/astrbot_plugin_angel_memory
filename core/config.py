@@ -23,8 +23,7 @@ class MemoryConstants:
     MIN_MESSAGE_LENGTH = 5
     SHORT_TERM_MEMORY_CAPACITY = 1.0
     SLEEP_INTERVAL = 3600  # 默认睡眠间隔（秒）
-    DEFAULT_DATA_DIR = "./data"
-    NOTE_SEARCH_TOKEN_LIMIT = 10000  # 默认笔记检索token限制
+    DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
     SMALL_MODEL_NOTE_BUDGET = 8000   # 默认小模型笔记Token预算
     LARGE_MODEL_NOTE_BUDGET = 12000  # 默认大模型笔记Token预算
 
@@ -82,7 +81,6 @@ class MemoryConfig:
         self._sleep_interval = self._validate_sleep_interval(config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL))
         self._data_directory = config_get("data_directory", self.data_dir)
         self._provider_id = config_get("provider_id", "")
-        self._note_search_token_limit = self._validate_note_search_token_limit(config_get("note_search_token_limit", MemoryConstants.NOTE_SEARCH_TOKEN_LIMIT))
         self._small_model_note_budget = self._validate_token_budget(config_get("small_model_note_budget", 8000), "small_model_note_budget")
         self._large_model_note_budget = self._validate_token_budget(config_get("large_model_note_budget", 12000), "large_model_note_budget")
 
@@ -110,11 +108,6 @@ class MemoryConfig:
     def provider_id(self) -> str:
         """获取记忆整理LLM提供商ID"""
         return self._provider_id
-
-    @property
-    def note_search_token_limit(self) -> int:
-        """获取笔记检索token限制"""
-        return self._note_search_token_limit
 
     @property
     def small_model_note_budget(self) -> int:
@@ -147,7 +140,6 @@ class MemoryConfig:
             "sleep_interval": self.sleep_interval,
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
-            "note_search_token_limit": self.note_search_token_limit,
             "small_model_note_budget": self.small_model_note_budget,
             "large_model_note_budget": self.large_model_note_budget
         }
@@ -178,14 +170,6 @@ class MemoryConfig:
             raise ValueError(f"sleep_interval must be a non-negative integer, got: {value}")
         if value > 24 * 60 * 60:  # 超过24小时被视为不合理
             raise ValueError(f"sleep_interval too large (max 86400 seconds), got: {value}")
-        return value
-
-    def _validate_note_search_token_limit(self, value: Any) -> int:
-        """验证笔记检索token限制"""
-        if not isinstance(value, int) or value < 0:
-            raise ValueError(f"note_search_token_limit must be a non-negative integer, got: {value}")
-        if value > 32000:
-            raise ValueError(f"note_search_token_limit too large (max 32000), got: {value}")
         return value
 
     def _validate_token_budget(self, value: Any, field_name: str) -> int:

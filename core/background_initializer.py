@@ -1,28 +1,49 @@
 """
 BackgroundInitializer - 后台初始化器
 
-负责在后台线程中执行所有初始化任务，实现极速启动和智能等待。
+负责在后台线程中执行初始化任务，但实例由主线程统一管理。
+后台线程只负责执行初始化逻辑，不拥有任何组件实例。
 """
 
 import threading
-import time
-from .initialization_manager import InitializationManager, InitializationState
-from astrbot.api import logger
+import asyncio
+from .initialization_manager import InitializationManager
+from .component_factory import ComponentFactory
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
 
 class BackgroundInitializer:
-    """后台初始化器"""
+    """后台初始化器 - 仅负责初始化逻辑，不拥有实例"""
 
-    def __init__(self, init_manager: InitializationManager):
+    def __init__(self, init_manager: InitializationManager, config: dict, plugin_context, data_directory: str = None):
         """
         初始化后台初始化器
 
         Args:
-            init_manager: 初始化状态管理器
+            init_manager: 初始化状态管理器（专注于状态管理）
+            config: 插件配置（在主线程中获取）
+            plugin_context: PluginContext实例（与主线程共享）
+            data_directory: 数据目录路径（由main传入，向后兼容）
         """
         self.init_manager = init_manager
         self.background_thread = None
         self.context = init_manager.context
         self.logger = logger
+        self.config = config
+        self.plugin_context = plugin_context
+        self.data_directory = data_directory
+
+        self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
+        if self.data_directory:
+            self.logger.info(f"📋 后台初始化器接收数据目录: {self.data_directory}")
+
+        # 直接使用主线程的PluginContext创建ComponentFactory
+        self.component_factory = ComponentFactory(self.plugin_context, init_manager=self.init_manager)
+        self.logger.debug("BackgroundInitializer初始化完成 - 共享主线程PluginContext")
 
     def start_background_initialization(self):
         """启动后台初始化线程"""
@@ -60,70 +81,39 @@ class BackgroundInitializer:
         """执行真正的初始化工作"""
         self.logger.info("🤖 开始执行完整的系统初始化...")
 
-        # 1. 加载嵌入模型
-        self._load_embedding_model()
+        try:
+            # 配置已经在主线程中获取，直接使用
+            self.logger.info(f"📋 使用配置: {list(self.config.keys())}")
 
-        # 2. 创建ChromaDB客户端
-        self._create_chromadb_client()
+            # 2. 在主线程的事件循环中创建所有组件
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                components = loop.run_until_complete(
+                    self.component_factory.create_all_components(self.config)
+                )
+                self.logger.info("✅ 所有组件在后台线程中创建完成")
 
-        # 3. 创建数据库集合
-        self._create_collections()
+                # 3. DeepMind初始化时已经执行了记忆巩固，这里不需要重复执行
+                deepmind = components.get("deepmind")
+                if deepmind and deepmind.is_enabled():
+                    self.logger.info("🧠 DeepMind已在初始化时完成记忆巩固，跳过重复巩固")
+                else:
+                    self.logger.warning("⚠️ DeepMind未启用")
 
-        # 4. 初始化服务组件
-        self._initialize_services()
+            finally:
+                loop.close()
 
-        # 5. 记忆巩固
-        self._consolidate_memory()
+        except Exception as e:
+            self.logger.error(f"❌ 系统初始化失败: {e}")
+            import traceback
+            self.logger.error(f"错误详情: {traceback.format_exc()}")
+            raise
 
-        # 6. 启动文件扫描
-        self._start_file_scanning()
+    def get_initialized_components(self):
+        """获取已初始化的组件（向后兼容）"""
+        return self.component_factory.get_components()
 
-        # 标记为准备就绪
-        self.init_manager.mark_ready()
-
-    def _load_embedding_model(self):
-        """加载嵌入模型"""
-        self.logger.info("📚 开始加载嵌入模型...")
-        # 这里会集成现有的模型加载逻辑
-        # 现在只是模拟
-        time.sleep(2)
-        self.logger.info("✅ 嵌入模型加载完成")
-
-    def _create_chromadb_client(self):
-        """创建ChromaDB客户端"""
-        self.logger.info("🗄️ 开始创建ChromaDB客户端...")
-        # 这里会集成现有的ChromaDB创建逻辑
-        # 现在只是模拟
-        time.sleep(1)
-        self.logger.info("✅ ChromaDB客户端创建完成")
-
-    def _create_collections(self):
-        """创建数据库集合"""
-        self.logger.info("📁 开始创建数据库集合...")
-        # 这里会集成现有的集合创建逻辑
-        # 现在只是模拟
-        time.sleep(2)
-        self.logger.info("✅ 数据库集合创建完成")
-
-    def _initialize_services(self):
-        """初始化服务组件"""
-        self.logger.info("🔧 开始初始化服务组件...")
-        # 这里会集成现有的服务初始化逻辑
-        # 现在只是模拟
-        time.sleep(1)
-        self.logger.info("✅ 服务组件初始化完成")
-
-    def _consolidate_memory(self):
-        """记忆巩固"""
-        self.logger.info("🧠 开始执行记忆巩固...")
-        # 这里会集成现有的记忆巩固逻辑
-        # 现在只是模拟
-        time.sleep(3)
-        self.logger.info("✅ 记忆巩固完成")
-
-    def _start_file_scanning(self):
-        """启动文件扫描"""
-        self.logger.info("📂 开始启动文件扫描...")
-        # 这里会集成现有的文件扫描逻辑
-        # 现在只是模拟
-        self.logger.info("✅ 文件扫描已启动")
+    def get_component_factory(self):
+        """获取组件工厂"""
+        return self.component_factory

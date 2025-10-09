@@ -4,7 +4,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pathlib import Path
 
 
@@ -21,6 +21,11 @@ class MemorySystemConfig:
         "MEMORY_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"
     ))
 
+    # 嵌入式模型提供商ID
+    astrbot_embedding_provider_id: str = field(default_factory=lambda: os.getenv(
+        "MEMORY_ASTRBOT_EMBEDDING_PROVIDER_ID", ""
+    ))
+
     # 集合名称配置
     collection_name: str = field(default_factory=lambda: os.getenv(
         "MEMORY_COLLECTION_NAME", "personal_memory_v1"
@@ -35,13 +40,10 @@ class MemorySystemConfig:
         "NOTES_SUB_COLLECTION_NAME", "notes_sub"
     ))
 
-    storage_dir: Path = field(default_factory=lambda: Path(os.getenv(
-        "MEMORY_STORAGE_DIR", "./storage"
-    )))
-
-    index_dir: Path = field(default_factory=lambda: Path(os.getenv(
-        "MEMORY_INDEX_DIR", "./storage/index"
-    )))
+    # 注意：storage_dir 和 index_dir 应该从 PathManager 实例获取（在设置供应商后）
+    # 这里不再设置默认值，由外部传入或通过 PathManager 动态获取
+    storage_dir: Path = field(default=None)
+    index_dir: Path = field(default=None)
 
     # 阈值配置
     strength_threshold: int = field(default_factory=lambda: int(os.getenv(
@@ -90,6 +92,7 @@ class MemorySystemConfig:
         """转换为字典"""
         return {
             "embedding_model": self.embedding_model,
+            "astrbot_embedding_provider_id": self.astrbot_embedding_provider_id,
             "collection_name": self.collection_name,
             "storage_dir": str(self.storage_dir),
             "index_dir": str(self.index_dir),
@@ -116,9 +119,20 @@ class MemorySystemConfig:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
 
-    def get_database_path(self) -> Path:
-        """获取数据库路径"""
-        return self.index_dir / "chromadb"
+    def get_database_path(self, provider_id: Optional[str] = None) -> Path:
+        """
+        获取数据库路径
+
+        Args:
+            provider_id: 提供商ID，如果提供则使用提供商专用路径
+
+        Returns:
+            数据库路径
+        """
+        if provider_id:
+            return self.index_dir / f"chromadb_{provider_id}"
+        else:
+            return self.index_dir / "chromadb"
 
 
 # 全局配置实例

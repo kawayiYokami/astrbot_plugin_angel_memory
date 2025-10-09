@@ -8,7 +8,11 @@
 from typing import List
 
 # 导入日志记录器
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory
 from ..components.vector_store import VectorStore
 from ..components.association_manager import AssociationManager
@@ -55,9 +59,6 @@ class CognitiveService:
 
         # 创建记忆管理器，并传入具体的 collection 对象
         self.memory_manager = MemoryManager(self.main_collection, self.vector_store, self.association_manager)
-
-        # 执行数据库健康性检查
-        self.memory_manager.health_check()
 
         # 记录初始化状态以验证VectorStore
         self.logger.info(f"认知服务初始化完成。向量存储客户端: {self.vector_store.client}")

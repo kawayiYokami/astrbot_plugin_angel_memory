@@ -5,19 +5,22 @@
 支持目录解析、文档向量化存储和智能查询。
 """
 
-import uuid
 import re
-import time
 import asyncio
 import concurrent.futures
 from typing import List, Dict, Optional
 from pathlib import Path
 
-from ..models.document_models import DocumentBlock
+from ..models.note_models import NoteData
 from ..parser.parser_manager import parser_manager
+from .id_service import IDService
 
 # 导入日志记录器
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 from ..config.system_config import system_config
 
 
@@ -49,24 +52,65 @@ class NoteService:
     - 智能标签提取
     - 语义搜索
     - 与记忆系统的数据隔离
+    - 批量向量化优化
     """
 
-    def __init__(self, vector_store):
+    def __init__(self, plugin_context=None, vector_store=None):
         """
         初始化笔记服务。
 
         Args:
-            vector_store: 一个已经初始化好的 VectorStore 实例。
+            plugin_context: PluginContext插件上下文（可选）
+            vector_store: VectorStore实例（向后兼容，如果未提供plugin_context则必需）
         """
         self.logger = logger
-        if not vector_store:
-            raise ValueError("必须提供一个 VectorStore 实例。")
-        self.vector_store = vector_store
+        self.plugin_context = plugin_context
 
-        # 获取解析器管理器（不再直接初始化特定解析器）
+        # 优先使用PluginContext，否则使用传入的vector_store
+        if plugin_context:
+            # 从PluginContext创建IDService
+            self.id_service = IDService.from_plugin_context(plugin_context)
+            # vector_store需要在ComponentFactory中设置
+            self.vector_store = None
+            self.collections_initialized = False
+            self.logger.info("笔记服务初始化完成（PluginContext模式），等待vector_store设置。")
+        elif vector_store:
+            # 向后兼容模式
+            if not vector_store:
+                raise ValueError("必须提供一个 VectorStore 实例。")
+            self.vector_store = vector_store
+
+            # 初始化ID服务（使用默认配置）
+            self.id_service = IDService()
+
+            # 通过VectorStore获取集合
+            self._initialize_collections()
+            self.logger.info("笔记服务初始化完成（传统模式），已建立专用的主副集合。")
+        else:
+            raise ValueError("必须提供 plugin_context 或 vector_store 参数")
+
+        # 获取解析器管理器
         self.parser_manager = parser_manager
 
-        # 通过VectorStore获取集合，确保使用正确的模型和维度检查
+        # 创建轻量线程池（仅用于同步解析器的兼容，顺序处理模式下几乎不并发）
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,  # 顺序处理，只需1个线程
+            thread_name_prefix="NoteService"
+        )
+
+        # 批量向量化优化配置
+        self._batch_size = 64  # 每批次最多64个文档块
+        self._batch_timeout = 5.0  # 最大等待5秒
+        self._embedding_queue = []  # 待向量化的队列
+        self._batch_lock = asyncio.Lock()  # 异步锁保护队列
+        self.logger.info("NoteService初始化完成（顺序处理模式）")
+
+    def _initialize_collections(self):
+        """初始化ChromaDB集合"""
+        if not self.vector_store:
+            raise ValueError("VectorStore未设置，无法初始化集合")
+
+        # 通过VectorStore获取集合，使用缓存机制避免重复初始化
         self.main_collection = (
             self.vector_store.get_or_create_collection_with_dimension_check(
                 system_config.notes_main_collection_name
@@ -77,8 +121,29 @@ class NoteService:
                 system_config.notes_sub_collection_name
             )
         )
+        self.collections_initialized = True
 
-        self.logger.info("笔记服务初始化完成，已建立专用的主副集合。")
+    def set_vector_store(self, vector_store):
+        """
+        设置VectorStore实例（用于PluginContext模式）
+
+        Args:
+            vector_store: VectorStore实例
+        """
+        if self.vector_store:
+            self.logger.warning("VectorStore已存在，将被覆盖")
+
+        self.vector_store = vector_store
+        self._initialize_collections()
+        self.logger.info("VectorStore已设置，集合初始化完成")
+
+    def ensure_ready(self):
+        """确保服务已准备就绪（用于PluginContext模式）"""
+        if not self.collections_initialized:
+            if not self.vector_store:
+                raise RuntimeError("NoteService未设置VectorStore，请先调用set_vector_store()")
+            self._initialize_collections()
+        return True
 
     def add_note(
         self, content: str, tags: List[str] = None, metadata: dict = None, note_id: Optional[str] = None
@@ -96,10 +161,8 @@ class NoteService:
             笔记ID
         """
         try:
-            # 如果未提供ID，则生成唯一ID
-            if note_id is None:
-                note_id = str(uuid.uuid4())
-
+            # 确保服务已准备就绪
+            self.ensure_ready()
             # 自动提取标签（如果没有提供）
             if tags is None:
                 tags = self._extract_tags(content)
@@ -108,71 +171,55 @@ class NoteService:
             if not tags:
                 raise ValueError("标签列表不允许为空。")
 
-            # 准备元数据
-            note_metadata = {
-                "created_at": time.time(),  # 使用正确的时间戳
-                "source": "note_service",
-                "tags": ",".join(tags),  # 将标签列表转换为逗号分隔的字符串
-                **(metadata or {}),
-            }
+            # 使用ID服务将tag字符串转换为tag_ids
+            tag_ids = self.id_service.tags_to_ids(tags)
 
-            # 文件哈希值检查（去重）
-            file_hash = note_metadata.get("source_file_hash")
-            if file_hash:
-                existing = self.main_collection.get(
-                    where={"source_file_hash": file_hash}, limit=1
-                )
-                if existing and existing["ids"]:
-                    self.logger.info(f"文件哈希值 {file_hash} 已存在，跳过写入。")
-                    return existing["ids"][0]  # 返回已存在的ID
-
-            # 准备数据
-            tags_text = " ".join(tags)
-            fused_content_for_embedding = content + " \n\nTags: " + tags_text
-            full_note_data = (
-                note_metadata  # 假设 metadata 包含完整的 DocumentBlock 结构
+            # 创建NoteData对象
+            note = NoteData.create_user_note(
+                content=content,
+                tag_ids=tag_ids
             )
 
-            # 事务性写入，确保数据一致性
+            # 如果提供了自定义ID，覆盖生成的ID
+            if note_id is not None:
+                note.id = note_id
+
+            # 使用新的笔记存储方法
             try:
-                # 使用高级抽象方法写入主集合
-                # 设计决策：documents 和 embedding_texts 使用相同的内容。
-                # 这是为了将标签的语义融合到向量和存储的文档中，
-                # 以解决文档内容本身可能不包含关键索引词（如人名、地名）的问题，
-                # 从而提升在这些场景下的召回率。
-                self.vector_store.upsert_documents(
+                # 使用VectorStore的笔记专用方法存储主集合
+                self.vector_store.store_note(
                     collection=self.main_collection,
-                    ids=[note_id],
-                    embedding_texts=[fused_content_for_embedding],
-                    documents=[fused_content_for_embedding],
-                    metadatas=full_note_data,
+                    note=note
                 )
-                # 使用高级抽象方法写入副集合
+
+                # 副集合只存储标签文本，用于标签重排
+                tag_names = self.id_service.ids_to_tags(tag_ids)
                 self.vector_store.upsert_documents(
                     collection=self.sub_collection,
-                    ids=[note_id],
-                    embedding_texts=[tags_text],
-                    documents=[tags_text],
+                    ids=[note.id],
+                    embedding_texts=[note.get_tags_text(tag_names)],
+                    documents=[note.get_tags_text(tag_names)]
                 )
+
             except Exception as e:
                 self.logger.error(f"写入双集合失败，执行回滚: {e}")
                 # 尝试回滚（删除可能已写入的部分数据）
                 try:
-                    self.main_collection.delete(ids=[note_id])
-                    self.sub_collection.delete(ids=[note_id])
+                    self.main_collection.delete(ids=[note.id])
+                    self.sub_collection.delete(ids=[note.id])
                 except Exception as rollback_error:
                     self.logger.error(f"回滚失败: {rollback_error}")
                 raise  # 重新抛出异常，让上层感知到失败
 
-            self.logger.info(f"成功添加笔记: {note_id}, 标签: {tags}")
-            return note_id
+            self.logger.info(f"成功添加笔记: {note.id}, 标签: {tags}")
+            return note.id
 
         except Exception as e:
             self.logger.error(f"添加笔记失败: {e}")
             raise
 
     def search_notes(
-        self, query: str, max_results: int = 10, tag_filter: List[str] = None
+        self, query: str, max_results: int = 10, tag_filter: List[str] = None, threshold: float = 0.5
     ) -> List[Dict]:
         """
         搜索笔记
@@ -181,13 +228,16 @@ class NoteService:
             query: 查询内容
             max_results: 最大结果数
             tag_filter: 标签过滤
+            threshold: 相似度阈值（0.0-1.0），低于此阈值的结果将被过滤
 
         Returns:
             搜索结果列表
         """
         try:
-            # 使用两阶段混合检索策略
-            results = self._hybrid_search(query, max_results)
+            # 确保服务已准备就绪
+            self.ensure_ready()
+            # 使用两阶段混合检索策略，传递阈值参数
+            results = self._hybrid_search(query, max_results, threshold=threshold)
             return results
 
         except Exception as e:
@@ -270,78 +320,62 @@ class NoteService:
         """
 
         # 1. 第一阶段：过滤 (Filtering)
-        # 在主集合 (内容+标签) 中进行向量搜索，并立即应用阈值
-        recall_results = self.main_collection.query(
-            query_texts=[query],
-            n_results=recall_count,
-            include=["metadatas", "documents", "distances"],
+        # 使用 VectorStore 的笔记专用检索方法进行向量搜索
+        recall_results = self.vector_store.search_notes(
+            collection=self.main_collection,
+            query=query,
+            limit=recall_count
         )
 
         # 处理无结果情况
-        if not recall_results["ids"] or not recall_results["ids"][0]:
+        if not recall_results:
             return []
 
-        # 构建一个包含所有召回信息的字典列表
+        # 构建一个包含所有召回信息的字典列表，并应用阈值过滤
         all_recalled_notes = []
-        for i, note_id in enumerate(recall_results["ids"][0]):
-            distance = recall_results["distances"][0][i]
-            similarity = 1 - distance
-            if similarity >= threshold:
-                all_recalled_notes.append(
-                    {
-                        "id": note_id,
-                        "content": recall_results["documents"][0][i],
-                        "metadata": recall_results["metadatas"][0][i],
-                        "tags": (
-                            recall_results["metadatas"][0][i].get("tags", "").split(",")
-                            if recall_results["metadatas"][0][i].get("tags")
-                            else []
-                        ),
-                        "content_similarity": similarity,
-                    }
-                )
+        for note in recall_results:
+            # 获取真实的相似度分数（由VectorStore设置）
+            content_similarity = getattr(note, 'similarity', 0.0)
+
+            # 应用阈值过滤：只保留相似度 >= threshold 的结果
+            if content_similarity < threshold:
+                continue
+
+            # 从 NoteData 对象中提取数据
+            tag_names = self.id_service.ids_to_tags(note.tag_ids)
+            all_recalled_notes.append(
+                {
+                    "id": note.id,
+                    "content": note.content,
+                    "metadata": note.to_dict(),
+                    "tags": tag_names,  # 转换为tag_names
+                    "content_similarity": content_similarity,  # 使用真实相似度
+                }
+            )
 
         # 如果没有笔记通过阈值过滤，直接返回
         if not all_recalled_notes:
+            self.logger.debug(f"所有召回结果都低于阈值 {threshold}，返回空列表")
             return []
 
-        # 文档级去重：在同一文档中只保留最相关的片段
-        # 这确保了候选集的文档多样性，防止单一文档占据过多候选位置
-        seen_source_files = set()
-        deduplicated_notes = []
-
-        for note in all_recalled_notes:
-            source_file_path = note["metadata"].get("source_file_path")
-            if not source_file_path:
-                self.logger.warning(f"Note {note['id']} is missing 'source_file_path' in metadata, skipping deduplication for this item.")
-                deduplicated_notes.append(note)  # 对于没有路径的笔记，直接保留
-                continue
-
-            if source_file_path not in seen_source_files:
-                seen_source_files.add(source_file_path)
-                deduplicated_notes.append(note)
-
-        # 更新候选笔记列表为去重后的结果
-        all_recalled_notes = deduplicated_notes
-
-        # 2. 第二阶段：重排 (Reranking)
+        # 2. 第一阶段：重排 (Reranking)
         # 拿着原始查询，在整个副集合 (纯标签) 中进行搜索，以获取所有笔记的标签相关性分数
         all_sub_collection_ids = [note["id"] for note in all_recalled_notes]
 
-        rerank_results = self.sub_collection.query(
-            query_texts=[query],
-            where={
-                "id": {"$in": all_sub_collection_ids}
-            },  # 优化：只查询通过第一阶段的ID
-            n_results=len(all_sub_collection_ids),
-            include=["distances"],
+        # 使用 VectorStore 的笔记专用检索方法进行标签重排
+        rerank_results = self.vector_store.search_notes(
+            collection=self.sub_collection,
+            query=query,
+            limit=len(all_sub_collection_ids)
         )
 
-        # 创建一个 "ID -> 标签分数" 的映射
+        # 创建一个 "ID -> 标签分数" 的映射，使用真实的相似度分数
         tag_scores = {}
-        if rerank_results["ids"] and rerank_results["ids"][0]:
-            for i, note_id in enumerate(rerank_results["ids"][0]):
-                tag_scores[note_id] = 1 - rerank_results["distances"][0][i]
+        for note in (rerank_results or []):
+            if note.id in all_sub_collection_ids:
+                # 使用真实的标签相似度分数（由VectorStore设置）
+                tag_similarity = getattr(note, 'similarity', 0.0)
+                tag_scores[note.id] = tag_similarity
 
         # 3. 最终排序
         # 将标签分数附加到通过第一阶段的笔记上
@@ -353,10 +387,26 @@ class NoteService:
         # 根据标签分数进行降序排序
         all_recalled_notes.sort(key=lambda x: x["tag_score"], reverse=True)
 
+        # 文档去重：在同一文档中只保留排名最高的片段
+        # 由于已按标签分数排序，第一次出现的就是该文档中标签最相关的块
+        seen_file_ids = set()
+        deduplicated_notes = []
+
+        for note in all_recalled_notes:
+            file_id = note["metadata"].get("file_id")
+            if file_id is None:
+                self.logger.warning(f"Note {note['id']} is missing 'file_id' in metadata, skipping deduplication for this item.")
+                deduplicated_notes.append(note)
+                continue
+
+            if file_id not in seen_file_ids:
+                seen_file_ids.add(file_id)
+                deduplicated_notes.append(note)
+
         # 4. 组装最终结果
         # 截取所需数量的结果，并格式化输出
         final_results = []
-        for note in all_recalled_notes[:max_results]:
+        for note in deduplicated_notes[:max_results]:
             final_results.append(
                 {
                     "id": note["id"],
@@ -392,15 +442,25 @@ class NoteService:
             if results and results["ids"] and results["ids"][0]:
                 # 组装返回数据
                 metadata = results["metadatas"][0] if results["metadatas"] else {}
-                document = results["documents"][0] if results["documents"] else ""
-                tags = (
-                    metadata.get("tags", "").split(",") if metadata.get("tags") else []
-                )
+                document = metadata.get("content", "")
+
+                # 从tag_ids转换为tag_names
+                tag_ids = metadata.get("tag_ids", [])
+                if isinstance(tag_ids, str):
+                    import json
+                    try:
+                        tag_ids = json.loads(tag_ids)
+                    except json.JSONDecodeError:
+                        tag_ids = []
+
+                # 创建NoteData对象以获取tag_names
+                note_data = NoteData.from_dict(metadata)
+                tag_names = self.id_service.ids_to_tags(note_data.tag_ids)
 
                 formatted_note = {
                     "id": note_id,
                     "content": document,
-                    "tags": tags,
+                    "tags": tag_names,
                     "metadata": metadata,
                 }
 
@@ -511,48 +571,42 @@ class NoteService:
         """
         try:
             # 获取现有笔记以获取当前内容
-            old_note = self.get_note(note_id)
+            old_note_dict = self.get_note(note_id)
+
+            # 将字典转换为NoteData对象
+            old_note = NoteData.from_dict(old_note_dict["metadata"])
 
             # 使用新内容或保留旧内容
-            final_content = content if content is not None else old_note["content"]
+            final_content = content if content is not None else old_note.content
 
             # 使用新标签或重新提取标签
             final_tags = tags if tags is not None else self._extract_tags(final_content)
 
-            # 获取旧的元数据并更新
-            metadata = old_note.get("metadata", {}).copy()
-            metadata["updated_at"] = time.time()
-            metadata["updated"] = True
-            metadata["tags"] = ",".join(
-                final_tags
-            )  # 关键修复：将更新后的标签列表转换为字符串
+            # 使用ID服务将tag字符串转换为tag_ids
+            final_tag_ids = self.id_service.tags_to_ids(final_tags)
 
-            # 准备数据
-            tags_text = " ".join(final_tags)
-            fused_content_for_embedding = final_content + " \n\nTags: " + tags_text
+            # 更新笔记对象（直接修改dataclass字段）
+            old_note.content = final_content
+            old_note.tag_ids = final_tag_ids
 
-            # 事务性更新，确保数据一致性
+            # 使用新的笔记存储方法更新主集合
             try:
-                # 使用高级抽象方法更新主集合
-                # 设计决策：documents 和 embedding_texts 使用相同的内容。
-                # 理由同 add_note 方法，确保更新时也能将标签语义融合进去。
-                self.vector_store.upsert_documents(
+                self.vector_store.store_note(
                     collection=self.main_collection,
-                    ids=[note_id],
-                    embedding_texts=[fused_content_for_embedding],
-                    documents=[fused_content_for_embedding],
-                    metadatas=metadata,
+                    note=old_note
                 )
-                # 使用高级抽象方法更新副集合
+
+                # 更新副集合
+                tag_names = self.id_service.ids_to_tags(old_note.tag_ids)
                 self.vector_store.upsert_documents(
                     collection=self.sub_collection,
-                    ids=[note_id],
-                    embedding_texts=[tags_text],
-                    documents=[tags_text],
+                    ids=[old_note.id],
+                    embedding_texts=[old_note.get_tags_text(tag_names)],
+                    documents=[old_note.get_tags_text(tag_names)]
                 )
+
             except Exception as e:
                 self.logger.error(f"更新双集合失败: {e}")
-                # 注意：这里的回滚比较困难，但至少记录了错误
                 raise
 
             self.logger.info(f"成功更新笔记: {note_id}")
@@ -626,17 +680,26 @@ class NoteService:
                 self.logger.debug(f"文件类型不支持，跳过处理: {file_path}")
                 return 0
 
-            # 获取对应的解析器
-            parser = self.parser_manager.get_parser_for_file(file_path)
+            # 获取对应的解析器（传递ID服务中的TagManager）
+            parser = self.parser_manager.get_parser_for_file(file_path, self.id_service.tag_manager)
             if not parser:
                 self.logger.warning(f"未找到适合的解析器，跳过处理: {file_path}")
                 return 0
 
-            # 对于支持异步解析的解析器，使用异步方式处理
+            # 获取文件信息（但不创建文件索引）
+            file_path_obj = Path(file_path)
+            file_timestamp = int(file_path_obj.stat().st_mtime)
+            relative_path = file_path_obj.name  # 使用文件名作为相对路径
+
+            # 注意：不在这里创建文件索引，由调用方在处理成功后创建
+            # 使用临时文件ID用于解析过程中的标识
+            temp_file_id = hash(relative_path + str(file_timestamp)) % (2**31)  # 生成临时ID
+
+            # 使用带TagManager的解析器
             if hasattr(parser, "async_parse"):
-                # 在线程池中异步执行解析任务
+                # 异步解析需要传递TagManager和file_id
                 loop = asyncio.new_event_loop()
-                document_blocks = loop.run_until_complete(parser.async_parse(file_path))
+                document_blocks = loop.run_until_complete(parser.async_parse(file_path, self.id_service.tag_manager, temp_file_id))
             else:
                 # 读取文件内容并解析
                 try:
@@ -646,21 +709,12 @@ class NoteService:
                     # 对于二进制文件，传递空内容，由解析器处理
                     content = ""
 
-                # 解析文档
-                document_blocks = parser.parse(content, file_path)
+                # 解析文档，传递临时file_id
+                document_blocks = parser.parse(content, temp_file_id, file_path)
 
-            # BUG修复：检查文件是否已存在，如果存在则先删除旧数据
-            # 避免文件修改后产生重复数据的问题，同时避免对新文件进行不必要的清理
-            existing_results = self.main_collection.get(where={"source_file_path": file_path})
-            if existing_results and existing_results["ids"]:
-                self.logger.debug(f"文件已存在，清理旧数据: {file_path}")
-                removed_success = self.remove_file_data(file_path)
-                if not removed_success:
-                    self.logger.warning(f"清理文件旧数据失败，继续处理新数据: {file_path}")
-
-            # 批量存储所有文档块，而不是逐个存储
+            # 批量存储所有笔记，而不是逐个存储（同步调用）
             if document_blocks:
-                self._store_document_blocks_batch(document_blocks)
+                self._store_notes_batch(document_blocks)
 
             return len(document_blocks)
 
@@ -668,16 +722,88 @@ class NoteService:
             self.logger.error(f"解析文件失败: {file_path}, 错误: {e}")
             raise
 
-    async def async_parse_and_store_file(self, file_path: str) -> int:
+    def parse_and_store_file_sync(self, file_path: str, relative_path: str = None) -> tuple:
+        """
+        同步版本：解析并存储文件（顺序处理优化）
+        
+        Args:
+            file_path: 文件路径
+            relative_path: 相对路径
+            
+        Returns:
+            (文档数量, 计时字典)
+        """
+        import time
+        timings = {}
+        
+        try:
+            # 检查文件是否存在
+            file_path_obj = Path(file_path)
+            if not file_path_obj.exists():
+                self.logger.warning(f"文件不存在: {file_path}")
+                return 0, timings
+            
+            # 获取解析器
+            t_parser = time.time()
+            parser = self.parser_manager.get_parser_for_file(file_path, self.id_service.tag_manager)
+            timings['parser_select'] = (time.time() - t_parser) * 1000
+            
+            if parser is None:
+                self.logger.warning(f"未找到适合的解析器，跳过处理: {file_path}")
+                return 0, timings
+            
+            # 获取文件信息
+            file_path_obj = Path(file_path)
+            file_timestamp = int(file_path_obj.stat().st_mtime)
+            
+            # 优先使用传入的relative_path
+            if relative_path is None:
+                relative_path = file_path_obj.name
+            
+            # 获取或创建文件ID
+            t_start = time.time()
+            file_id = self.id_service.file_to_id(relative_path, file_timestamp)
+            timings['id_lookup'] = (time.time() - t_start) * 1000
+            
+            # 同步解析文件
+            t_start = time.time()
+            document_blocks = self._parse_file_sync(file_path, parser, file_id)
+            timings['parse'] = (time.time() - t_start) * 1000
+            
+            # 存储notes（完全同步版本，直接存储不走队列）
+            if document_blocks:
+                t_store_submit = time.time()
+                
+                # 直接同步存储（跳过批量队列，不更新BM25）
+                store_timings = self._store_notes_batch(document_blocks, update_bm25=False)
+                
+                timings['store_total'] = (time.time() - t_store_submit) * 1000
+                
+                if store_timings:
+                    timings.update(store_timings)
+            else:
+                timings['store_total'] = 0
+            
+            return len(document_blocks), timings
+            
+        except Exception as e:
+            self.logger.error(f"同步解析文件失败: {file_path}, 错误: {e}")
+            raise
+    
+    async def async_parse_and_store_file(self, file_path: str, relative_path: str = None) -> tuple:
         """
         异步解析单个文件并存储到向量数据库（不阻塞主流程）
 
         Args:
             file_path: 文件路径
+            relative_path: 相对路径（可选，如果不提供则使用文件名）
 
         Returns:
-            处理的文档块数量
+            (文档块数量, 计时字典)
         """
+        import time
+        timings = {}
+        
         try:
             file_path_obj = Path(file_path)
             if not file_path_obj.exists():
@@ -686,59 +812,139 @@ class NoteService:
             # 检查文件类型是否支持
             if not self._is_supported_file(file_path):
                 self.logger.debug(f"文件类型不支持，跳过处理: {file_path}")
-                return 0
+                return 0, timings
 
-            # 获取对应的解析器
-            parser = self.parser_manager.get_parser_for_file(file_path)
+            # 获取对应的解析器（传递ID服务中的TagManager）
+            parser = self.parser_manager.get_parser_for_file(file_path, self.id_service.tag_manager)
             if not parser:
                 self.logger.warning(f"未找到适合的解析器，跳过处理: {file_path}")
-                return 0
+                return 0, timings
 
-            # 对于支持异步解析的解析器，使用异步方式处理
+            # 获取文件信息
+            file_path_obj = Path(file_path)
+            file_timestamp = int(file_path_obj.stat().st_mtime)
+
+            # 优先使用传入的relative_path，否则使用文件名
+            if relative_path is None:
+                relative_path = file_path_obj.name
+
+            # 获取或创建文件ID
+            t_start = time.time()
+            file_id = self.id_service.file_to_id(relative_path, file_timestamp)
+            timings['id_lookup'] = (time.time() - t_start) * 1000
+
+            # 使用带TagManager的解析器
+            t_start = time.time()
             if hasattr(parser, "async_parse"):
-                document_blocks = await parser.async_parse(file_path)
+                # 异步解析需要传递TagManager和file_id
+                document_blocks = await parser.async_parse(file_path, self.id_service.tag_manager, file_id)
             else:
-                # 在线程池中执行CPU密集型任务
+                # 在共享线程池中执行CPU密集型任务（复用线程，避免无限创建）
                 loop = asyncio.get_event_loop()
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    document_blocks = await loop.run_in_executor(
-                        executor, self._parse_file_sync, file_path, parser
-                    )
+                document_blocks = await loop.run_in_executor(
+                    self._thread_pool, self._parse_file_sync, file_path, parser, file_id
+                )
+            timings['parse'] = (time.time() - t_start) * 1000
 
-            # BUG修复：检查文件是否已存在，如果存在则先删除旧数据
-            # 避免文件修改后产生重复数据的问题，同时避免对新文件进行不必要的清理
-            existing_results = self.main_collection.get(where={"source_file_path": file_path})
-            if existing_results and existing_results["ids"]:
-                self.logger.debug(f"文件已存在，清理旧数据(异步): {file_path}")
-                removed_success = self.remove_file_data(file_path)
-                if not removed_success:
-                    self.logger.warning(f"清理文件旧数据失败，继续处理新数据: {file_path}")
-            else:
-                self.logger.debug(f"新文件，无需清理旧数据(异步): {file_path}")
+            # 注意：不要在这里close()，因为后续存储notes还需要创建tags
+            # close()只应该在整个服务关闭时调用
+            timings['id_close'] = 0
 
-            # 批量存储所有文档块，而不是逐个存储
+            # 使用优化的批量存储（异步执行）
             if document_blocks:
-                self._store_document_blocks_batch(document_blocks)
+                t_store_submit = time.time()
+                
+                # 使用优化的批量存储方法
+                store_timings = await self._store_notes_batch_optimized(document_blocks)
+                
+                timings['store_total'] = (time.time() - t_store_submit) * 1000
+                
+                # 合并store内部的详细计时
+                if store_timings:
+                    timings.update(store_timings)
+            else:
+                timings['store_total'] = 0
 
-            self.logger.info(
-                f"文件异步解析完成: {file_path}, 生成 {len(document_blocks)} 个文档块"
-            )
-            return len(document_blocks)
+            return len(document_blocks), timings
 
         except Exception as e:
             self.logger.error(f"异步解析文件失败: {file_path}, 错误: {e}")
             raise
 
-    def _parse_file_sync(self, file_path: str, parser) -> List[DocumentBlock]:
+    async def parse_and_store_with_file_id(
+        self,
+        file_path: str,
+        file_id: int,
+        relative_path: str
+    ) -> tuple:
+        """
+        使用领导分配的file_id处理文件（优化版，不查数据库）
+
+        Args:
+            file_path: 完整文件路径
+            file_id: 领导预先分配的文件ID
+            relative_path: 相对路径
+
+        Returns:
+            (文档块数量, 计时字典)
+
+        Raises:
+            Exception: 处理失败时抛出异常
+        """
+        # 直接使用领导分配的file_id，不查数据库
+        doc_count, timings = await self.async_parse_and_store_file(file_path, relative_path)
+        return doc_count, timings
+
+    async def parse_and_store_with_rollback(
+        self,
+        file_path: str,
+        file_index_manager,
+        relative_path: str,
+        timestamp: int
+    ) -> tuple:
+        """
+        原子性地处理文件：先索引，再向量，失败则回滚索引（旧版本，兼容性保留）
+
+        Args:
+            file_path: 完整文件路径
+            file_index_manager: 文件索引管理器实例
+            relative_path: 相对路径
+            timestamp: 文件时间戳
+
+        Returns:
+            (文档块数量, 计时字典)
+
+        Raises:
+            Exception: 向量库操作失败时抛出异常，索引已被回滚
+        """
+        # 1. 先创建文件索引（简单快速）
+        file_id = file_index_manager.get_or_create_file_id(relative_path, timestamp)
+
+        try:
+            # 2. 处理向量库，传递正确的relative_path，返回文档数和计时
+            doc_count, timings = await self.async_parse_and_store_file(file_path, relative_path)
+            return doc_count, timings
+        except Exception as e:
+            # 3. 向量库失败，回滚索引
+            self.logger.error(f"向量库处理失败，回滚文件索引: {relative_path}, 错误: {e}")
+            try:
+                file_index_manager.delete_file(file_id)
+                self.logger.debug(f"已回滚文件索引: {relative_path} (ID: {file_id})")
+            except Exception as rollback_error:
+                self.logger.error(f"回滚文件索引失败: {relative_path}, 错误: {rollback_error}")
+            raise  # 重新抛出异常，让调用方知道失败了
+
+    def _parse_file_sync(self, file_path: str, parser, file_id: int) -> List[NoteData]:
         """
         同步解析文件的辅助方法
 
         Args:
             file_path: 文件路径
             parser: 解析器实例
+            file_id: 文件索引ID
 
         Returns:
-            文档块列表
+            笔记数据列表
         """
         try:
             # 读取文件内容
@@ -749,8 +955,8 @@ class NoteService:
                 # 对于二进制文件，传递空内容，由解析器处理
                 content = ""
 
-            # 解析文档
-            return parser.parse(content, file_path)
+            # 解析文档，传递file_id（解析器已经有TagManager）
+            return parser.parse(content, file_id, file_path)
         except Exception as e:
             self.logger.error(f"同步解析文件失败: {file_path}, 错误: {e}")
             raise
@@ -769,66 +975,125 @@ class NoteService:
         extension = path.suffix.lower()
         return self.parser_manager.is_supported_extension(extension)
 
-    def _store_document_blocks_batch(self, blocks: List[DocumentBlock]):
+    def _store_notes_batch(self, notes: List[NoteData], update_bm25: bool = False) -> dict:
         """
-        批量存储文档块到向量数据库（双集合架构）
+        批量存储笔记到向量数据库（同步方法）
 
         Args:
-            blocks: 文档块列表
+            notes: 笔记数据列表
+            update_bm25: 是否立即更新BM25索引（默认False，延迟更新以提升性能）
+            
+        Returns:
+            计时字典
         """
+        import time
+        timings = {}
+        t_method_start = time.time()  # 方法总体计时
+        
         try:
-            # 准备主集合数据
-            main_ids = []
-            main_contents = []
-            main_metadatas = []
+            if not notes:
+                self.logger.debug("没有笔记需要存储")
+                return timings
 
             # 准备副集合数据
-            sub_ids = []
-            sub_tags_texts = []
+            t_prep_sub = time.time()
+            notes_to_store = notes
+            sub_collection_data = []
 
-            for block in blocks:
-                # 主集合数据
-                main_ids.append(block.id)
-                main_contents.append(block.content)
+            for note in notes:
+                tag_names = self.id_service.ids_to_tags(note.tag_ids)
+                sub_collection_data.append({
+                    "id": note.id,
+                    "tags_text": note.get_tags_text(tag_names)
+                })
+            timings['prep_sub'] = (time.time() - t_prep_sub) * 1000
 
-                # 准备主集合元数据
-                main_metadata = {
-                    "created_at": block.created_at,
-                    "source_file_hash": block.source_file_hash,
-                    "related_block_ids": ",".join(block.related_block_ids),
-                    "source": "document_parser",
-                    "source_file_path": block.source_file_path,
-                }
-                main_metadatas.append(main_metadata)
+            # === 批量处理主集合（同步调用） ===
+            if notes_to_store:
+                # 准备主集合数据 - 详细计时
+                t_prep_main = time.time()
+                
+                ids = [note.id for note in notes_to_store]
+                timings['prep_main_ids'] = (time.time() - t_prep_main) * 1000
+                
+                # 准备embedding_texts（包含ids_to_tags调用）
+                t_embed_texts = time.time()
+                embedding_texts = []
+                for note in notes_to_store:
+                    tag_names = self.id_service.ids_to_tags(note.tag_ids)
+                    embedding_texts.append(note.get_embedding_text(tag_names))
+                timings['prep_main_embed_texts'] = (time.time() - t_embed_texts) * 1000
+                
+                # 准备documents
+                t_docs = time.time()
+                documents = [note.content for note in notes_to_store]
+                timings['prep_main_docs'] = (time.time() - t_docs) * 1000
+                
+                # 准备metadatas
+                t_meta = time.time()
+                metadatas = [note.to_dict() for note in notes_to_store]
+                timings['prep_main_meta'] = (time.time() - t_meta) * 1000
 
-                # 副集合数据
-                sub_ids.append(block.id)
-                sub_tags_texts.append(" ".join(block.tags))  # 标签文本用于副集合
+                # 一次性批量存储所有文档块（同步调用，数据库内部处理并发）
+                t_main = time.time()
+                upsert_timings = self.vector_store.upsert_documents(
+                    collection=self.main_collection,
+                    ids=ids,
+                    embedding_texts=embedding_texts,
+                    documents=documents,
+                    metadatas=metadatas,
+                    _return_timings=True
+                )
+                timings['store_main'] = (time.time() - t_main) * 1000
+                if upsert_timings:
+                    timings['main_embed'] = upsert_timings.get('embed', 0)
+                    timings['main_db'] = upsert_timings.get('db_upsert', 0)
 
-            # 使用高级抽象方法批量添加到主集合
-            self.vector_store.upsert_documents(
-                collection=self.main_collection,
-                ids=main_ids,
-                embedding_texts=main_contents,
-                documents=main_contents,
-                metadatas=main_metadatas,
-            )
+                # 可选：批量更新BM25索引
+                if update_bm25 and self.vector_store._is_hybrid_search_enabled():
+                    collection_name = self.main_collection.name
+                    doc_ids = [note.id for note in notes_to_store]
+                    contents = [note.content for note in notes_to_store]
 
-            # 使用高级抽象方法批量添加到副集合
-            self.vector_store.upsert_documents(
-                collection=self.sub_collection,
-                ids=sub_ids,
-                embedding_texts=sub_tags_texts,
-                documents=sub_tags_texts,
-            )
+                    success = self.vector_store.bm25_retriever.add_documents(
+                        collection_name, doc_ids, contents
+                    )
+                    if success:
+                        self.logger.debug(f"📝 BM25索引批量更新完成: {len(notes_to_store)} 个文档")
+                    else:
+                        self.logger.warning("BM25索引批量更新失败")
+
+            # === 批量处理副集合（同步调用） ===
+            if sub_collection_data:
+                t_sub = time.time()
+                ids = [data["id"] for data in sub_collection_data]
+                tags_texts = [data["tags_text"] for data in sub_collection_data]
+                sub_upsert_timings = self.vector_store.upsert_documents(
+                    collection=self.sub_collection,
+                    ids=ids,
+                    embedding_texts=tags_texts,
+                    documents=tags_texts,
+                    _return_timings=True
+                )
+                timings['store_sub'] = (time.time() - t_sub) * 1000
+                if sub_upsert_timings:
+                    timings['sub_embed'] = sub_upsert_timings.get('embed', 0)
+                    timings['sub_db'] = sub_upsert_timings.get('db_upsert', 0)
+            
+            # 记录方法总体执行时间
+            timings['_batch_method_total'] = (time.time() - t_method_start) * 1000
+            
+            return timings
 
         except Exception as e:
             self.logger.error(f"批量存储文档块失败: {e}")
+            import traceback
+            self.logger.error(f"错误详情: {traceback.format_exc()}")
             raise
 
     def remove_file_data(self, file_path: str) -> bool:
         """
-        删除与指定文件相关的所有数据
+        删除与指定文件相关的所有数据（同步版本）
 
         Args:
             file_path: 文件路径
@@ -837,8 +1102,14 @@ class NoteService:
             是否删除成功
         """
         try:
-            # 构造查询条件，查找所有与该文件相关的记录
-            # 假设我们在元数据中存储了 source_file_path 字段
+            # 尝试通过file_id删除（使用ID服务）
+            # 获取相对路径
+            relative_path = Path(file_path).name
+            file_id = self.id_service.id_to_file(relative_path)
+            if file_id:
+                return self.remove_file_data_by_file_id(file_id)
+
+            # 临时：仍使用旧的source_file_path查询（向后兼容）
             where_clause = {"source_file_path": file_path}
 
             # 从主集合中获取所有匹配的记录
@@ -865,3 +1136,273 @@ class NoteService:
         except Exception as e:
             self.logger.error(f"删除文件相关数据失败: {file_path}, 错误: {e}")
             return False
+
+    def remove_file_data_by_file_id(self, file_id: int) -> bool:
+        """
+        根据file_id删除文件相关的所有数据
+
+        Args:
+            file_id: 文件ID
+
+        Returns:
+            是否删除成功
+        """
+        try:
+            # 查询所有与该file_id相关的笔记
+            where_clause = {"file_id": file_id}
+            main_results = self.main_collection.get(where=where_clause)
+
+            if main_results and main_results["ids"]:
+                # 获取要删除的ID列表
+                ids_to_delete = main_results["ids"]
+
+                # 从主集合删除
+                self.main_collection.delete(ids=ids_to_delete)
+
+                # 从副集合删除
+                self.sub_collection.delete(ids=ids_to_delete)
+
+                self.logger.info(f"成功删除文件ID {file_id} 的 {len(ids_to_delete)} 条笔记记录")
+                return True
+            else:
+                self.logger.debug(f"文件ID {file_id} 没有关联的笔记数据")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"根据file_id删除文件数据失败: {file_id}, 错误: {e}")
+            return False
+
+    async def async_remove_file_data(self, file_path: str) -> bool:
+        """
+        删除与指定文件相关的所有数据（异步版本）
+        使用线程池执行同步的ChromaDB操作，避免阻塞事件循环
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            是否删除成功
+        """
+        try:
+            # 在线程池中执行同步的remove_file_data
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,  # 使用默认线程池
+                self.remove_file_data,
+                file_path
+            )
+            return result
+
+        except Exception as e:
+            self.logger.error(f"异步删除文件相关数据失败: {file_path}, 错误: {e}")
+            return False
+
+    def close(self):
+        """关闭服务，释放资源"""
+        try:
+            # 关闭线程池
+            if hasattr(self, '_thread_pool'):
+                self._thread_pool.shutdown(wait=True)
+                self.logger.debug("线程池已关闭")
+
+            # 关闭ID服务
+            if hasattr(self, 'id_service'):
+                self.id_service.close()
+
+            self.logger.debug("笔记服务已关闭")
+        except Exception as e:
+            self.logger.error(f"关闭笔记服务失败: {e}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    @classmethod
+    def from_plugin_context(cls, plugin_context):
+        """
+        从PluginContext创建NoteService实例
+
+        Args:
+            plugin_context: PluginContext插件上下文
+
+        Returns:
+            NoteService实例
+        """
+        return cls(plugin_context=plugin_context)
+
+    def get_status(self):
+        """
+        获取服务状态
+
+        Returns:
+            包含状态信息的字典
+        """
+        return {
+            "ready": self.collections_initialized,
+            "has_vector_store": self.vector_store is not None,
+            "has_plugin_context": self.plugin_context is not None,
+            "provider_id": self.id_service.provider_id if hasattr(self, 'id_service') else None,
+            "batch_queue_size": len(self._embedding_queue) if hasattr(self, '_embedding_queue') else 0
+        }
+
+    async def _process_batch_embedding(self):
+        """
+        处理批量向量化队列
+        
+        Returns:
+            (embedding_texts, documents, metadatas) 已处理的批量数据
+        """
+        if not self._embedding_queue:
+            return [], [], []
+            
+        # 取出队列中的所有数据
+        batch_data = self._embedding_queue.copy()
+        self._embedding_queue.clear()
+        
+        if not batch_data:
+            return [], [], []
+            
+        # 提取各个字段
+        embedding_texts = [item['embedding_text'] for item in batch_data]
+        documents = [item['document'] for item in batch_data]
+        metadatas = [item['metadata'] for item in batch_data]
+        
+        # self.logger.debug(f"批量向量化: {len(embedding_texts)} 个文档块")  # 注释掉
+        
+        return embedding_texts, documents, metadatas
+
+    async def _add_to_embedding_queue(self, embedding_text: str, document: str, metadata: dict) -> None:
+        """
+        将文档添加到向量化队列
+        
+        Args:
+            embedding_text: 待向量化的文本
+            document: 原始文档内容
+            metadata: 元数据
+        """
+        async with self._batch_lock:
+            self._embedding_queue.append({
+                'embedding_text': embedding_text,
+                'document': document,
+                'metadata': metadata
+            })
+            
+            # 如果队列达到批量大小，触发处理
+            if len(self._embedding_queue) >= self._batch_size:
+                await self._process_batch_embedding()
+
+    async def _flush_embedding_queue(self):
+        """
+        强制处理队列中剩余的文档（确保所有文档都被处理）
+        """
+        async with self._batch_lock:
+            if self._embedding_queue:
+                # self.logger.debug(f"强制处理剩余 {len(self._embedding_queue)} 个文档块")  # 注释掉
+                await self._process_batch_embedding()
+
+    async def _store_notes_batch_optimized(self, notes: List[NoteData]) -> dict:
+        """
+        优化版本的批量存储笔记，使用队列机制累积文档
+        
+        Args:
+            notes: 笔记数据列表
+            
+        Returns:
+            计时信息字典
+        """
+        import time
+        timings = {}
+        
+        if not notes:
+            return timings
+            
+        t_start = time.time()
+        
+        # 准备主集合数据
+        main_collection_data = []
+        sub_collection_data = []
+        
+        for note in notes:
+            # 主集合数据
+            import json
+            main_collection_data.append({
+                'id': note.id,
+                'embedding_text': note.content,
+                'document': note.content,
+                'metadata': {
+                    'file_id': note.file_id,
+                    'tag_ids': json.dumps(note.tag_ids)  # ChromaDB不支持list，需转JSON字符串
+                }
+            })
+            
+            # 副集合数据（标签文本）
+            if note.tag_ids:
+                tag_names = self.id_service.ids_to_tags(note.tag_ids)
+                tags_text = ' '.join(tag_names)
+                sub_collection_data.append({
+                    'id': note.id,
+                    'embedding_text': tags_text,
+                    'document': tags_text,
+                    'metadata': {'file_id': note.file_id}
+                })
+        
+        # 将数据添加到批量队列
+        main_texts = []
+        main_documents = []
+        main_metadatas = []
+        
+        for data in main_collection_data:
+            await self._add_to_embedding_queue(
+                data['embedding_text'], 
+                data['document'], 
+                data['metadata']
+            )
+            main_texts.append(data['embedding_text'])
+            main_documents.append(data['document'])
+            main_metadatas.append(data['metadata'])
+        
+        # 处理队列中的所有数据
+        await self._flush_embedding_queue()
+        
+        # 批量插入到主集合
+        if main_texts:
+            t_main = time.time()
+            ids = [note.id for note in notes]
+            upsert_timings = self.vector_store.upsert_documents(
+                collection=self.main_collection,
+                ids=ids,
+                embedding_texts=main_texts,
+                documents=main_documents,
+                metadatas=main_metadatas,
+                _return_timings=True
+            )
+            timings['store_main'] = (time.time() - t_main) * 1000
+            if upsert_timings:
+                timings['main_embed'] = upsert_timings.get('embed', 0)
+                timings['main_db'] = upsert_timings.get('db_upsert', 0)
+        
+        # 处理副集合
+        if sub_collection_data:
+            t_sub = time.time()
+            sub_ids = [data['id'] for data in sub_collection_data]
+            sub_texts = [data['embedding_text'] for data in sub_collection_data]
+            sub_documents = [data['document'] for data in sub_collection_data]
+            sub_metadatas = [data['metadata'] for data in sub_collection_data]
+            
+            sub_upsert_timings = self.vector_store.upsert_documents(
+                collection=self.sub_collection,
+                ids=sub_ids,
+                embedding_texts=sub_texts,
+                documents=sub_documents,
+                metadatas=sub_metadatas,
+                _return_timings=True
+            )
+            timings['store_sub'] = (time.time() - t_sub) * 1000
+            if sub_upsert_timings:
+                timings['sub_embed'] = sub_upsert_timings.get('embed', 0)
+                timings['sub_db'] = sub_upsert_timings.get('db_upsert', 0)
+        
+        timings['total'] = (time.time() - t_start) * 1000
+        return timings

@@ -8,7 +8,14 @@ from typing import List, Dict
 from ...llm_memory.service.note_service import NoteService
 from .memory_id_resolver import MemoryIDResolver
 from ...llm_memory.utils.token_utils import count_tokens
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
+# 添加调试日志标记
+DEBUG_TAG = "🔍 [NoteContextBuilder]"
 
 
 class NoteContextBuilder:
@@ -33,13 +40,12 @@ class NoteContextBuilder:
         for i, note in enumerate(notes, 1):
             # 生成短ID用于显示
             short_id = MemoryIDResolver.generate_short_id(note['id'])
-            content_preview = note.get('content', '').strip()
+            content = note.get('content', '').strip()
+            tags = note.get('tags', [])
+            tags_str = f" [标签: {', '.join(tags)}]" if tags else ""
 
-            # 如果内容太长，进行截断
-            if len(content_preview) > 200:
-                content_preview = content_preview[:200] + "..."
-
-            lines.append(f"({i}) [ID: {short_id}] {content_preview}")
+            # 笔记块已被嵌入模型限制长度，不需要截断
+            lines.append(f"({i}) [ID: {short_id}]{tags_str} {content}")
 
         return "\n".join(lines)
 
@@ -67,14 +73,21 @@ class NoteContextBuilder:
             full_note_ids = []
             for short_id in note_ids:
                 if note_id_mapping and short_id in note_id_mapping:
-                    full_note_ids.append(note_id_mapping[short_id])
+                    full_id = note_id_mapping[short_id]
+                    full_note_ids.append(full_id)
+                    logger.info(f"{DEBUG_TAG} 短ID转换成功: {short_id} -> {full_id}")
                 else:
-                    logger.warning(f"无法找到短ID '{short_id}' 对应的完整ID")
+                    logger.error(f"{DEBUG_TAG} 无法找到短ID '{short_id}' 对应的完整ID")
+                    logger.error(f"{DEBUG_TAG} 可用的映射键: {list(note_id_mapping.keys()) if note_id_mapping else 'NONE'}")
+                    logger.error(f"{DEBUG_TAG} 映射内容: {note_id_mapping}")
                     continue
 
             # 计算每个文档的令牌配额
             num_notes = len(full_note_ids)
+            logger.info(f"{DEBUG_TAG} 成功转换的完整ID数量: {num_notes}")
+
             if num_notes == 0:
+                logger.error(f"{DEBUG_TAG} 没有有效的完整ID，无法构建上下文")
                 return ""
 
             token_per_note = total_token_budget // num_notes
@@ -88,16 +101,17 @@ class NoteContextBuilder:
                     if not center_block:
                         continue
 
-                    # 初始化上下文块列表
-                    context_blocks = [center_block['content']]
+                    # 提取标签并构建标签头
+                    tags = center_block.get('tags', [])
+                    tags_header = f"[标签: {', '.join(tags)}]\n" if tags else ""
 
                     # 使用双向扩展获取完整上下文
                     context_blocks = NoteContextBuilder._expand_bidirectional(
                         note_id, note_service, token_per_note
                     )
 
-                    # 合并该笔记的完整上下文
-                    note_context = '\n\n'.join(context_blocks)  # 顺序已经是正确的
+                    # 合并该笔记的完整上下文，在开头添加标签
+                    note_context = tags_header + '\n\n'.join(context_blocks)
                     expanded_contexts.append(note_context)
 
                 except Exception as e:

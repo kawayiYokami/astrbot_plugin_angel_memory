@@ -7,14 +7,6 @@
 from .deepmind import DeepMind
 from .config import MemoryConfig, MemoryConstants, MemoryCapacityConfig
 from .session_memory import SessionMemoryManager, SessionMemory, MemoryItem
-from .exceptions import (
-    MemorySystemError,
-    MemoryNotFoundError,
-    MemoryFormatError,
-    MemoryProcessingError,
-    ConfigurationError,
-    SessionError
-)
 from .initialization_manager import InitializationManager, InitializationState
 from .background_initializer import BackgroundInitializer
 from .plugin_manager import PluginManager
@@ -27,12 +19,6 @@ __all__ = [
     'SessionMemoryManager',
     'SessionMemory',
     'MemoryItem',
-    'MemorySystemError',
-    'MemoryNotFoundError',
-    'MemoryFormatError',
-    'MemoryProcessingError',
-    'ConfigurationError',
-    'SessionError',
     'InitializationManager',
     'InitializationState',
     'BackgroundInitializer',

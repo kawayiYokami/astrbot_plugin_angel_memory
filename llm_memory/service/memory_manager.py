@@ -7,13 +7,16 @@
 
 from typing import List, Optional, Dict
 import random
-import time
+import logging
 from collections import defaultdict
 
 # 导入日志记录器
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
-from ..components.association_manager import AssociationManager
+from ..components.association_manager import AssociationManager, MemorySnapshot
 from ..config.system_config import system_config
 
 class MemoryManager:
@@ -71,54 +74,6 @@ class MemoryManager:
         except Exception as e:
             self.logger.error(f"记忆巩固过程失败: {str(e)}")
             raise
-
-    def health_check(self):
-        """
-        对数据库进行健康性检查和数据迁移。
-        未来所有的数据结构变更和修复都应在此处进行。
-        """
-        self.logger.debug("开始数据库健康性检查...")
-        self._migrate_add_created_at()
-        # 未来可以增加其他检查，例如：
-        # self._migrate_update_tags_format()
-        self.logger.debug("数据库健康性检查完成。")
-
-    def _migrate_add_created_at(self):
-        """
-        为所有缺少 created_at 字段的旧记忆补充该字段。
-        只处理明确属于记忆的记录，避免影响未来的笔记等其他数据类型。
-        """
-        try:
-            # 1. 随机抽样检查
-            sample_size = min(20, self.collection.count())
-            if sample_size == 0:
-                return
-
-            samples = self.collection.get(limit=sample_size)
-            if 'created_at' in samples['metadatas'][0]:
-                self.logger.debug("数据库已包含 created_at 字段，无需迁移。")
-                return
-
-            # 2. 如果需要，则执行全量更新
-            self.logger.info("检测到旧版本数据库，开始补充 created_at 字段...")
-            all_results = self.collection.get()
-            if all_results and all_results['ids']:
-                known_memory_types = [mt.value for mt in MemoryType]  # 获取所有已知的记忆类型值
-                ids_to_update = []
-
-                for i, metadata in enumerate(all_results['metadatas']):
-                    # *** 新增隔离逻辑 ***
-                    # 只处理明确属于记忆的记录，并且缺少 created_at 字段
-                    if metadata.get('memory_type') in known_memory_types and 'created_at' not in metadata:
-                        ids_to_update.append(all_results['ids'][i])
-
-                if ids_to_update:
-                    current_time = time.time()
-                    for memory_id in ids_to_update:
-                        self.store.update_memory(self.collection, memory_id, {"created_at": current_time})
-                    self.logger.info(f"数据迁移成功，共更新了 {len(ids_to_update)} 条记忆记录。")
-        except Exception as e:
-            self.logger.error(f"补充 created_at 字段失败: {e}")
 
     def reinforce_memories(self, memory_ids: List[str]):
         """
@@ -239,7 +194,6 @@ class MemoryManager:
                 all_recalled_ids.update([m.id for m in memories])
 
         # 第二轮：从关联中补充记忆
-
         for memory_type, memories in list(recalled_by_type.items()):
             for memory in memories:
                 if not memory.associations:
@@ -470,7 +424,9 @@ class MemoryManager:
         merge_groups = merge_groups or []
         memory_handlers = memory_handlers or {}
 
-        # 1. 标记有用回忆 - 强化并建立关联
+        association_cache: Dict[str, MemorySnapshot] = {}
+        if useful_memory_ids:
+            association_cache = self.association_manager.preload_memories(useful_memory_ids)
         if useful_memory_ids:
             # 强化记忆强度
             self.reinforce_memories(useful_memory_ids)
@@ -479,9 +435,8 @@ class MemoryManager:
             for i in range(len(useful_memory_ids)):
                 for j in range(i + 1, len(useful_memory_ids)):
                     id1, id2 = useful_memory_ids[i], useful_memory_ids[j]
-                    self.association_manager._add_or_update_association(id1, id2, strength_increase=1)
-                    self.association_manager._add_or_update_association(id2, id1, strength_increase=1)
-
+                    self.association_manager._add_or_update_association(id1, id2, strength_increase=1, cache=association_cache)
+                    self.association_manager._add_or_update_association(id2, id1, strength_increase=1, cache=association_cache)
         # 2. 批量创建新记忆
         created_ids = []
         for mem_data in new_memories:
@@ -498,7 +453,7 @@ class MemoryManager:
             # tags 是可选的，默认为空列表
             tags = mem_data.get("tags", [])
 
-            
+
             # 根据类型创建记忆，获取返回的ID
             memory_id = None
             handler = memory_handlers.get(mem_type)
@@ -514,24 +469,27 @@ class MemoryManager:
                 if mem_type == "task":
                     self._consolidate_previous_task_memory(memory_id)
 
+        if created_ids:
+            association_cache = self.association_manager.preload_memories(created_ids, association_cache)
+
         # 3. 新记忆之间两两建立关联（初始强度1）
         for i in range(len(created_ids)):
             for j in range(i + 1, len(created_ids)):
                 id1, id2 = created_ids[i], created_ids[j]
-                self.association_manager._add_or_update_association(id1, id2, strength_increase=1)
-                self.association_manager._add_or_update_association(id2, id1, strength_increase=1)
+                self.association_manager._add_or_update_association(id1, id2, strength_increase=1, cache=association_cache)
+                self.association_manager._add_or_update_association(id2, id1, strength_increase=1, cache=association_cache)
 
         # 4. 新记忆和有用回忆之间建立关联
         for new_id in created_ids:
             for useful_id in useful_memory_ids:
-                self.association_manager._add_or_update_association(new_id, useful_id, strength_increase=1)
-                self.association_manager._add_or_update_association(useful_id, new_id, strength_increase=1)
+                self.association_manager._add_or_update_association(new_id, useful_id, strength_increase=1, cache=association_cache)
+                self.association_manager._add_or_update_association(useful_id, new_id, strength_increase=1, cache=association_cache)
 
         # 5. 合并重复记忆
         for group in merge_groups:
             if len(group) >= 2:
                 # 获取第一个记忆作为模板
-                first_mem = self.store.collection.get(ids=[group[0]])
+                first_mem = self.collection.get(ids=[group[0]])
                 if first_mem and first_mem['metadatas']:
                     metadata = first_mem['metadatas'][0]
                     # 使用第一个记忆的数据作为合并后的内容

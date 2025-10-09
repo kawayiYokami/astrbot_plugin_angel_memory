@@ -10,14 +10,16 @@ AstrBot Angel Memory Plugin
 from astrbot.api.star import Context, Star
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
-from astrbot.api import logger
 from astrbot.core.star.star_tools import StarTools
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # 导入核心模块
 from .core.plugin_manager import PluginManager
-from .core.config import MemoryConfig
-from .core.initialization_manager import InitializationState
-from pathlib import Path
+from .core.plugin_context import PluginContextFactory
 
 class AngelMemoryPlugin(Star):
     """天使记忆插件主类
@@ -27,38 +29,96 @@ class AngelMemoryPlugin(Star):
     新架构特点：
     - 极速启动：毫秒级启动，所有耗时操作移至后台
     - 智能等待：后台自动检测提供商，有提供商时自动初始化
-    - 无降级逻辑：没有提供商时插件不会被调用，无需特殊处理
-    - 状态同步：业务请求自动等待初始化完成
+    - 统一实例管理：所有核心实例在主线程创建，后台线程通过依赖注入使用
+    - 无重复初始化：彻底解决重复初始化和实例不一致问题
+    - 线程安全：避免跨线程使用异步组件的竞态条件
 
-    插件启动时只创建实例和启动后台线程，terminate时安全清理资源。
+    插件启动时创建核心实例并启动后台线程，terminate时安全清理资源。
     """
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
 
-        # 保存配置
-        self.config = config or {}
-
         # 使用 astrbot.api 的 logger
         self.logger = logger
 
-        # 1. 在主类中安全地获取数据目录
-        plugin_data_dir_str = str(StarTools.get_data_dir())
+        # 1. 获取插件数据目录（在main.py中获取）
+        data_dir = StarTools.get_data_dir()
+        self.logger.info(f"获取到插件数据目录: {data_dir}")
 
-        # 2. 将获取到的目录传递给 MemoryConfig
-        self.memory_config = MemoryConfig(self.config, data_dir=plugin_data_dir_str)
+        # 2. 创建统一的PluginContext，包含所有必要资源
+        self.plugin_context = PluginContextFactory.create_from_initialization(context, config or {}, data_dir)
 
-        # 3. 初始化插件管理器（极速启动）
-        self.plugin_manager = PluginManager(context)
-
-        # 记录数据路径以验证配置
-        self.logger.info(f"天使记忆数据路径设置为: {Path(self.memory_config.data_directory).resolve()}")
-        self.logger.info("Angel Memory Plugin 实例创建完成，后台初始化已启动")
-
-        # 初始化原有组件的占位符（将在后台初始化中真正创建）
+        # 2. 核心实例占位符（将在后台初始化完成后通过ComponentFactory创建）
+        self.vector_store = None
+        self.cognitive_service = None
         self.deepmind = None
         self.note_service = None
         self.file_monitor = None
+
+        # 3. 在主线程获取完整配置（包含提供商信息）
+        self._load_complete_config()
+
+        # 4. 初始化插件管理器（极速启动）- 只传递PluginContext
+        self.plugin_manager = PluginManager(self.plugin_context)
+
+        # 记录数据路径以验证配置
+        self.logger.info(f"天使记忆数据路径设置为: {self.plugin_context.get_index_dir().resolve()}")
+        self.logger.info(f"Angel Memory Plugin 实例创建完成 (提供商: {self.plugin_context.get_current_provider()}), 后台初始化已启动")
+
+    def _load_complete_config(self):
+        """在主线程检查配置项"""
+        try:
+            config = self.plugin_context.get_all_config()
+            self.logger.info(f"📋 插件配置加载完成: {list(config.keys())}")
+
+            # 检查关键配置
+            embedding_provider_id = self.plugin_context.get_embedding_provider_id()
+            if embedding_provider_id:
+                self.logger.info(f"✅ 检测到嵌入提供商配置: {embedding_provider_id}")
+            else:
+                self.logger.info("ℹ️ 未配置嵌入提供商ID (astrbot_embedding_provider_id)，将使用本地模型")
+
+            llm_provider_id = self.plugin_context.get_llm_provider_id()
+            if llm_provider_id:
+                self.logger.info(f"✅ 检测到LLM提供商配置: {llm_provider_id}")
+            else:
+                self.logger.info("ℹ️ 未配置LLM提供商ID (provider_id)，将使用基础记忆功能")
+
+            # 检查提供商可用性
+            if self.plugin_context.has_providers():
+                self.logger.info("✅ 检测到可用的提供商")
+            else:
+                self.logger.info("ℹ️ 未检测到可用提供商，将使用本地模式")
+
+        except Exception as e:
+            self.logger.error(f"❌ 配置检查失败: {e}")
+
+    def update_components(self):
+        """更新组件引用（在初始化完成后调用）"""
+        if self.plugin_manager:
+            # 从后台初始化器获取组件工厂
+            component_factory = self.plugin_manager.background_initializer.get_component_factory()
+
+            # 获取所有组件
+            components = component_factory.get_components()
+
+            # 更新主线程组件引用
+            self.vector_store = components.get("vector_store")
+            self.cognitive_service = components.get("cognitive_service")
+            self.deepmind = components.get("deepmind")
+            self.note_service = components.get("note_service")
+            self.file_monitor = components.get("file_monitor")
+
+            # 将主线程组件设置给PluginManager
+            main_components = {
+                "vector_store": self.vector_store,
+                "cognitive_service": self.cognitive_service,
+                "deepmind": self.deepmind,
+                "note_service": self.note_service,
+                "file_monitor": self.file_monitor
+            }
+            self.plugin_manager.set_main_thread_components(main_components)
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE | filter.EventMessageType.PRIVATE_MESSAGE, priority=100)
     async def on_message_event(self, event: AstrMessageEvent):
@@ -69,25 +129,24 @@ class AngelMemoryPlugin(Star):
             event: 消息事件
         """
         try:
-            # 使用插件管理器处理事件
-            result = self.plugin_manager.handle_message_event(event)
+            # 更新组件引用
+            self.update_components()
+
+            # 使用共享的PluginContext处理事件
+            result = await self.plugin_manager.handle_message_event(event, self.plugin_context)
 
             if result["status"] == "waiting":
                 self.logger.info("系统正在初始化中，跳过此次事件注入")
                 return
             elif result["status"] == "success":
-                # 这里应该调用实际的deepmind逻辑，暂时用占位符
-                if self.deepmind:
-                    await self.deepmind.inject_initial_memories(event)
-                else:
-                    self.logger.debug("DeepMind 组件尚未初始化完成")
+                self.logger.debug("消息事件处理完成")
             else:
                 self.logger.error(f"事件处理失败: {result.get('message', '未知错误')}")
 
         except Exception as e:
             self.logger.error(f"EVENT_INJECT failed: {e}")
 
-    @filter.on_llm_request(priority=100)
+    @filter.on_llm_request(priority=-51)
     async def on_llm_request(self, event: AstrMessageEvent, request: ProviderRequest):
         """
         LLM调用前整理记忆并注入到请求中
@@ -97,18 +156,17 @@ class AngelMemoryPlugin(Star):
             request: LLM请求对象
         """
         try:
-            # 使用插件管理器处理请求
-            result = self.plugin_manager.handle_llm_request(event, request)
+            # 更新组件引用
+            self.update_components()
+
+            # 使用共享的PluginContext处理请求
+            result = await self.plugin_manager.handle_llm_request(event, request, self.plugin_context)
 
             if result["status"] == "waiting":
                 self.logger.info("系统正在初始化中，跳过此次LLM请求处理")
                 return
             elif result["status"] == "success":
-                # 这里应该调用实际的deepmind逻辑，暂时用占位符
-                if self.deepmind:
-                    await self.deepmind.organize_and_inject_memories(event, request)
-                else:
-                    self.logger.debug("DeepMind 组件尚未初始化完成")
+                self.logger.debug("LLM请求处理完成")
             else:
                 self.logger.error(f"LLM请求处理失败: {result.get('message', '未知错误')}")
 
@@ -143,4 +201,24 @@ class AngelMemoryPlugin(Star):
         if not self.plugin_manager:
             return {"status": "not_initialized"}
 
-        return self.plugin_manager.get_status()
+        status = self.plugin_manager.get_status()
+        # 添加PluginContext信息
+        status.update({
+            "plugin_context": {
+                "current_provider": self.plugin_context.get_current_provider(),
+                "has_providers": self.plugin_context.has_providers(),
+                "index_dir": str(self.plugin_context.get_index_dir()),
+                "embedding_provider_id": self.plugin_context.get_embedding_provider_id(),
+                "llm_provider_id": self.plugin_context.get_llm_provider_id()
+            }
+        })
+        return status
+
+    def get_plugin_context(self):
+        """
+        获取PluginContext实例（用于测试和调试）
+
+        Returns:
+            PluginContext: 插件上下文实例
+        """
+        return self.plugin_context

@@ -5,13 +5,26 @@
 关联关系现在存储在每个记忆对象的内部关联字段中，而非独立的记忆类型。
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 from itertools import combinations
+from dataclasses import dataclass
+import logging
 
 # 导入日志记录器
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    logger = logging.getLogger(__name__)
 from .vector_store import VectorStore
 from ..models.data_models import BaseMemory
+
+
+@dataclass
+class MemorySnapshot:
+    memory: BaseMemory
+    metadata: dict
+    document: str
+    embedding: Optional[List[float]]
 
 class AssociationManager:
     """
@@ -35,6 +48,85 @@ class AssociationManager:
         # 设置日志记录器
         self.logger = logger
 
+    def preload_memories(self, memory_ids: List[str], cache: Optional[Dict[str, MemorySnapshot]] = None) -> Dict[str, MemorySnapshot]:
+        """批量加载记忆快照，减少重复的数据库访问。"""
+        cache = cache or {}
+        if not memory_ids:
+            return cache
+
+        missing_ids = [memory_id for memory_id in memory_ids if memory_id not in cache]
+        if not missing_ids:
+            return cache
+
+        try:
+            results = self.collection.get(
+                ids=missing_ids,
+                include=["metadatas", "documents", "embeddings"]
+            )
+        except Exception as e:
+            self.logger.error(f"批量加载记忆失败: {str(e)}")
+            return cache
+
+        metadatas = results.get('metadatas') or []
+        documents = results.get('documents') or []
+        embeddings = results.get('embeddings')
+        if embeddings is None:
+            embeddings = []
+        ids = results.get('ids') or []
+
+        for idx, memory_id in enumerate(ids):
+            if not metadatas or idx >= len(metadatas) or not metadatas[idx]:
+                continue
+
+            metadata = metadatas[idx]
+            document = documents[idx] if idx < len(documents) else ""
+            embedding = embeddings[idx] if idx < len(embeddings) else None
+            try:
+                memory_obj = BaseMemory.from_dict(metadata)
+            except Exception as e:
+                self.logger.error(f"构建记忆对象失败 {memory_id}: {str(e)}")
+                continue
+
+            cache[memory_id] = MemorySnapshot(
+                memory=memory_obj,
+                metadata=metadata,
+                document=document,
+                embedding=embedding
+            )
+
+        return cache
+
+    def _persist_snapshot(self, snapshot: MemorySnapshot) -> bool:
+        """将内存中的记忆快照写回存储，返回是否重新生成嵌入。"""
+        embedding_regenerated = False
+        try:
+            metadata = snapshot.metadata
+
+            # 更新关联字段
+            import json
+            metadata['associations'] = json.dumps(snapshot.memory.associations) if snapshot.memory.associations else "{}"
+
+            embedding = snapshot.embedding
+            if embedding is None:
+                semantic_core = snapshot.memory.get_semantic_core()
+                # 使用同步方法生成embedding
+                embedding = self.vector_store.embedding_provider.embed_documents_sync([semantic_core])[0]
+                snapshot.embedding = embedding
+                embedding_regenerated = True
+                self.logger.debug(f"[assoc] regenerated embedding for {snapshot.memory.id}")
+
+            self.collection.upsert(
+                ids=[snapshot.memory.id],
+                embeddings=[embedding],
+                metadatas=[metadata],
+                documents=[snapshot.document]
+            )
+            return embedding_regenerated
+
+        except Exception as e:
+            self.logger.error(f"更新记忆 {snapshot.memory.id} 的关联失败: {str(e)}")
+            return False
+
     def reinforce_association(self, memory_ids: List[str]):
         """
         强化记忆之间的关联强度。
@@ -49,23 +141,15 @@ class AssociationManager:
             return  # 需要至少2个记忆才能建立关联
 
         # 获取所有记忆对象
-        memories = []
-        for memory_id in memory_ids:
-            try:
-                memory_results = self.collection.get(ids=[memory_id])
-                if memory_results and memory_results['metadatas']:
-                    memory_data = memory_results['metadatas'][0]
-                    memory_obj = BaseMemory.from_dict(memory_data)
-                    memories.append(memory_obj)
-            except Exception as e:
-                self.logger.error(f"获取记忆 {memory_id} 失败: {str(e)}")
-                continue
+        snapshot_cache = self.preload_memories(memory_ids)
 
         # 对所有ID对（两两组合）进行关联强化
         for id1, id2 in combinations(sorted(memory_ids), 2):
             # 找到对应的记忆对象
-            mem1 = next((m for m in memories if m.id == id1), None)
-            mem2 = next((m for m in memories if m.id == id2), None)
+            snapshot1 = snapshot_cache.get(id1)
+            snapshot2 = snapshot_cache.get(id2)
+            mem1 = snapshot1.memory if snapshot1 else None
+            mem2 = snapshot2.memory if snapshot2 else None
 
             if mem1 and mem2:
                 # 在记忆1的关联字段中强化对记忆2的关联
@@ -81,10 +165,18 @@ class AssociationManager:
                     mem2.associations[id1] = 1
 
                 # 更新存储中的关联信息
-                self._update_memory_associations(mem1)
-                self._update_memory_associations(mem2)
+                if snapshot1:
+                    self._persist_snapshot(snapshot1)
+                if snapshot2:
+                    self._persist_snapshot(snapshot2)
 
-    def _add_or_update_association(self, id1: str, id2: str, strength_increase: int = 1):
+    def _add_or_update_association(
+        self,
+        id1: str,
+        id2: str,
+        strength_increase: int = 1,
+        cache: Optional[Dict[str, MemorySnapshot]] = None
+    ):
         """
         【内部方法】在两个记忆之间添加或更新关联（单向）。
 
@@ -101,13 +193,17 @@ class AssociationManager:
         """
         try:
             # 获取源记忆
-            memory_results = self.collection.get(ids=[id1])
-            if not memory_results or not memory_results['metadatas']:
+            cache = cache or {}
+            snapshot = cache.get(id1)
+            if not snapshot:
+                cache = self.preload_memories([id1], cache)
+                snapshot = cache.get(id1)
+
+            if not snapshot:
                 self.logger.warning(f"记忆 {id1} 不存在，无法建立关联")
                 return
 
-            memory_data = memory_results['metadatas'][0]
-            memory_obj = BaseMemory.from_dict(memory_data)
+            memory_obj = snapshot.memory
 
             # 更新关联强度（去重、累加）
             if id2 in memory_obj.associations:
@@ -116,50 +212,11 @@ class AssociationManager:
                 memory_obj.associations[id2] = strength_increase
 
             # 持久化到存储
-            self._update_memory_associations(memory_obj)
+            self._persist_snapshot(snapshot)
+            cache[id1] = snapshot
 
         except Exception as e:
             self.logger.error(f"添加/更新关联 {id1} → {id2} 失败: {str(e)}")
-
-    def _update_memory_associations(self, memory: BaseMemory):
-        """
-        更新记忆的关联字段到存储中。
-
-        Args:
-            memory: 要更新的记忆对象
-        """
-        try:
-            # 获取记忆的完整信息
-            current_data = self.collection.get(ids=[memory.id])
-            if not current_data or not current_data['metadatas']:
-                self.logger.warning(f"记忆 {memory.id} 不存在，无法更新关联")
-                return
-
-            current_meta = current_data['metadatas'][0]
-            current_document = current_data['documents'][0] if current_data['documents'] else ""
-
-            # 获取当前的嵌入（如果可用）
-            if current_data['embeddings'] and len(current_data['embeddings']) > 0:
-                current_embedding = current_data['embeddings'][0]
-            else:
-                # 如果没有嵌入，我们需要重新生成一个
-                semantic_core = memory.get_semantic_core()
-                current_embedding = self.vector_store.embedding_model.encode(semantic_core).tolist()
-
-            # 更新关联字段（序列化为JSON字符串，因为ChromaDB不支持嵌套字典）
-            import json
-            current_meta['associations'] = json.dumps(memory.associations) if memory.associations else "{}"
-
-            # 重新存储
-            self.collection.upsert(
-                ids=[memory.id],
-                embeddings=[current_embedding],
-                metadatas=[current_meta],
-                documents=[current_document]
-            )
-
-        except Exception as e:
-            self.logger.error(f"更新记忆 {memory.id} 的关联失败: {str(e)}")
 
     def get_associations_for_memory(self, memory_id: str, min_strength: int = 1) -> List[BaseMemory]:
         """
@@ -270,7 +327,8 @@ class AssociationManager:
                     if current_embedding is None:
                         memory_obj = BaseMemory.from_dict(metadata)
                         semantic_core = memory_obj.get_semantic_core()
-                        current_embedding = self.vector_store.embedding_model.encode(semantic_core).tolist()
+                        # 使用同步方法生成embedding
+                        current_embedding = self.vector_store.embedding_provider.embed_documents_sync([semantic_core])[0]
 
                     # 更新存储
                     self.collection.upsert(

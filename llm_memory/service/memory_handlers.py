@@ -8,7 +8,11 @@
 from typing import List
 
 # 导入日志记录器
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory, MemoryType
 
 class MemoryHandler:

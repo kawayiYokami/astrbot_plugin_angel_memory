@@ -10,7 +10,11 @@ from .markdown_parser import MarkdownParser
 from .universal_parser import UniversalParser
 
 # 导入日志记录器
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 class ParserManager:
@@ -49,12 +53,13 @@ class ParserManager:
         self.parsers[extension] = parser_class
         logger.info(f"注册解析器: {extension} -> {parser_class.__name__}")
 
-    def get_parser_for_extension(self, extension: str):
+    def get_parser_for_extension(self, extension: str, tag_manager=None):
         """
         获取指定扩展名的解析器实例
 
         Args:
             extension: 文件扩展名（如 '.md'）
+            tag_manager: 标签管理器实例（可选）
 
         Returns:
             解析器实例，如果未找到则返回None
@@ -62,7 +67,7 @@ class ParserManager:
         extension = extension.lower()
         parser_class = self.parsers.get(extension)
         if parser_class:
-            return parser_class()
+            return parser_class(tag_manager)
         return None
 
     def get_supported_extensions(self) -> Set[str]:
@@ -86,19 +91,20 @@ class ParserManager:
         """
         return extension.lower() in self.parsers
 
-    def get_parser_for_file(self, file_path: str):
+    def get_parser_for_file(self, file_path: str, tag_manager=None):
         """
         根据文件路径获取相应的解析器实例
 
         Args:
             file_path: 文件路径
+            tag_manager: 标签管理器实例（可选）
 
         Returns:
             解析器实例，如果未找到则返回None
         """
         path = Path(file_path)
         extension = path.suffix.lower()
-        return self.get_parser_for_extension(extension)
+        return self.get_parser_for_extension(extension, tag_manager)
 
 
 # 全局解析器管理器实例

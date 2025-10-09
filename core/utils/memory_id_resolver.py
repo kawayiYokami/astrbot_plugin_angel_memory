@@ -11,6 +11,26 @@ class MemoryIDResolver:
     """记忆ID解析器"""
 
     @staticmethod
+    def generate_id_mapping(items: List[Dict[str, Any]], id_field: str = 'id') -> Dict[str, str]:
+        """
+        通用的ID映射生成方法
+
+        Args:
+            items: 包含ID字段的对象列表
+            id_field: ID字段名，默认为'id'
+
+        Returns:
+            短ID到完整ID的映射字典
+        """
+        mapping = {}
+        for item in items:
+            full_id = item.get(id_field)
+            if full_id:
+                short_id = MemoryIDResolver.generate_short_id(full_id)
+                mapping[short_id] = full_id
+        return mapping
+
+    @staticmethod
     def resolve_memory_ids(short_ids: List[str], memories: List, logger=None) -> List[str]:
         """
         将短ID转换为完整ID

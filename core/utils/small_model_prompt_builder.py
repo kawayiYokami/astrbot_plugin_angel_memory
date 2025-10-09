@@ -129,7 +129,7 @@ class SmallModelPromptBuilder:
         ).strip()
 
     @staticmethod
-    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None) -> str:
+    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None, core_topic: str = None) -> str:
         """
         构建用于小模型的记忆整理提示词
 
@@ -139,6 +139,7 @@ class SmallModelPromptBuilder:
             user_list: 对话参与者清单
             candidate_notes: 候选笔记列表（可选）
             secretary_decision: 秘书决策信息，包含AI人格和别名（可选）
+            core_topic: 当前对话的核心话题（可选）
 
         Returns:
             完整的提示词字符串
@@ -173,13 +174,23 @@ class SmallModelPromptBuilder:
                     ai_info_parts.append(f"昵称有：{alias}")
                 ai_identity_section = "\n# AI身份信息\n" + "\n".join(ai_info_parts) + "\n"
 
-        # 4. 构建候选笔记清单
-        notes_section = NoteContextBuilder.build_candidate_list_for_prompt(candidate_notes) if candidate_notes else ""
+        # 4. 构建核心话题信息
+        topic_section = ""
+        if core_topic and core_topic.strip():
+            topic_section = f"\n# 当前对话核心话题\n{core_topic.strip()}\n"
 
-        # 5. 组装新的 system_prompt
-        final_system_prompt = f"{system_prompt}\n\n{participants_section}{rules_section}{ai_identity_section}{notes_section}"
+        # 5. 构建候选笔记清单
+        notes_section = ""
+        if candidate_notes:
+            notes_section = NoteContextBuilder.build_candidate_list_for_prompt(candidate_notes)
+            if topic_section:
+                # 添加话题上下文说明，帮助LLM理解候选笔记的来源
+                notes_section = f"\n# 基于上述核心话题检索到的相关笔记{notes_section}"
 
-        # 6. 构建完整提示词（简化记忆处理）
+        # 6. 组装新的 system_prompt
+        final_system_prompt = f"{system_prompt}\n\n{participants_section}{rules_section}{ai_identity_section}{topic_section}{notes_section}"
+
+        # 7. 构建完整提示词（简化记忆处理）
         parts = [final_system_prompt]
         if formatted_query:
             parts.append(f"\n\n对话历史：\n{formatted_query}")

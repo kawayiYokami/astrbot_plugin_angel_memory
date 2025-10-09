@@ -1,13 +1,18 @@
 """
 InitializationManager - 初始化状态管理器
 
-负责管理系统初始化状态，提供优雅的提供商检查和状态同步机制。
+专注于管理系统初始化状态，提供提供商检测、状态管理和同步机制。
+与PluginContext协作，PluginContext负责资源管理，InitializationManager负责状态管理。
 """
 
 from enum import Enum
 from threading import RLock, Event
 import time
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 class InitializationState(Enum):
     """初始化状态枚举"""
@@ -31,6 +36,7 @@ class InitializationManager:
         self.state_lock = RLock()
         self.ready_event = Event()
         self.logger = logger
+        self.logger.debug("InitializationManager初始化完成 - 专注于状态管理和提供商检测")
 
     def wait_for_providers_and_initialize(self, check_interval=10):
         """

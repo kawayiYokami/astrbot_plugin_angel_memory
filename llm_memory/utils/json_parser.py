@@ -6,7 +6,11 @@ Angel Eye 插件 - JSON 解析工具
 import json
 from typing import Dict, Optional, Any, List
 
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 
@@ -99,7 +103,7 @@ class JsonParser:
             解析后的 feedback_data 字典，失败时返回 None
         """
         # 尝试提取JSON数据
-        json_data = self._safe_extract_json(response_text)
+        json_data = self.extract_json(response_text)
 
         if json_data is None:
             self.logger.warning("JsonParser: 未能从响应中提取有效的 JSON")
@@ -124,7 +128,7 @@ class JsonParser:
             self.logger.debug("JsonParser: JSON 中未找到 'feedback_data' 字段，返回整个 JSON")
             return json_data
 
-    def _safe_extract_json(
+    def extract_json(
         self,
         text: str,
         separator: str = "---JSON---",
@@ -133,6 +137,8 @@ class JsonParser:
     ) -> Optional[Dict[str, Any]]:
         """
         从可能包含其他文本的字符串中，智能地提取最符合条件的单个JSON对象。
+
+        公共方法，用于从LLM响应中提取JSON数据。
 
         提取策略:
         1.  **分割**: 如果存在分隔符，则优先处理分隔符之后的内容。

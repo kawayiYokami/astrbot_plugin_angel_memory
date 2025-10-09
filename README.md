@@ -129,7 +129,6 @@
   "short_term_memory_capacity": 1.0,
   "sleep_interval": 3600,
   "provider_id": "",
-  "note_search_token_limit": 10000,
   "small_model_note_budget": 8000,
   "large_model_note_budget": 12000
 }
@@ -156,10 +155,6 @@
   - 留空则只召回记忆不进行整理
   - 填写后将调用 LLM 进行记忆筛选和整理
   - 建议使用快速的小模型
-
-- **`note_search_token_limit`**：笔记检索 token 限制（0-32000）
-  - 控制检索笔记内容量，避免上下文过长
-  - 根据模型上下文限制设置
 
 - **`small_model_note_budget`**：小模型笔记 Token 预算（0-64000）
   - 小模型用于智能选择相关笔记的 Token 数量限制
