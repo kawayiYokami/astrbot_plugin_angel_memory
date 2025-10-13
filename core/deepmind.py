@@ -1,7 +1,11 @@
 """
-DeepMind核心模块
+DeepMind潜意识核心模块
 
-负责记忆整理的核心逻辑：召回、筛选、格式化和更新记忆。
+这是AI的潜意识系统，在后台默默帮你管理记忆：
+- 看到消息时自动回忆相关内容
+- 筛选出有用的记忆喂给主意识
+- 定期整理记忆，让重要内容不容易忘记
+- 就像人睡觉时整理记忆一样
 """
 
 import time
@@ -25,40 +29,37 @@ except ImportError:
 
 
 class DeepMind:
-    """DeepMind记忆整理核心类
+    """AI的潜意识系统
 
-    负责实现双层认知架构中的意识层，处理整个记忆工作流：
-    - 观察阶段：事件驱动记忆召回
-    - 回忆阶段：筛选并注入相关记忆
-    - 反馈阶段：更新记忆网络权重
-    - 睡眠阶段：定期巩固和优化记忆
+    这是AI的潜意识，配合主意识（LLM）工作：
+    - 观察阶段：注意用户说了什么，开始回忆相关内容
+    - 回忆阶段：从记忆库里找出有用的信息
+    - 反馈阶段：好记性加强，坏记性淘汰
+    - 睡眠阶段：定期整理记忆，巩固重要内容
 
-    相比底层llm_memory系统，DeepMind主要负责会话级别的记忆管理、
-    记忆筛选逻辑、以及用户事件响应。
-
-    设计原则：
-    1. 插件级别仅处理会话状态和配置
-    2. 记忆存储和索引交给llm_memory子系统
-    3. 错误容忍机制确保不影响主流程
-    4. 通过provider_id开关决定是否使用LLM进行记忆整理
+    潜意识的工作方式：
+    1. 只管会话状态，具体记忆存储交给底层系统
+    2. 出错了也不影响你正常聊天
+    3. 没有配置AI助手时自动关闭，不消耗资源
+    4. 像人的潜识一样，默默工作，不打扰主意识思考
     """
 
-    # 记忆检索常量
-    CHAINED_RECALL_PER_TYPE_LIMIT = 7  # 每种类型记忆的召回数量限制
-    CHAINED_RECALL_FINAL_LIMIT = 7     # 最终召回记忆的总数限制
-    NOTE_CANDIDATE_COUNT = 50          # 候选笔记数量，供小模型筛选
+    # 潜意识回忆的规则
+    CHAINED_RECALL_PER_TYPE_LIMIT = 7  # 每种记忆最多想7条，防止信息过载
+    CHAINED_RECALL_FINAL_LIMIT = 7     # 最终给主意识最多7条记忆
+    NOTE_CANDIDATE_COUNT = 50          # 先找50条笔记，让小AI帮忙筛选有用的
 
     def __init__(self, config, context, vector_store, note_service, provider_id: str = "", cognitive_service=None):
         """
-        初始化DeepMind
+        初始化AI的潜意识系统
 
         Args:
-            config: 配置管理器
-            context: AstrBot上下文对象
-            vector_store: 共享的VectorStore实例
-            note_service: 笔记服务实例
-            provider_id: LLM提供商ID，留空则跳过记忆整理
-            cognitive_service: 可选的认知服务实例（用于依赖注入）
+            config: 配置信息（比如多久睡一次觉整理记忆）
+            context: 聊天机器人的大脑（主意识）
+            vector_store: 记忆数据库（存所有长期记忆的地方）
+            note_service: 笔记管理器（重要信息专门存放处）
+            provider_id: AI助手的ID，没有的话潜意识就睡觉不干活
+            cognitive_service: 记忆管理服务（可选，如果外面已经有了就直接用）
         """
         self.config = config
         self.memory_system: Optional[CognitiveService] = cognitive_service  # 使用注入的实例
@@ -125,13 +126,13 @@ class DeepMind:
 
     def should_process_message(self, event: AstrMessageEvent) -> bool:
         """
-        判断是否应该处理此消息
+        判断这条消息是否值得记住
 
         Args:
-            event: 消息事件
+            event: 用户发来的消息
 
         Returns:
-            是否应该处理
+            True=值得记住，False=不用记
         """
         if not self.is_enabled():
             self.logger.debug("消息被过滤: 记忆系统未启用")
@@ -580,11 +581,17 @@ class DeepMind:
 
     async def organize_and_inject_memories(self, event: AstrMessageEvent, request: ProviderRequest):
         """
-        整理记忆并注入到LLM请求中
+        潜意识的核心工作：整理相关记忆喂给主意识
+
+        工作流程：
+        1. 从记忆库找出相关的内容
+        2. 问小AI哪些信息有用
+        3. 把有用的记忆包装成记忆包
+        4. 喂给主意识（LLM）帮助他思考
 
         Args:
-            event: 消息事件
-            request: LLM请求对象
+            event: 用户的消息（触发回忆的线索）
+            request: 即将发给主意识的请求（我们要往里面塞记忆）
         """
         from .timing_diagnostics import timing_log, log_checkpoint
         
@@ -716,7 +723,7 @@ class DeepMind:
     # _resolve_memory_ids 方法已移至 MemoryIDResolver 类中
 
     def _sleep(self):
-        """执行记忆巩固（睡眠）"""
+        """AI睡觉整理记忆：重要内容加强，无用内容清理"""
         if not self.is_enabled():
             return
 
@@ -727,7 +734,7 @@ class DeepMind:
             self.logger.error(f"记忆巩固失败: {e}")
 
     def _start_periodic_sleep(self):
-        """启动定期睡眠定时器"""
+        """启动定期睡觉：像人一样按时整理记忆"""
         if not self.is_enabled():
             return
 
@@ -752,15 +759,15 @@ class DeepMind:
         self.logger.info("定期睡眠已停止")
 
     def shutdown(self):
-        """关闭DeepMind，释放资源"""
-        self.logger.info("正在关闭 DeepMind...")
+        """关闭潜意识系统，让AI好好休息"""
+        self.logger.info("正在关闭AI的潜意识...")
 
-        # 停止定期睡眠
+        # 停止定期睡觉
         self.stop_sleep()
 
-        # 停止反馈队列
+        # 停止记忆整理任务
         from .utils.feedback_queue import stop_feedback_queue
         stop_feedback_queue(timeout=5)
 
-        self.logger.info("DeepMind 已成功关闭")
+        self.logger.info("AI潜意识已休息，下次再见！")
 
