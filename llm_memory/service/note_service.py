@@ -284,24 +284,14 @@ class NoteService:
             self.logger.debug(f"所有召回结果都低于阈值 {threshold}，返回空列表")
             return []
 
-        # 2. 第一阶段：重排 (Reranking)
-        # 拿着原始查询，在整个副集合 (纯标签) 中进行搜索，以获取所有笔记的标签相关性分数
-        all_sub_collection_ids = [note["id"] for note in all_recalled_notes]
-
-        # 使用 VectorStore 的笔记专用检索方法进行标签重排
-        rerank_results = self.vector_store.search_notes(
+        # 2. 第二阶段：重排 (Reranking)
+        # 使用轻量级方法查询副集合（只获取标签相关性分数）
+        # 副集合不存储 metadata，所以不能使用 search_notes
+        tag_scores = self.vector_store._search_vector_scores(
             collection=self.sub_collection,
             query=query,
-            limit=len(all_sub_collection_ids)
+            limit=len(all_recalled_notes)
         )
-
-        # 创建一个 "ID -> 标签分数" 的映射，使用真实的相似度分数
-        tag_scores = {}
-        for note in (rerank_results or []):
-            if note.id in all_sub_collection_ids:
-                # 使用真实的标签相似度分数（由VectorStore设置）
-                tag_similarity = getattr(note, 'similarity', 0.0)
-                tag_scores[note.id] = tag_similarity
 
         # 3. 最终排序
         # 将标签分数附加到通过第一阶段的笔记上
@@ -517,110 +507,102 @@ class NoteService:
         """
         批量存储笔记到向量数据库（同步方法）
 
+        存储策略：
+        - 主集合：存储完整笔记信息（vector 基于"内容+标签"，metadata 包含所有数据）
+        - 副集合：仅存储标签向量（vector 基于"标签文本"，不存储 metadata）
+
         Args:
             notes: 笔记数据列表
             update_bm25: 是否立即更新BM25索引（默认False，延迟更新以提升性能）
-            
+
         Returns:
             计时字典
         """
         import time
         timings = {}
-        t_method_start = time.time()  # 方法总体计时
-        
+        t_method_start = time.time()
+
         try:
             if not notes:
                 self.logger.debug("没有笔记需要存储")
                 return timings
 
-            # 准备副集合数据
-            t_prep_sub = time.time()
-            notes_to_store = notes
-            sub_collection_data = []
+            # === 批量处理主集合 ===
+            t_prep_main = time.time()
 
+            # 准备主集合数据
+            ids = [note.id for note in notes]
+
+            # 准备 embedding_texts（内容 + 标签文本）
+            embedding_texts = []
             for note in notes:
                 tag_names = self.id_service.ids_to_tags(note.tag_ids)
-                sub_collection_data.append({
-                    "id": note.id,
-                    "tags_text": note.get_tags_text(tag_names)
-                })
+                embedding_texts.append(note.get_embedding_text(tag_names))
+
+            # 准备 metadatas（包含所有笔记数据）
+            metadatas = [note.to_dict() for note in notes]
+
+            timings['prep_main'] = (time.time() - t_prep_main) * 1000
+
+            # 批量存储到主集合
+            t_main = time.time()
+            upsert_timings = self.vector_store.upsert_documents(
+                collection=self.main_collection,
+                ids=ids,
+                embedding_texts=embedding_texts,
+                metadatas=metadatas,
+                _return_timings=True
+            )
+            timings['store_main'] = (time.time() - t_main) * 1000
+            if upsert_timings:
+                timings['main_embed'] = upsert_timings.get('embed', 0)
+                timings['main_db'] = upsert_timings.get('db_upsert', 0)
+
+            # 可选：批量更新BM25索引
+            if update_bm25 and self.vector_store._is_hybrid_search_enabled():
+                collection_name = self.main_collection.name
+                doc_ids = [note.id for note in notes]
+                contents = [note.content for note in notes]
+
+                success = self.vector_store.bm25_retriever.add_documents(
+                    collection_name, doc_ids, contents
+                )
+                if success:
+                    self.logger.debug(f"📝 BM25索引批量更新完成: {len(notes)} 个文档")
+                else:
+                    self.logger.warning("BM25索引批量更新失败")
+
+            # === 批量处理副集合 ===
+            t_prep_sub = time.time()
+
+            # 准备副集合数据（仅标签文本）
+            sub_ids = []
+            sub_tags_texts = []
+            for note in notes:
+                tag_names = self.id_service.ids_to_tags(note.tag_ids)
+                tags_text = note.get_tags_text(tag_names)
+                sub_ids.append(note.id)
+                sub_tags_texts.append(tags_text)
+
             timings['prep_sub'] = (time.time() - t_prep_sub) * 1000
 
-            # === 批量处理主集合（同步调用） ===
-            if notes_to_store:
-                # 准备主集合数据 - 详细计时
-                t_prep_main = time.time()
-                
-                ids = [note.id for note in notes_to_store]
-                timings['prep_main_ids'] = (time.time() - t_prep_main) * 1000
-                
-                # 准备embedding_texts（包含ids_to_tags调用）
-                t_embed_texts = time.time()
-                embedding_texts = []
-                for note in notes_to_store:
-                    tag_names = self.id_service.ids_to_tags(note.tag_ids)
-                    embedding_texts.append(note.get_embedding_text(tag_names))
-                timings['prep_main_embed_texts'] = (time.time() - t_embed_texts) * 1000
-                
-                # 准备documents
-                t_docs = time.time()
-                documents = [note.content for note in notes_to_store]
-                timings['prep_main_docs'] = (time.time() - t_docs) * 1000
-                
-                # 准备metadatas
-                t_meta = time.time()
-                metadatas = [note.to_dict() for note in notes_to_store]
-                timings['prep_main_meta'] = (time.time() - t_meta) * 1000
+            # 批量存储到副集合（不传 metadatas）
+            t_sub = time.time()
+            sub_upsert_timings = self.vector_store.upsert_documents(
+                collection=self.sub_collection,
+                ids=sub_ids,
+                embedding_texts=sub_tags_texts,
+                metadatas=None,  # 副集合不存储 metadata
+                _return_timings=True
+            )
+            timings['store_sub'] = (time.time() - t_sub) * 1000
+            if sub_upsert_timings:
+                timings['sub_embed'] = sub_upsert_timings.get('embed', 0)
+                timings['sub_db'] = sub_upsert_timings.get('db_upsert', 0)
 
-                # 一次性批量存储所有文档块（同步调用，数据库内部处理并发）
-                t_main = time.time()
-                upsert_timings = self.vector_store.upsert_documents(
-                    collection=self.main_collection,
-                    ids=ids,
-                    embedding_texts=embedding_texts,
-                    documents=documents,
-                    metadatas=metadatas,
-                    _return_timings=True
-                )
-                timings['store_main'] = (time.time() - t_main) * 1000
-                if upsert_timings:
-                    timings['main_embed'] = upsert_timings.get('embed', 0)
-                    timings['main_db'] = upsert_timings.get('db_upsert', 0)
-
-                # 可选：批量更新BM25索引
-                if update_bm25 and self.vector_store._is_hybrid_search_enabled():
-                    collection_name = self.main_collection.name
-                    doc_ids = [note.id for note in notes_to_store]
-                    contents = [note.content for note in notes_to_store]
-
-                    success = self.vector_store.bm25_retriever.add_documents(
-                        collection_name, doc_ids, contents
-                    )
-                    if success:
-                        self.logger.debug(f"📝 BM25索引批量更新完成: {len(notes_to_store)} 个文档")
-                    else:
-                        self.logger.warning("BM25索引批量更新失败")
-
-            # === 批量处理副集合（同步调用） ===
-            if sub_collection_data:
-                t_sub = time.time()
-                ids = [data["id"] for data in sub_collection_data]
-                tags_texts = [data["tags_text"] for data in sub_collection_data]
-                sub_upsert_timings = self.vector_store.upsert_documents(
-                    collection=self.sub_collection,
-                    ids=ids,
-                    embedding_texts=tags_texts,
-                    documents=tags_texts,
-                    _return_timings=True
-                )
-                timings['store_sub'] = (time.time() - t_sub) * 1000
-                if sub_upsert_timings:
-                    timings['sub_embed'] = sub_upsert_timings.get('embed', 0)
-                    timings['sub_db'] = sub_upsert_timings.get('db_upsert', 0)
-            
             # 记录方法总体执行时间
             timings['_batch_method_total'] = (time.time() - t_method_start) * 1000
-            
+
             return timings
 
         except Exception as e:

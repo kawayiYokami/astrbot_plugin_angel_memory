@@ -393,28 +393,30 @@ class VectorStore:
         *,
         ids,
         embedding_texts,
-        documents,
         metadatas=None,
         _return_timings=False
     ):
         """
-        高级 upsert 方法（同步接口），接受用于向量化的文本和用于存储的文档作为不同的参数。
+        高级 upsert 方法（同步接口）：从文本生成向量并存储到向量数据库。
+
+        设计原则：
+        - 向量生成：使用 embedding_texts 参数
+        - 数据存储：使用 metadatas 参数（所有业务数据都应放在 metadata 中）
+        - 不支持 documents 字段：ChromaDB 的 documents 字段已被弃用，所有数据统一存储在 metadata
 
         Args:
-            collection: 目标 ChromaDB 集合。
-            ids: 文档ID或ID列表。
-            embedding_texts: 用于生成向量的文本或文本列表。
-            documents: 实际存储在数据库中的文档内容或列表。
-            metadatas: 与文档关联的元数据或元数据列表。
+            collection: 目标 ChromaDB 集合
+            ids: 文档ID或ID列表
+            embedding_texts: 用于生成向量的文本或文本列表
+            metadatas: 与文档关联的元数据或元数据列表（包含所有业务数据）
             _return_timings: 内部参数，是否返回计时信息
         """
         import time
         timings = {} if _return_timings else None
-        
+
         # 统一处理输入为列表
         ids_list = [ids] if isinstance(ids, str) else ids
         embedding_texts_list = [embedding_texts] if isinstance(embedding_texts, str) else embedding_texts
-        documents_list = [documents] if isinstance(documents, str) else documents
         metadatas_list = [metadatas] if isinstance(metadatas, dict) else metadatas
 
         if not ids_list:
@@ -432,77 +434,89 @@ class VectorStore:
             'embeddings': embeddings,
         }
 
-        # 笔记主/副集合均不写 documents（正文由 metadata['content'] 提供；副集不存文本）
-        try:
-            is_note_collection = (collection.name == system_config.notes_main_collection_name or
-                                  collection.name == system_config.notes_sub_collection_name)
-        except Exception:
-            is_note_collection = False
-
-        if not is_note_collection and documents_list is not None:
-            upsert_params['documents'] = documents_list
-
         if metadatas_list is not None:
             upsert_params['metadatas'] = metadatas_list
-        
+
         # 直接upsert（数据库内部处理并发）
         t_db = time.time()
         collection.upsert(**upsert_params)
         if _return_timings:
             timings['db_upsert'] = (time.time() - t_db) * 1000
-        
+
         return timings if _return_timings else None
-
-    async def async_upsert_documents(
-        self,
-        collection,
-        *,
-        ids,
-        embedding_texts,
-        documents,
-        metadatas=None
-    ):
-        """
-        异步版本的 upsert 方法（保持兼容性，内部调用同步方法）。
-
-        Args:
-            collection: 目标 ChromaDB 集合。
-            ids: 文档ID或ID列表。
-            embedding_texts: 用于生成向量的文本或文本列表。
-            documents: 实际存储在数据库中的文档内容或列表。
-            metadatas: 与文档关联的元数据或元数据列表。
-        """
-        # 在线程池中执行同步upsert
-        import asyncio
-        loop = asyncio.get_event_loop()
-
-        def _sync_call():
-            return self.upsert_documents(
-                collection=collection,
-                ids=ids,
-                embedding_texts=embedding_texts,
-                documents=documents,
-                metadatas=metadatas
-            )
-        
-        await loop.run_in_executor(None, _sync_call)
 
     def embed_documents(self, documents: List[str]) -> List[List[float]]:
         """
-        使用嵌入提供商为文档列表生成向量嵌入（同步方法）。
+        使用嵌入提供商为文档列表生成向量嵌入（同步方法，支持429错误重试）。
 
         Args:
             documents: 需要进行向量化的文档字符串列表。
 
         Returns:
             一个由向量（浮点数列表）组成的列表。
+
+        Raises:
+            RateLimitExceededError: 当重试3次后仍然遇到429错误时抛出
+            Exception: 其他错误直接抛出，不重试
         """
         if not documents:
             return []
 
-        # 使用嵌入提供商生成向量（同步调用）
-        embeddings = self.embedding_provider.embed_documents_sync(documents)
-        return embeddings
+        # 导入自定义异常
+        from ..exceptions import RateLimitExceededError
+
+        # 重试配置（仅针对429错误）
+        max_retries = 3
+        base_wait_time = 60  # 基础等待时间（秒）
+
+        for attempt in range(max_retries):
+            try:
+                # 使用嵌入提供商生成向量（同步调用）
+                embeddings = self.embedding_provider.embed_documents_sync(documents)
+                return embeddings
+
+            except Exception as e:
+                error_msg = str(e)
+
+                # 只对429错误进行重试，其他错误直接抛出
+                is_rate_limit = "429" in error_msg or "rate limit" in error_msg.lower() or "TPM limit" in error_msg
+
+                if not is_rate_limit:
+                    # 非429错误，直接抛出，不重试
+                    self.logger.error(f"❌ 向量化失败: {error_msg}")
+                    raise
+
+                # 429错误的重试逻辑
+                if attempt < max_retries - 1:
+                    # 指数退避：60s, 120s, 240s
+                    wait_time = base_wait_time * (2 ** attempt)
+
+                    # 添加随机抖动（±10%）避免同时重试
+                    import random
+                    import time
+                    jitter = random.uniform(-0.1, 0.1) * wait_time
+                    final_wait = int(wait_time + jitter)
+
+                    self.logger.warning(
+                        f"⏱️  遇到速率限制 (429错误)，"
+                        f"等待 {final_wait} 秒后重试 "
+                        f"(第 {attempt + 1}/{max_retries} 次)"
+                    )
+
+                    time.sleep(final_wait)
+                else:
+                    # 达到最大重试次数，抛出自定义异常
+                    self.logger.error(
+                        f"❌ 向量化失败：达到最大重试次数 ({max_retries})，"
+                        f"速率限制错误: {error_msg}"
+                    )
+                    raise RateLimitExceededError(
+                        f"速率限制重试失败 (尝试了{max_retries}次): {error_msg}",
+                        attempts=max_retries
+                    ) from e
+
+        # 理论上不会到这里
+        raise Exception("向量化失败：未知错误")
 
     def embed_single_document(self, document: str) -> List[float]:
         """
@@ -536,7 +550,7 @@ class VectorStore:
         provider_info = self.embedding_provider.get_model_info()
         model_name = provider_info.get('model_name', 'default')
         provider_type = self.embedding_provider.get_provider_type()
-        
+
         # 使用绝对路径确保唯一性
         abs_db_path = str(Path(self.db_path).resolve())
         cache_key = f"{abs_db_path}:{name}:{model_name}:{provider_type}"
@@ -610,26 +624,26 @@ class VectorStore:
     def get_cache_statistics(cls):
         """
         获取集合缓存统计信息
-        
+
         Returns:
             缓存统计字典
         """
         with cls._cache_lock:
             cache_size = len(cls._collection_cache)
             cache_keys = list(cls._collection_cache.keys())
-            
+
             # 分析缓存键模式
             db_paths = set()
             collections = set()
             models = set()
-            
+
             for key in cache_keys:
                 parts = key.split(':')
                 if len(parts) >= 4:
                     db_paths.add(parts[0])
                     collections.add(parts[1])
                     models.add(parts[2])
-            
+
             return {
                 'cache_size': cache_size,
                 'unique_databases': len(db_paths),
@@ -642,16 +656,16 @@ class VectorStore:
     def invalidate_cache_by_pattern(cls, pattern: str):
         """
         根据模式失效缓存项
-        
+
         Args:
             pattern: 模式字符串，支持部分匹配
         """
         with cls._cache_lock:
             keys_to_remove = [key for key in cls._collection_cache.keys() if pattern in key]
-            
+
             for key in keys_to_remove:
                 del cls._collection_cache[key]
-            
+
             if hasattr(cls, 'logger'):
                 cls.logger.info(f"✅ 失效了 {len(keys_to_remove)} 个匹配模式 '{pattern}' 的缓存项")
 
@@ -993,13 +1007,12 @@ class VectorStore:
             note: NoteData 对象
         """
         try:
-            # 使用高级抽象方法存储笔记
+            # 使用高级抽象方法存储笔记（笔记数据全部存储在 metadata 中）
             self.upsert_documents(
                 collection=collection,
                 ids=note.id,
                 embedding_texts=note.get_embedding_text(),  # 用于向量化的文本
-                documents=None,  # 主/副集合均不落盘documents，正文在metadata['content']
-                metadatas=note.to_dict()
+                metadatas=note.to_dict()  # 笔记的所有数据都存储在 metadata 中
             )
 
             # 笔记的BM25索引在文件扫描完成后统一重建，不在这里立即更新
@@ -1064,6 +1077,7 @@ class VectorStore:
                             vector_results.append(note)
                         except Exception as e:
                             self.logger.warning(f"无法创建笔记对象，跳过: {e}")
+                            self.logger.error(f"导致创建失败的原始 metadata: {meta}")
                             continue
 
             # 混合检索：结合BM25结果
@@ -1081,6 +1095,50 @@ class VectorStore:
 
         except Exception:
             raise
+
+    def _search_vector_scores(self, collection, query: str, limit: int = 100) -> dict:
+        """
+        执行向量搜索，只返回 ID 和相似度分数的映射。
+
+        专为副集合设计（该集合不存储 metadata）。
+        避免了 NoteData 对象构造，性能更高，逻辑更清晰。
+
+        Args:
+            collection: 目标 ChromaDB 集合（通常是副集合）
+            query: 搜索查询字符串
+            limit: 返回结果的最大数量
+
+        Returns:
+            {'note_id': similarity_score, ...} 的字典
+        """
+        try:
+            # 显式生成查询向量（同步调用）
+            query_embedding = self.embed_single_document(query)
+
+            # 执行向量搜索
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=limit
+            )
+
+            # 提取 ID 和距离，转换为相似度分数
+            scores = {}
+            if results and results['ids'] and len(results['ids']) > 0:
+                doc_ids = results['ids'][0]
+                distances = results.get('distances', [[]])[0]
+
+                for idx, doc_id in enumerate(doc_ids):
+                    if idx < len(distances):
+                        distance = distances[idx]
+                        # 将距离转换为相似度分数（0到1之间）
+                        similarity = max(0.0, 1.0 - (distance / 2.0))
+                        scores[doc_id] = similarity
+
+            return scores
+
+        except Exception as e:
+            self.logger.error(f"向量搜索失败: {e}")
+            return {}
 
     def get_notes_by_ids(self, collection, note_ids: List[str]) -> List[NoteData]:
         """
@@ -1110,6 +1168,7 @@ class VectorStore:
                         notes.append(note)
                     except Exception as e:
                         self.logger.warning(f"无法创建笔记对象，跳过: {e}")
+                        self.logger.error(f"导致创建失败的原始 metadata: {meta}")
                         continue
 
             return notes
