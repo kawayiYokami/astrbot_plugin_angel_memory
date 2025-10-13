@@ -5,7 +5,6 @@
 """
 
 import os
-import hashlib
 from pathlib import Path
 from typing import Dict, List
 
@@ -41,29 +40,19 @@ class FileMonitorService:
         provider_id = getattr(note_service, 'provider_id', 'default')
         self.file_index_manager = FileIndexManager(self.data_directory, provider_id)
 
-        # 启用增量同步标志
-        self.incremental_sync_enabled = True
-
         # 确保raw目录存在
         self.raw_directory.mkdir(parents=True, exist_ok=True)
 
-        self.logger.info("文件扫描服务初始化完成")
+        self.logger.info("文件扫描服务初始化完成（增量同步模式）")
         self.logger.info(f"数据目录: {self.data_directory}")
         self.logger.info(f"扫描目录: {self.raw_directory}")
         self.logger.info(f"扫描目录存在: {self.raw_directory.exists()}")
-        self.logger.info(f"增量同步: {'启用' if self.incremental_sync_enabled else '禁用'}")
 
     def start_monitoring(self):
-        """启动文件扫描服务（完全同步版本）"""
+        """启动文件扫描服务（增量同步模式）"""
         try:
-            # 选择同步模式
-            if self.incremental_sync_enabled:
-                self.logger.info("🔄 使用增量同步模式")
-                self._incremental_sync()
-            else:
-                self.logger.info("🔄 使用全量扫描模式")
-                self._scan_and_process_files()
-
+            self.logger.info("🔄 开始增量同步...")
+            self._incremental_sync()
             self.logger.info("📂 文件扫描服务已完成")
 
         except Exception as e:
@@ -79,57 +68,6 @@ class FileMonitorService:
             self.logger.info("文件扫描服务已停止。")
         except Exception as e:
             self.logger.error(f"停止文件扫描服务时发生错误: {e}")
-
-    def _progressive_cleanup(self, processed_count: int, total_count: int):
-        """
-        渐进式清理资源，定期释放内存和连接（同步版本）
-        
-        Args:
-            processed_count: 已处理的文件数量
-            total_count: 总文件数量
-        """
-        try:
-            progress_percent = (processed_count / total_count) * 100
-            self.logger.debug(f"🔄 执行渐进式清理: {processed_count}/{total_count} ({progress_percent:.1f}%)")
-            
-            # 1. 轻量级连接释放（不清空连接池）
-            self._release_connections()
-            
-            # 2. 定期强制清理（必要时）
-            if processed_count % 100 == 0:  # 每100个文件强制清理一次
-                self._force_cleanup_connections()
-                self.logger.debug(f"🔄 强制清理连接池 (处理了 {processed_count} 个文件)")
-            
-            # 3. 清理Python对象引用（帮助GC）
-            if hasattr(self.note_service, '_embedding_queue'):
-                # 清理批量向量化队列中过多的数据
-                if hasattr(self.note_service, '_flush_embedding_queue'):
-                    # 同步清理队列（暂不支持，跳过）
-                    pass
-            
-            # 4. 强制执行垃圾回收（仅在内存使用较多时）
-            import gc
-            if processed_count % 50 == 0:  # 每50个文件执行一次GC
-                collected = gc.collect()
-                self.logger.debug(f"🗑️ 执行垃圾回收，清理了 {collected} 个对象")
-            
-            # 5. 使用智能WAL checkpoint策略
-            self._smart_chromadb_checkpoint(processed_count)
-            
-            self.logger.debug(f"✅ 渐进式清理完成 ({progress_percent:.1f}%)")
-            
-        except Exception as e:
-            self.logger.warning(f"渐进式清理失败: {e}")
-
-    def _release_connections(self):
-        """释放SQLite连接（轻量级释放，不清空连接池）"""
-        try:
-            # 连接会通过_return_connection方法自动返回池中
-            # 不需要手动关闭，避免清空连接池
-            pass
-        except Exception:
-            # 静默失败，不影响文件处理
-            pass
 
     def _force_cleanup_connections(self):
         """强制清理所有连接（仅在必要时调用）"""
@@ -241,97 +179,6 @@ class FileMonitorService:
             # checkpoint失败不应该阻止其他清理操作
             self.logger.warning(f"ChromaDB checkpoint失败（不影响继续）: {e}")
 
-    def _smart_chromadb_checkpoint(self, file_count: int = 0):
-        """
-        智能WAL checkpoint策略，根据文件数量和模式选择最优策略
-        
-        Args:
-            file_count: 已处理的文件数量
-        """
-        try:
-            # 根据处理进度选择checkpoint策略
-            if file_count % 50 == 0:
-                # 每50个文件使用更彻底的checkpoint
-                self._force_chromadb_checkpoint("TRUNCATE")
-            elif file_count % 20 == 0:
-                # 每20个文件使用中等强度checkpoint
-                self._force_chromadb_checkpoint("RESTART")
-            else:
-                # 其他时候使用轻量级checkpoint
-                self._force_chromadb_checkpoint("PASSIVE")
-                
-        except Exception as e:
-            self.logger.warning(f"智能checkpoint策略失败: {e}")
-
-    def _scan_and_process_files(self):
-        """全量扫描并顺序处理文件"""
-        try:
-            import time
-            self.logger.info(f"开始文件扫描... 目标目录: {self.raw_directory}")
-
-            if not self.raw_directory.exists():
-                self.logger.error(f"扫描目录不存在: {self.raw_directory}")
-                return
-
-            # 快速扫描所有文件
-            t_scan_start = time.time()
-            file_paths = []
-            for file_path in self.raw_directory.rglob('*'):
-                if file_path.is_file():
-                    file_paths.append(str(file_path))
-            scan_time = time.time() - t_scan_start
-
-            self.logger.info(f"文件扫描完成，共发现 {len(file_paths)} 个文件 | 耗时: {scan_time:.2f}秒")
-
-            # 顺序处理所有文件
-            self.logger.info(f"开始顺序处理 {len(file_paths)} 个文件...")
-            
-            processed_count = 0
-            for idx, file_path in enumerate(file_paths):
-                try:
-                    import time as time_module
-                    file_start = time_module.time()
-                    
-                    # 获取相对路径
-                    relative_path = str(Path(file_path).relative_to(self.raw_directory))
-                    
-                    # 获取文件时间戳
-                    file_timestamp = int(Path(file_path).stat().st_mtime)
-                    
-                    # 处理文件
-                    doc_count, timings = self._process_file_change(relative_path, file_timestamp)
-                    if doc_count > 0:
-                        processed_count += 1
-                    
-                    # 详细的处理日志
-                    total_time = (time_module.time() - file_start) * 1000
-                    file_name = Path(file_path).name
-                    timing_str = self._format_timing_log(timings)
-                    
-                    self.logger.info(
-                        f"[{idx + 1}/{len(file_paths)}] ✅ {file_name} | "
-                        f"块数:{doc_count} | 总耗时:{total_time:.0f}ms | {timing_str}"
-                    )
-                    
-                    # 每100个文件显示进度
-                    if (idx + 1) % 100 == 0:
-                        progress = (idx + 1) / len(file_paths) * 100
-                        self.logger.info(f"📊 进度: {progress:.1f}% ({idx + 1}/{len(file_paths)})")
-                        
-                except Exception as e:
-                    self.logger.error(f"处理文件失败: {file_path}, 错误: {e}")
-                    continue
-
-            self.logger.info(f"所有文件处理完成，成功处理 {processed_count} 个文件")
-
-            # 所有文件处理完毕后，统一重建BM25索引
-            self._rebuild_bm25_index_once()
-
-        except Exception as e:
-            self.logger.error(f"文件扫描失败: {e}")
-            import traceback
-            self.logger.error(f"错误详情: {traceback.format_exc()}")
-
     def _format_timing_log(self, timings: dict) -> str:
         """格式化计时信息为日志字符串（按处理顺序）"""
         parts = []
@@ -392,26 +239,6 @@ class FileMonitorService:
             import traceback
             self.logger.error(f"错误详情: {traceback.format_exc()}")
 
-
-    def _calculate_file_hash(self, file_path: str) -> str:
-        """
-        计算文件哈希值
-
-        Args:
-            file_path: 文件路径
-
-        Returns:
-            文件哈希值
-        """
-        try:
-            hash_md5 = hashlib.md5()
-            with open(file_path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    hash_md5.update(chunk)
-            return hash_md5.hexdigest()
-        except Exception as e:
-            self.logger.error(f"计算文件哈希失败: {file_path}, 错误: {e}")
-            return ""
 
     # ===== 增量同步功能 =====
 
