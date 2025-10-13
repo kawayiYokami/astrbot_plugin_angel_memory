@@ -191,6 +191,33 @@ class MarkdownParser:
 
         return tags
 
+    def _can_be_tag(self, text: str) -> bool:
+        """
+        检查文本是否适合作为标签
+
+        规则：不允许包含任何标点符号，但允许常见运算符和下划线
+
+        Args:
+            text: 待检查的文本
+
+        Returns:
+            是否可以作为标签
+        """
+        # 允许的字符：中英文、数字、空白、常见运算符 +-*/=<>_
+        # 禁止的字符：所有标点符号（包括中英文）
+        forbidden_pattern = r'[^\w\s\u4e00-\u9fff+\-*/=<>_]'
+
+        # 如果包含禁止的字符，不能作为标签
+        if re.search(forbidden_pattern, text):
+            return False
+
+        # 长度检查：至少2个字符
+        cleaned_text = text.strip()
+        if not cleaned_text or len(cleaned_text) <= 1:
+            return False
+
+        return True
+
     def _extract_path_tags(self, file_path: str) -> List[str]:
         """从文件路径提取标签，只保留raw之后的路径部分"""
         tags = []
@@ -235,19 +262,17 @@ class MarkdownParser:
         """从内容中提取标签"""
         tags = []
 
-        # 加粗标签（所有加粗内容）
+        # 加粗标签提取
         bold_matches = re.findall(r'\*\*([^*]+)\*\*', content)
         for match in bold_matches:
-            # 去掉所有标点符号
-            clean_match = re.sub(r'[^\w\s]', '', match)
-            if clean_match and len(clean_match.strip()) > 1:
-                tags.append(clean_match.strip())
+            cleaned_match = match.strip()
+            if self._can_be_tag(cleaned_match):
+                tags.append(cleaned_match)
 
-        # 专有名词标签（排除包含标点符号的内容）
+        # 专有名词标签提取（修复重复的正则表达式）
         proper_noun_patterns = [
             r'"([^"]+)"',      # 半角双引号
             r'"([^"]+)"',      # 全角双引号
-            r'"([^"]+)"',      # 竖版双引号
             r'「([^」]+)」',    # 日式直角引号
             r'『([^』]+)』',    # 日式双直角引号
             r'《([^》]+)》',    # 书名号
@@ -257,20 +282,13 @@ class MarkdownParser:
         for pattern in proper_noun_patterns:
             matches = re.findall(pattern, content)
             for match in matches:
-                # 检查是否包含标点符号（排除中文标点，因为可能是有意义的）
-                # 只排除英文标点和常见对话标点
-                punctuation_pattern = r'[.,!?;:，。！？；：]'  # 英文和中文句末标点
-
-                if not re.search(punctuation_pattern, match):
-                    # 不包含标点符号，才作为标签
-                    # 去掉其他无关符号
-                    clean_match = re.sub(r'[^\w\s\u4e00-\u9fff]', '', match)
-                    if clean_match and len(clean_match.strip()) > 1:
-                        tags.append(clean_match.strip())
+                cleaned_match = match.strip()
+                if self._can_be_tag(cleaned_match):
+                    tags.append(cleaned_match)
 
         # 去重和清理
-        tags = list(dict.fromkeys(tags))
-        tags = [tag.strip() for tag in tags if tag.strip() and len(tag.strip()) > 1]
+        tags = list(dict.fromkeys(tags))  # 去重保持顺序
+        tags = [tag.strip() for tag in tags if tag.strip()]  # 清理空白
 
         return tags
 
