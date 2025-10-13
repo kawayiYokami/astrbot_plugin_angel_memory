@@ -750,3 +750,17 @@ class DeepMind:
         if self._sleep_timer and self._sleep_timer.is_alive():
             self._sleep_timer.join(timeout=5)
         self.logger.info("定期睡眠已停止")
+
+    def shutdown(self):
+        """关闭DeepMind，释放资源"""
+        self.logger.info("正在关闭 DeepMind...")
+
+        # 停止定期睡眠
+        self.stop_sleep()
+
+        # 停止反馈队列
+        from .utils.feedback_queue import stop_feedback_queue
+        stop_feedback_queue(timeout=5)
+
+        self.logger.info("DeepMind 已成功关闭")
+

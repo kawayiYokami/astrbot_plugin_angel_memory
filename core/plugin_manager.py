@@ -238,3 +238,13 @@ class PluginManager:
         ready = self.init_manager.is_ready()
         self.logger.debug(f"📋 插件就绪状态检查: {ready}")
         return ready
+
+    def shutdown(self):
+        """关闭插件管理器和所有后台服务"""
+        self.logger.info("插件管理器正在关闭...")
+
+        # 关闭后台初始化器
+        if self.background_initializer:
+            self.background_initializer.shutdown()
+
+        self.logger.info("插件管理器已成功关闭")

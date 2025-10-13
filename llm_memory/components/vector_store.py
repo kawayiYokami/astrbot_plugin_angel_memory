@@ -393,22 +393,24 @@ class VectorStore:
         *,
         ids,
         embedding_texts,
+        documents=None,
         metadatas=None,
         _return_timings=False
     ):
         """
         高级 upsert 方法（同步接口）：从文本生成向量并存储到向量数据库。
 
-        设计原则：
-        - 向量生成：使用 embedding_texts 参数
-        - 数据存储：使用 metadatas 参数（所有业务数据都应放在 metadata 中）
-        - 不支持 documents 字段：ChromaDB 的 documents 字段已被弃用，所有数据统一存储在 metadata
+        这是向量数据库的通用方法，支持不同的使用场景：
+        - 记忆系统：documents 参数可选，所有数据可存储在 metadatas 中
+        - 笔记系统：documents 参数可选，正文可存储在 metadatas['content'] 中
+        - 其他系统：可灵活选择使用 documents 字段
 
         Args:
             collection: 目标 ChromaDB 集合
             ids: 文档ID或ID列表
             embedding_texts: 用于生成向量的文本或文本列表
-            metadatas: 与文档关联的元数据或元数据列表（包含所有业务数据）
+            documents: 可选的文档内容或列表（默认 None）
+            metadatas: 与文档关联的元数据或元数据列表
             _return_timings: 内部参数，是否返回计时信息
         """
         import time
@@ -417,6 +419,7 @@ class VectorStore:
         # 统一处理输入为列表
         ids_list = [ids] if isinstance(ids, str) else ids
         embedding_texts_list = [embedding_texts] if isinstance(embedding_texts, str) else embedding_texts
+        documents_list = [documents] if isinstance(documents, str) else documents if documents is not None else None
         metadatas_list = [metadatas] if isinstance(metadatas, dict) else metadatas
 
         if not ids_list:
@@ -433,6 +436,10 @@ class VectorStore:
             'ids': ids_list,
             'embeddings': embeddings,
         }
+
+        # 只在 documents 不为 None 时才添加到 upsert 参数中
+        if documents_list is not None:
+            upsert_params['documents'] = documents_list
 
         if metadatas_list is not None:
             upsert_params['metadatas'] = metadatas_list
@@ -995,6 +1002,20 @@ class VectorStore:
                 'cache_size': len(cls._collection_cache),
                 'cached_collections': list(cls._collection_cache.keys())
             }
+
+    def shutdown(self):
+        """关闭向量存储，释放资源"""
+        self.logger.info("正在关闭向量存储...")
+
+        # 关闭嵌入提供商
+        if self.embedding_provider:
+            self.embedding_provider.shutdown()
+
+        # 清理集合缓存
+        self.clear_collection_cache()
+
+        self.logger.info("向量存储已成功关闭")
+
 
     # ===== 笔记专用检索方法 =====
 

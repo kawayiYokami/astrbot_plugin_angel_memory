@@ -176,20 +176,19 @@ class AngelMemoryPlugin(Star):
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""
         try:
-            # 停止文件监控（如果存在）
-            if self.file_monitor:
-                self.file_monitor.stop_monitoring()
+            self.logger.info("Angel Memory Plugin 正在关闭...")
 
-            # 停止定期睡眠（如果存在）
-            if self.deepmind:
-                self.deepmind.stop_sleep()
+            # 停止核心服务
+            if self.plugin_manager:
+                self.plugin_manager.shutdown()
 
             # 获取最终状态
             status = self.plugin_manager.get_status() if self.plugin_manager else {"state": "unknown"}
-            self.logger.info(f"Angel Memory Plugin 正在关闭，最终状态: {status.get('state', 'unknown')}")
+            self.logger.info(f"Angel Memory Plugin 已关闭，最终状态: {status.get('state', 'unknown')}")
 
         except Exception as e:
             self.logger.error(f"Angel Memory Plugin: 插件卸载清理失败: {e}")
+
 
     def get_plugin_status(self):
         """

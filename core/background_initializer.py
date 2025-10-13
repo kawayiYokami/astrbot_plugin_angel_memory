@@ -117,3 +117,19 @@ class BackgroundInitializer:
     def get_component_factory(self):
         """获取组件工厂"""
         return self.component_factory
+
+    def shutdown(self):
+        """关闭后台初始化器和所有组件"""
+        self.logger.info("后台初始化器正在关闭...")
+
+        # 停止后台初始化线程（如果仍在运行）
+        if self.background_thread and self.background_thread.is_alive():
+            # 这里不直接终止线程，而是依赖于守护线程的特性
+            # 在主程序退出时自动结束
+            self.logger.info("后台初始化线程将在主程序退出时自动停止")
+
+        # 关闭所有由ComponentFactory创建的组件
+        if self.component_factory:
+            self.component_factory.shutdown()
+
+        self.logger.info("后台初始化器已成功关闭")

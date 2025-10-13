@@ -313,6 +313,12 @@ class EmbeddingProvider(ABC):
         pass
 
 
+    @abstractmethod
+    def shutdown(self):
+        """关闭提供商，释放资源"""
+        pass
+
+
 class LocalEmbeddingProvider(EmbeddingProvider):
     """本地嵌入模型提供商"""
 
@@ -418,6 +424,12 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         """清空缓存"""
         self._cache.clear()
         self.logger.info("本地提供商缓存已清空")
+
+
+    def shutdown(self):
+        """关闭本地提供商"""
+        self.clear_cache()
+        self.logger.info(f"本地嵌入提供商 {self.model_name} 已关闭")
 
 
 class APIEmbeddingProvider(EmbeddingProvider):
@@ -655,6 +667,26 @@ class APIEmbeddingProvider(EmbeddingProvider):
         """清空缓存"""
         self._cache.clear()
         self.logger.info(f"API提供商 {self.provider_id} 缓存已清空")
+
+    def shutdown(self):
+        """关闭API提供商，释放资源"""
+        self.logger.info(f"正在关闭API嵌入提供商: {self.provider_id}")
+
+        # 关闭共享事件循环
+        if self._shared_loop and self._shared_loop.is_running():
+            self._shared_loop.call_soon_threadsafe(self._shared_loop.stop)
+        if self._loop_thread and self._loop_thread.is_alive():
+            self._loop_thread.join(timeout=5)
+            if self._loop_thread.is_alive():
+                self.logger.warning(f"事件循环线程未能及时关闭: {self._loop_thread.name}")
+
+        # 关闭线程池
+        if self._executor:
+            self._executor.shutdown(wait=True)
+
+        self.clear_cache()
+        self.logger.info(f"API嵌入提供商 {self.provider_id} 已成功关闭")
+
 
 
 class EmbeddingProviderFactory:

@@ -250,3 +250,30 @@ class ComponentFactory:
         """重置工厂状态（用于测试）"""
         self._components.clear()
         self._initialized = False
+
+    def shutdown(self):
+        """关闭所有组件，释放资源"""
+        self.logger.info("🏭 开始关闭所有核心组件...")
+
+        # 按创建顺序的逆序关闭组件
+        component_shutdown_order = [
+            "file_monitor",
+            "deepmind",
+            "note_service",
+            "cognitive_service",
+            "vector_store",
+            "embedding_provider"
+        ]
+
+        for component_name in component_shutdown_order:
+            component = self._components.get(component_name)
+            if component and hasattr(component, "shutdown"):
+                try:
+                    self.logger.info(f"正在关闭组件: {component_name}...")
+                    component.shutdown()
+                    self.logger.info(f"✅ 组件 {component_name} 已关闭")
+                except Exception as e:
+                    self.logger.error(f"❌ 关闭组件 {component_name} 失败: {e}")
+
+        self._initialized = False
+        self.logger.info("✅ 所有核心组件已成功关闭")
