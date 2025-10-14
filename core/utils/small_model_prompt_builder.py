@@ -6,7 +6,6 @@
 
 from typing import List, Dict, Tuple
 from datetime import datetime
-from ...llm_memory import CognitiveService
 from ..session_memory import MemoryItem
 from ..config import MemoryConstants
 from .memory_formatter import MemoryFormatter
@@ -129,7 +128,7 @@ class SmallModelPromptBuilder:
         ).strip()
 
     @staticmethod
-    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None, core_topic: str = None) -> str:
+    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None, core_topic: str = None, system_prompt: str = None) -> str:
         """
         构建用于小模型的记忆整理提示词
 
@@ -140,6 +139,7 @@ class SmallModelPromptBuilder:
             candidate_notes: 候选笔记列表（可选）
             secretary_decision: 秘书决策信息，包含AI人格和别名（可选）
             core_topic: 当前对话的核心话题（可选）
+            system_prompt: 系统提示词（可选，如果不提供则需要在方法内获取）
 
         Returns:
             完整的提示词字符串
@@ -147,7 +147,10 @@ class SmallModelPromptBuilder:
         from .note_context_builder import NoteContextBuilder
 
         # 获取系统提示词
-        system_prompt = CognitiveService.get_prompt()
+        if system_prompt is None:
+            # 延迟导入以避免循环依赖
+            from ...llm_memory import CognitiveService
+            system_prompt = CognitiveService.get_prompt()
 
         # 1. 构建参与者信息（使用列表推导式）
         participants_section = "# 对话参与者\n" + (

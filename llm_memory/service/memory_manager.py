@@ -19,6 +19,9 @@ from ..models.data_models import BaseMemory, MemoryType, ValidationError
 from ..components.association_manager import AssociationManager, MemorySnapshot
 from ..config.system_config import system_config
 
+# 导入查询处理器（用于统一检索词预处理）
+from ...core.utils.query_processor import get_query_processor
+
 class MemoryManager:
     """
     记忆管理器类 - 处理记忆的高级功能。
@@ -40,6 +43,9 @@ class MemoryManager:
         self.store = vector_store
         self.association_manager = association_manager
         self.logger = logger
+
+        # 初始化查询处理器（用于统一检索词预处理）
+        self.query_processor = get_query_processor()
 
     # ===== 记忆巩固和强化 =====
 
@@ -97,7 +103,7 @@ class MemoryManager:
 
     # ===== 高级回忆功能 =====
 
-    def comprehensive_recall(self, query: str, fresh_limit: int = None, consolidated_limit: int = None) -> List[BaseMemory]:
+    def comprehensive_recall(self, query: str, fresh_limit: int = None, consolidated_limit: int = None, event=None) -> List[BaseMemory]:
         """
         实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容。
 
@@ -105,10 +111,16 @@ class MemoryManager:
             query: 搜索查询字符串
             fresh_limit: 新鲜记忆的最大返回数量
             consolidated_limit: 已巩固记忆的最大返回数量
+            event: 消息事件（用于查询词预处理）
 
         Returns:
             合并后的记忆列表，新鲜记忆优先
         """
+        # 预处理查询词（如果有查询处理器）
+        processed_query = query
+        if self.query_processor and event:
+            processed_query = self.query_processor.process_query_for_memory(query, event)
+
         if fresh_limit is None:
             fresh_limit = system_config.fresh_recall_limit
         if consolidated_limit is None:
@@ -117,7 +129,7 @@ class MemoryManager:
         # 检索新鲜记忆
         fresh_memories = self.store.recall(
             collection=self.collection,
-            query=query,
+            query=processed_query,
             limit=fresh_limit,
             where_filter={"is_consolidated": False}
         )
@@ -125,7 +137,7 @@ class MemoryManager:
         # 检索已巩固记忆
         consolidated_memories = self.store.recall(
             collection=self.collection,
-            query=query,
+            query=processed_query,
             limit=consolidated_limit,
             where_filter={"is_consolidated": True}
         )
@@ -144,7 +156,7 @@ class MemoryManager:
         return unique_memories
 
     def chained_recall(self, query: str, per_type_limit: int = 7, final_limit: int = 7,
-                      memory_handlers: Dict[str, object] = None) -> List[BaseMemory]:
+                       memory_handlers: Dict[str, object] = None, event=None) -> List[BaseMemory]:
         """
         链式多通道回忆 - 基于关联网络的多轮回忆（中文核心概念）
 
@@ -162,13 +174,19 @@ class MemoryManager:
             per_type_limit: 每种类型第一轮最多召回数量（默认7）
             final_limit: 最终返回的记忆数量（默认7）
             memory_handlers: 记忆处理器字典，用于分类型召回
+            event: 消息事件（用于查询词预处理）
 
         Returns:
             加权随机抽取后的记忆列表（最多 final_limit 个）
         """
+        # 预处理查询词（如果有查询处理器）
+        processed_query = query
+        if self.query_processor and event:
+            processed_query = self.query_processor.process_query_for_memory(query, event)
+
         if not memory_handlers:
             self.logger.warning("未提供记忆处理器，使用简单回忆")
-            return self.comprehensive_recall(query, fresh_limit=final_limit, consolidated_limit=final_limit)
+            return self.comprehensive_recall(processed_query, fresh_limit=final_limit, consolidated_limit=final_limit, event=event)
 
         # 第一轮：分类型召回
         memory_types = [
@@ -188,7 +206,7 @@ class MemoryManager:
             if not handler:
                 continue  # 排除未提供的处理器
 
-            memories = handler.recall(query, limit=per_type_limit, include_consolidated=True)
+            memories = handler.recall(processed_query, limit=per_type_limit, include_consolidated=True)
             if memories:
                 recalled_by_type[memory_type] = memories
                 all_recalled_ids.update([m.id for m in memories])
