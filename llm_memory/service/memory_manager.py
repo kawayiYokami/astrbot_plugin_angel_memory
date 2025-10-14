@@ -306,7 +306,7 @@ class MemoryManager:
             return BaseMemory(
                 memory_type=memory_type,
                 judgment=metadata.get('judgment', ''),
-                reasoning=document,
+                reasoning=metadata.get('reasoning', ''),
                 tags=BaseMemory._parse_tags(metadata.get('tags', [])),
                 id=memory_id,
                 strength=metadata.get('strength', 1),
