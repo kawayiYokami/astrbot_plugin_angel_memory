@@ -49,11 +49,8 @@ class MemoryInjector:
         Returns:
             格式化后的记忆上下文
         """
-        return MemoryFormatter.format_memories_for_prompt(
-            memories=session_memories,
-            useful_memory_ids=[],  # 不过滤，FIFO中的都是有用的
-            new_memories={}       # 不包含新记忆
-        )
+        # 直接调用为FIFO设计的专用格式化方法
+        return MemoryFormatter.format_fifo_memories(memories=session_memories)
 
     @staticmethod
     def inject_into_system_prompt(system_prompt: str, memory_context: str) -> str:

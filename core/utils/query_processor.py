@@ -206,7 +206,7 @@ class QueryProcessor:
                 query = self._filter_assistant_names(query, assistant_names)
                 query = self._clean_text(query)
                 if query != original_query:
-                    self.logger.debug(f"过滤助理名字后: '{query}'")
+                    pass
 
             # 步骤2: jieba分词并过滤
             if query.strip():
@@ -214,19 +214,16 @@ class QueryProcessor:
                 if words:
                     query = ' '.join(words)
                     query = self._clean_text(query)
-                    self.logger.debug(f"分词过滤后: '{query}'")
+                    pass
                 else:
                     # 如果分词后没有保留词，保留原始查询（避免完全清空）
                     query = original_query
-                    self.logger.warning(f"分词后无保留词，返回原查询: '{query}'")
+                    pass
 
             # 最终清理
             query = self._clean_text(query)
 
-            if query != original_query:
-                self.logger.info(f"查询词预处理完成: '{original_query}' -> '{query}'")
-            else:
-                self.logger.debug(f"查询词无需预处理: '{query}'")
+            pass
 
             return query
 

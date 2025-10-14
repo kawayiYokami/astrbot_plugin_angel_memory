@@ -21,6 +21,7 @@ from .session_memory import SessionMemoryManager
 from .utils import SmallModelPromptBuilder, MemoryInjector, MemoryIDResolver
 from .utils.feedback_queue import get_feedback_queue
 from .utils.note_context_builder import NoteContextBuilder
+from .utils.query_processor import get_query_processor
 try:
     from astrbot.api import logger
 except ImportError:
@@ -86,6 +87,7 @@ class DeepMind:
         # 初始化工具类
         self.prompt_builder = SmallModelPromptBuilder()
         self.memory_injector = MemoryInjector()
+        self.query_processor = get_query_processor()
 
         # 睡眠相关
         self._sleep_timer = None
@@ -249,17 +251,20 @@ class DeepMind:
             包含 long_term_memories, candidate_notes, note_id_mapping, secretary_decision 的字典
         """
         from .timing_diagnostics import timing_log, log_checkpoint
-        
+
         log_checkpoint("开始链式召回")
-        
+
+        # 1. 预处理记忆检索查询词
+        memory_query = self.query_processor.process_query_for_memory(query, event)
+
         # 1. 使用链式召回从长期记忆检索相关记忆
         with timing_log("链式召回(chained_recall)", threshold_ms=5000):
             long_term_memories = self.memory_system.chained_recall(
-                query=query,
+                query=memory_query,
                 per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
                 final_limit=self.CHAINED_RECALL_FINAL_LIMIT
             )
-        
+
         log_checkpoint(f"链式召回完成，获得{len(long_term_memories)}条记忆")
 
         # 2. 获取 secretary_decision 信息
@@ -274,13 +279,17 @@ class DeepMind:
         # 3. 优先使用天使之心核心话题进行笔记检索
         core_topic = self._extract_core_topic(event)
         note_query = core_topic if core_topic and core_topic.strip() else query
+
+        # 应用统一的检索词预处理
+        note_query = self.query_processor.process_query_for_notes(note_query, event)
+
         if core_topic and core_topic.strip():
             self.logger.info(f"使用核心话题进行笔记检索: {note_query}")
         else:
             self.logger.debug(f"未找到核心话题，使用聊天记录查询: {note_query}")
 
         log_checkpoint("开始笔记检索")
-        
+
         # 4. 获取候选笔记（用于小模型的选择）
         with timing_log("笔记检索(search_notes_by_token_limit)", threshold_ms=5000):
             candidate_notes = self.note_service.search_notes_by_token_limit(
@@ -288,7 +297,7 @@ class DeepMind:
                 max_tokens=self.small_model_note_budget,
                 recall_count=self.NOTE_CANDIDATE_COUNT
             )
-        
+
         log_checkpoint(f"笔记检索完成，获得{len(candidate_notes)}条笔记")
 
         # 5. 创建短ID到完整ID的映射（用于后续上下文扩展）
@@ -448,6 +457,7 @@ class DeepMind:
         """
         # 1. 从短期记忆推送给主意识（潜意识筛选后的精选记忆）
         short_term_memories = self.session_memory_manager.get_session_memories(session_id)
+
         memory_context = self.memory_injector.format_fifo_memories_for_prompt(short_term_memories)
 
         # 2. 合并记忆和笔记上下文
@@ -594,7 +604,7 @@ class DeepMind:
             request: 即将发给主意识的请求（我们要往里面塞记忆）
         """
         from .timing_diagnostics import timing_log, log_checkpoint
-        
+
         # 如果未配置 provider_id，跳过记忆整理
         if not self.provider_id:
             return
@@ -610,7 +620,7 @@ class DeepMind:
         user_list = context_data['user_list']
 
         log_checkpoint(f"开始检索记忆 - session={session_id}")
-        
+
         # 检索长期记忆和候选笔记
         with timing_log("检索长期记忆和笔记", threshold_ms=1000):
             retrieval_data = self._retrieve_memories_and_notes(event, query)
@@ -640,11 +650,11 @@ class DeepMind:
                 'session_id': session_id
             }
 
-            # 注入记忆到请求
-            self._inject_memories_to_request(request, session_id, note_context)
-
-            # 更新记忆系统
+            # 更新记忆系统（将筛选出的记忆同步加入短期记忆）
             self._update_memory_system(feedback_data, long_term_memories, session_id)
+
+            # 注入记忆到请求（从短期记忆中读取并注入）
+            self._inject_memories_to_request(request, session_id, note_context)
 
         except Exception as e:
             import traceback
@@ -671,24 +681,16 @@ class DeepMind:
             return None
 
     def _get_session_id(self, event: AstrMessageEvent) -> str:
-        """获取会话ID"""
-        # 尝试从事件中获取发送者ID和群组ID
-        sender_id = "unknown"
-        group_id = "private"
-
-        # 尝试获取发送者ID
-        if hasattr(event, 'sender_id'):
-            sender_id = str(event.sender_id)
-        elif hasattr(event, 'user_id'):
-            sender_id = str(event.user_id)
-
-        # 尝试获取群组ID
-        if hasattr(event, 'group_id'):
-            group_id = str(event.group_id)
-        elif hasattr(event, 'channel_id'):
-            group_id = str(event.channel_id)
-
-        return f"{sender_id}_{group_id}"
+        """获取会话ID，统一使用 event.unified_msg_origin"""
+        try:
+            session_id = str(event.unified_msg_origin)
+            if not session_id:
+                self.logger.error("event.unified_msg_origin 为空值，无法处理会话！")
+                raise ValueError("Cannot process event with an empty session ID from unified_msg_origin")
+            return session_id
+        except AttributeError:
+            self.logger.error("事件中缺少 'event.unified_msg_origin' 属性，无法确定会话ID！")
+            raise
 
     def _memories_to_json(self, memories: List) -> List[Dict[str, Any]]:
         """
@@ -770,4 +772,3 @@ class DeepMind:
         stop_feedback_queue(timeout=5)
 
         self.logger.info("AI潜意识已休息，下次再见！")
-

@@ -112,6 +112,31 @@ class MemoryFormatter:
         return "".join(formatted_lines)
 
     @staticmethod
+    def format_fifo_memories(memories: List[MemoryItem]) -> str:
+        """
+        专门格式化来自FIFO短期记忆的列表，无过滤。
+
+        Args:
+            memories: 记忆列表
+
+        Returns:
+            格式化后的记忆文本
+        """
+        if not memories:
+            return ""
+
+        # 按类型分组并格式化
+        grouped_memories = MemoryFormatter.format_memories_by_type(memories)
+
+        # 构建最终文本
+        formatted_lines = ["[相关记忆]"]
+        for memory_type, formatted_memories in grouped_memories.items():
+            formatted_lines.append(f"\n[{memory_type}]")
+            formatted_lines.extend(f"\n{memory_text}" for memory_text in formatted_memories)
+
+        return "".join(formatted_lines)
+
+    @staticmethod
     def format_memories_for_display(memories: List[MemoryItem]) -> str:
         """
         格式化记忆用于显示
