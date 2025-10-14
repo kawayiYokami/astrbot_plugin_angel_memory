@@ -241,8 +241,7 @@ class MemoryManager:
                             # 检查是否超过每类型限制（第二轮不限制，或者可以设置更宽松的限制）
                             recalled_by_type[assoc_type].append(assoc_memory)
                             all_recalled_ids.add(assoc_id)
-                            self.logger.debug(f"  从关联补充: {assoc_type} - {assoc_id[:8]}")
-
+ 
                     except Exception as e:
                         self.logger.warning(f"获取关联记忆 {assoc_id} 失败: {str(e)}")
                         continue

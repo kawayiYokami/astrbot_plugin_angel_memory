@@ -205,25 +205,18 @@ class QueryProcessor:
             if assistant_names:
                 query = self._filter_assistant_names(query, assistant_names)
                 query = self._clean_text(query)
-                if query != original_query:
-                    pass
-
             # 步骤2: jieba分词并过滤
             if query.strip():
                 words = self._tokenize_and_filter(query)
                 if words:
                     query = ' '.join(words)
                     query = self._clean_text(query)
-                    pass
                 else:
                     # 如果分词后没有保留词，保留原始查询（避免完全清空）
                     query = original_query
-                    pass
 
             # 最终清理
             query = self._clean_text(query)
-
-            pass
 
             return query
 
