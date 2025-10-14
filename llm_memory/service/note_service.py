@@ -145,7 +145,7 @@ class NoteService:
         return True
 
     def search_notes(
-        self, query: str, max_results: int = 10, tag_filter: List[str] = None, threshold: float = 0.5
+        self, query: str, max_results: int = 10, tag_filter: List[str] = None, threshold: float = 0.6
     ) -> List[Dict]:
         """
         搜索笔记
@@ -230,7 +230,7 @@ class NoteService:
         query: str,
         max_results: int = 10,
         recall_count: int = 100,
-        threshold: float = 0.5,
+        threshold: float = 0.6,
     ) -> List[Dict]:
         """
         两阶段混合检索: 先过滤，后重排。
@@ -397,71 +397,71 @@ class NoteService:
     def parse_and_store_file_sync(self, file_path: str, relative_path: str = None) -> tuple:
         """
         同步版本：解析并存储文件（顺序处理优化）
-        
+
         Args:
             file_path: 文件路径
             relative_path: 相对路径
-            
+
         Returns:
             (文档数量, 计时字典)
         """
         import time
         timings = {}
-        
+
         try:
             # 检查文件是否存在
             file_path_obj = Path(file_path)
             if not file_path_obj.exists():
                 self.logger.warning(f"文件不存在: {file_path}")
                 return 0, timings
-            
+
             # 获取解析器
             t_parser = time.time()
             parser = self.parser_manager.get_parser_for_file(file_path, self.id_service.tag_manager)
             timings['parser_select'] = (time.time() - t_parser) * 1000
-            
+
             if parser is None:
                 self.logger.warning(f"未找到适合的解析器，跳过处理: {file_path}")
                 return 0, timings
-            
+
             # 获取文件信息
             file_path_obj = Path(file_path)
             file_timestamp = int(file_path_obj.stat().st_mtime)
-            
+
             # 优先使用传入的relative_path
             if relative_path is None:
                 relative_path = file_path_obj.name
-            
+
             # 获取或创建文件ID
             t_start = time.time()
             file_id = self.id_service.file_to_id(relative_path, file_timestamp)
             timings['id_lookup'] = (time.time() - t_start) * 1000
-            
+
             # 同步解析文件
             t_start = time.time()
             document_blocks = self._parse_file_sync(file_path, parser, file_id)
             timings['parse'] = (time.time() - t_start) * 1000
-            
+
             # 存储notes（完全同步版本，直接存储不走队列）
             if document_blocks:
                 t_store_submit = time.time()
-                
+
                 # 直接同步存储（跳过批量队列，不更新BM25）
                 store_timings = self._store_notes_batch(document_blocks, update_bm25=False)
-                
+
                 timings['store_total'] = (time.time() - t_store_submit) * 1000
-                
+
                 if store_timings:
                     timings.update(store_timings)
             else:
                 timings['store_total'] = 0
-            
+
             return len(document_blocks), timings
-            
+
         except Exception as e:
             self.logger.error(f"同步解析文件失败: {file_path}, 错误: {e}")
             raise
-    
+
     def _parse_file_sync(self, file_path: str, parser, file_id: int) -> List[NoteData]:
         """
         同步解析文件的辅助方法
@@ -741,7 +741,3 @@ class NoteService:
             "provider_id": self.id_service.provider_id if hasattr(self, 'id_service') else None,
             "batch_queue_size": len(self._embedding_queue) if hasattr(self, '_embedding_queue') else 0
         }
-
-
-
-

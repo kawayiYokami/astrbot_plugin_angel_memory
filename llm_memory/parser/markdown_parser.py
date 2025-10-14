@@ -7,6 +7,7 @@ Markdown解析器
 import re
 import uuid
 from typing import List, Dict, Any, Set
+import jieba.posseg as pseg
 from ..models.note_models import NoteData
 from ..components.tag_manager import TagManager
 from ..utils.token_utils import count_tokens
@@ -196,6 +197,7 @@ class MarkdownParser:
         检查文本是否适合作为标签
 
         规则：不允许包含任何标点符号，但允许常见运算符和下划线
+        汉字不超过6个
 
         Args:
             text: 待检查的文本
@@ -214,6 +216,11 @@ class MarkdownParser:
         # 长度检查：至少2个字符
         cleaned_text = text.strip()
         if not cleaned_text or len(cleaned_text) <= 1:
+            return False
+
+        # 汉字数量检查：不超过6个汉字
+        chinese_chars = re.findall(r'[\u4e00-\u9fff]', cleaned_text)
+        if len(chinese_chars) >= 7:
             return False
 
         return True
@@ -286,9 +293,55 @@ class MarkdownParser:
                 if self._can_be_tag(cleaned_match):
                     tags.append(cleaned_match)
 
+        # 对所有已提取的标签进行jieba分词和词性过滤，进一步提取子标签
+        # 这是一个过滤过程，保留通过词性检查的词语
+        filtered_tags = []
+        for existing_tag in tags:
+            jieba_tags = self._extract_jieba_tags_from_tag(existing_tag)
+            filtered_tags.extend(jieba_tags)
+
+        # 重新设置标签为过滤后的结果
+        tags = filtered_tags
+
         # 去重和清理
         tags = list(dict.fromkeys(tags))  # 去重保持顺序
         tags = [tag.strip() for tag in tags if tag.strip()]  # 清理空白
+
+        return tags
+
+    def _extract_jieba_tags_from_tag(self, tag_text: str) -> List[str]:
+        """
+        对单个标签文本进行jieba分词和过滤，提取有效的子标签
+
+        Args:
+            tag_text: 待分析的标签文本
+
+        Returns:
+            过滤后的子标签列表
+        """
+        tags = []
+
+        # 使用jieba进行分词和词性标注
+        words_with_pos = list(pseg.cut(tag_text))
+
+        # 保留适合作为标签的词性（排除动词、数词、量词，只保留名词性内容）
+        keep_pos = {
+            'n',    # 普通名词
+            'nr',   # 人名
+            'ns',   # 地名
+            'nt',   # 机构团体名
+            'nz',   # 其他专有名词
+            'vn',   # 名动词（名词化的动词，如"发展"->发展）
+            'a',    # 形容词
+            't',    # 时间词
+        }
+
+        for word, pos in words_with_pos:
+            # 跳过标点符号和单字符词
+            if len(word.strip()) >= 2 and pos in keep_pos:
+                # 应用标签规则检查
+                if self._can_be_tag(word):
+                    tags.append(word)
 
         return tags
 
