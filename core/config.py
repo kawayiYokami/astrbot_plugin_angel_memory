@@ -83,6 +83,7 @@ class MemoryConfig:
         self._provider_id = config_get("provider_id", "")
         self._small_model_note_budget = self._validate_token_budget(config_get("small_model_note_budget", 8000), "small_model_note_budget")
         self._large_model_note_budget = self._validate_token_budget(config_get("large_model_note_budget", 12000), "large_model_note_budget")
+        self._enable_thinking_guidance = self._validate_bool(config_get("enable_thinking_guidance", True), "enable_thinking_guidance")
 
     @property
     def min_message_length(self) -> int:
@@ -119,6 +120,11 @@ class MemoryConfig:
         """获取大模型笔记Token预算"""
         return self._large_model_note_budget
 
+    @property
+    def enable_thinking_guidance(self) -> bool:
+        """获取是否启用思考引导"""
+        return self._enable_thinking_guidance
+
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """
         获取配置值
@@ -141,7 +147,8 @@ class MemoryConfig:
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "small_model_note_budget": self.small_model_note_budget,
-            "large_model_note_budget": self.large_model_note_budget
+            "large_model_note_budget": self.large_model_note_budget,
+            "enable_thinking_guidance": self.enable_thinking_guidance
         }
 
     def get_capacity_config(self) -> MemoryCapacityConfig:
@@ -178,4 +185,10 @@ class MemoryConfig:
             raise ValueError(f"{field_name} must be a non-negative integer, got: {value}")
         if value > 64000:
             raise ValueError(f"{field_name} too large (max 64000), got: {value}")
+        return value
+
+    def _validate_bool(self, value: Any, field_name: str) -> bool:
+        """验证布尔值"""
+        if not isinstance(value, bool):
+            raise ValueError(f"{field_name} must be a boolean, got: {type(value).__name__}")
         return value

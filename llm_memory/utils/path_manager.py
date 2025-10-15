@@ -134,9 +134,14 @@ class PathManager:
     # === 对外路径方法（仅提示词路径） ===
 
     @classmethod
-    def get_prompt_path(cls) -> Path:
-        """获取提示词文件路径（插件根目录的唯一对外用途）"""
-        return cls._get_plugin_root() / "llm_memory" / "prompts" / "memory_system_guide.md"
+    def get_prompt_path(cls, enable_thinking_guidance: bool = True) -> Path:
+        """获取提示词文件路径（插件根目录的唯一对外用途）
+
+        Args:
+            enable_thinking_guidance: 是否启用思考引导，True则使用thinking版本的提示词
+        """
+        filename = "memory_system_guide_think.md" if enable_thinking_guidance else "memory_system_guide.md"
+        return cls._get_plugin_root() / "llm_memory" / "prompts" / filename
 
     # === 便捷方法 ===
 

@@ -47,5 +47,12 @@
     "description": "用于向量化的嵌入式模型提供商ID，优先使用官方API",
     "default": "",
     "hint": "留空则使用本地模型，填写提供商ID则使用官方API，API不可用时自动降级到本地模型"
+  },
+  "enable_thinking_guidance": {
+    "type": "bool",
+    "title": "是否启用思考引导",
+    "description": "是否为AI提供思考引导的提示词",
+    "default": true,
+    "hint": "启用时使用包含思考引导的提示词文件，禁用时使用标准提示词文件"
   }
 }
