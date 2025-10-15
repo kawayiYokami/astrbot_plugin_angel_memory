@@ -57,7 +57,7 @@ class MemoryHandler:
         self.store.remember(self.collection, memory)
         return memory.id
 
-    def recall(self, query: str, limit: int = 10, include_consolidated: bool = True) -> List[BaseMemory]:
+    def recall(self, query: str, limit: int = 10, include_consolidated: bool = True, similarity_threshold: float = 0.6) -> List[BaseMemory]:
         """
         回忆相关记忆。
 
@@ -65,6 +65,7 @@ class MemoryHandler:
             query: 搜索查询字符串
             limit: 返回结果的最大数量
             include_consolidated: 是否包含已巩固的记忆
+            similarity_threshold: 相似度阈值（0.0-1.0），低于此阈值的结果将被过滤
 
         Returns:
             相关的记忆列表
@@ -72,7 +73,7 @@ class MemoryHandler:
         where_filter = {"memory_type": self.memory_type.value}
         if not include_consolidated:
             where_filter["is_consolidated"] = False
-        return self.store.recall(self.collection, query, limit, where_filter=where_filter)
+        return self.store.recall(self.collection, query, limit, where_filter=where_filter, similarity_threshold=similarity_threshold)
 
 
 class MemoryHandlerFactory:

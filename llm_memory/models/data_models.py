@@ -64,6 +64,7 @@ class BaseMemory:
         self.is_consolidated = is_consolidated
         self.associations = associations or {}  # 记忆关联字段：{memory_id: strength}
         self.created_at = created_at or time.time()  # 自动记录创建时间
+        self.similarity = 0.0  # 相似度分数（仅用于检索时传递，不存储到数据库）
 
     def get_semantic_core(self) -> str:
         """返回用于向量化的核心语义文本：judgment + tags"""

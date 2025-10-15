@@ -173,17 +173,14 @@ class CognitiveService:
         Returns:
             记忆系统使用指南的完整内容
         """
-        import os
-        prompt_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            'prompts',
-            'memory_system_guide.md'
-        )
+        from ..utils.path_manager import PathManager
+
+        prompt_path = PathManager.get_prompt_path()
 
         try:
             with open(prompt_path, 'r', encoding='utf-8') as f:
                 return f.read()
         except FileNotFoundError:
-            return "记忆系统提示词文件未找到，请检查 llm_memory/prompts/memory_system_guide.md 是否存在。"
+            return "记忆系统提示词文件未找到，请检查文件是否存在。"
         except Exception as e:
             return f"读取记忆系统提示词失败: {str(e)}"

@@ -242,7 +242,7 @@ class VectorStore:
             # 异常会被装饰器自动记录
             raise  # 重新抛出异常
 
-    def recall(self, collection, query: str, limit: int = 10, where_filter: Optional[dict] = None) -> List[BaseMemory]:
+    def recall(self, collection, query: str, limit: int = 10, where_filter: Optional[dict] = None, similarity_threshold: float = 0.6) -> List[BaseMemory]:
         """
         根据查询回忆相关记忆，支持复杂的元数据过滤（同步方法）。
 
@@ -251,6 +251,7 @@ class VectorStore:
             query: 搜索查询字符串
             limit: 返回结果的最大数量
             where_filter: 可选的元数据过滤器字典 (e.g., {"memory_type": "EventMemory", "is_consolidated": False})
+            similarity_threshold: 相似度阈值（0.0-1.0），低于此阈值的结果将被过滤
 
         Returns:
             相关的记忆对象列表（BaseMemory 的子类）
@@ -259,10 +260,10 @@ class VectorStore:
             # 显式生成查询向量（同步调用）
             query_embedding = self.embed_single_document(query)
 
-            # 构建查询参数
+            # 构建查询参数 - 获取更多候选结果用于阈值过滤
             query_params = {
                 "query_embeddings": [query_embedding],
-                "n_results": limit
+                "n_results": limit * 3  # 获取3倍候选结果进行过滤
             }
 
             # 如果提供了过滤器，则添加到查询参数
@@ -275,12 +276,31 @@ class VectorStore:
             # 在ChromaDB中进行向量相似度搜索（数据库内部处理并发）
             results = collection.query(**query_params)
 
-            # 将结果转换为记忆对象
+            # 将结果转换为记忆对象，并计算相似度分数进行过滤
             vector_results = []
             if results and results['metadatas'] and len(results['metadatas']) > 0:
-                for meta in results['metadatas'][0]:
-                    if meta:
-                        vector_results.append(BaseMemory.from_dict(meta))
+                distances = results.get('distances', [[]])[0]
+                metadatas = results['metadatas'][0]
+
+                for idx, meta in enumerate(metadatas):
+                    if meta and idx < len(distances):
+                        # 计算相似度分数
+                        distance = distances[idx]
+                        similarity = max(0.0, 1.0 - (distance / 2.0))
+
+                        # 应用相似度阈值过滤
+                        if similarity >= similarity_threshold:
+                            memory = BaseMemory.from_dict(meta)
+                            memory.similarity = similarity  # 设置相似度属性
+                            vector_results.append(memory)
+
+                            # 只记录前3个结果的调试信息
+                            if len(vector_results) <= 3:
+                                self.logger.debug(f"记忆{len(vector_results)-1}: distance={distance:.4f}, similarity={similarity:.4f}")
+
+                        # 达到所需数量时停止
+                        if len(vector_results) >= limit:
+                            break
 
             # 混合检索（仅笔记系统）
             collection_name = collection.name
