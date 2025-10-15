@@ -755,7 +755,7 @@ class VectorStore:
         # 添加纯向量检索中存在但BM25中没有的结果
         for doc_id in vector_memories_map:
             if doc_id not in combined_scores:
-                combined_scores[doc_id] = self.vector_weight * 0.5  # 给予中等分数
+                combined_scores[doc_id] = self.vector_weight
 
         # 按合并分数排序
         sorted_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
@@ -1254,7 +1254,7 @@ class VectorStore:
         # 添加纯向量检索中存在但BM25中没有的结果
         for note_id in vector_notes_map:
             if note_id not in combined_scores:
-                combined_scores[note_id] = self.vector_weight * 0.5  # 给予中等分数
+                combined_scores[note_id] = self.vector_weight
 
         # 按合并分数排序
         sorted_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
