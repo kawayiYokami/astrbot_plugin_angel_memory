@@ -128,7 +128,7 @@ class SmallModelPromptBuilder:
         ).strip()
 
     @staticmethod
-    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None, core_topic: str = None, system_prompt: str = None) -> str:
+    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None, core_topic: str = None, system_prompt: str = None, memory_config=None) -> str:
         """
         构建用于小模型的记忆整理提示词
 
@@ -150,7 +150,7 @@ class SmallModelPromptBuilder:
         if system_prompt is None:
             # 延迟导入以避免循环依赖
             from ...llm_memory import CognitiveService
-            system_prompt = CognitiveService.get_prompt()
+            system_prompt = CognitiveService.get_prompt(memory_config)
 
         # 1. 构建参与者信息（使用列表推导式）
         participants_section = "# 对话参与者\n" + (

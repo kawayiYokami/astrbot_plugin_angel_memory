@@ -359,7 +359,7 @@ class DeepMind:
         """
         # 1. 构建小模型提示词
         prompt = self.prompt_builder.build_memory_prompt(
-            query, long_term_memories, user_list, candidate_notes, secretary_decision, core_topic
+            query, long_term_memories, user_list, candidate_notes, secretary_decision, core_topic, memory_config=self.config
         )
 
         # 调试日志：记录提示词和候选笔记
