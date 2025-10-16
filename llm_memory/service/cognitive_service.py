@@ -163,19 +163,27 @@ class CognitiveService:
         self.logger.info("所有记忆已被清空。")
 
     @staticmethod
-    def get_prompt() -> str:
+    def get_prompt(memory_config=None) -> str:
         """
         获取记忆系统使用指南的提示词。
 
         下游模块可以将此提示词加入到系统提示词中，
         AI就能知道如何维护记忆系统。
 
+        Args:
+            memory_config: 记忆配置对象，用于确定是否使用思考引导版本的提示词
+
         Returns:
             记忆系统使用指南的完整内容
         """
         from ..utils.path_manager import PathManager
 
-        prompt_path = PathManager.get_prompt_path()
+        # 如果提供了配置，根据配置选择提示词文件，否则默认使用思考引导版本
+        enable_thinking_guidance = True
+        if memory_config and hasattr(memory_config, 'enable_thinking_guidance'):
+            enable_thinking_guidance = memory_config.enable_thinking_guidance
+
+        prompt_path = PathManager.get_prompt_path(enable_thinking_guidance)
 
         try:
             with open(prompt_path, 'r', encoding='utf-8') as f:
