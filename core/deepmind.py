@@ -394,7 +394,7 @@ class DeepMind:
         response_text = llm_response.completion_text
 
         # 输出小模型的原始响应
-        self.logger.info(f"Small model raw response for session {session_id}:\n{response_text}")
+        self.logger.debug(f"Small model raw response for session {session_id}:\n{response_text}")
 
         # 5. 解析完整的结构化输出
         full_json_data = self.json_parser.extract_json(response_text)
