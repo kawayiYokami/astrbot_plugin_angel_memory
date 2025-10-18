@@ -14,14 +14,14 @@ import threading
 from typing import List, Dict, Any, Optional
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
-
+from .utils.memory_id_resolver import MemoryIDResolver
 from ..llm_memory import CognitiveService
 from ..llm_memory.utils.json_parser import JsonParser
 from .session_memory import SessionMemoryManager
 from .utils import SmallModelPromptBuilder, MemoryInjector, MemoryIDResolver
 from .utils.feedback_queue import get_feedback_queue
-from .utils.note_context_builder import NoteContextBuilder
 from .utils.query_processor import get_query_processor
+from .config import MemoryConstants
 try:
     from astrbot.api import logger
 except ImportError:
@@ -159,58 +159,6 @@ class DeepMind:
             return False
 
         return True
-
-    def inject_initial_memories(self, event: AstrMessageEvent):
-        """
-        事件到达时注入初始记忆
-
-        Args:
-            event: 消息事件
-        """
-        if not self.should_process_message(event):
-            return
-
-        session_id = self._get_session_id(event)
-
-        try:
-            # 1. 从天使之心获取完整对话历史
-            chat_records = []
-            if hasattr(event, 'angelheart_context'):
-                try:
-                    angelheart_data = json.loads(event.angelheart_context)
-                    chat_records = angelheart_data.get('chat_records', [])
-                except (json.JSONDecodeError, KeyError):
-                    self.logger.warning(f"Failed to parse angelheart_context for session {session_id}")
-
-            # 初始化 user_list 为空列表
-            user_list = []
-
-            # 如果没有对话记录，使用当前消息文本
-            if not chat_records:
-                message_text = self._extract_message_text(event)
-                query = message_text if message_text else ""
-            else:
-               # 2. 格式化对话历史为查询字符串
-               query, user_list = self.prompt_builder.format_chat_records(chat_records)
-
-            # 3. 读取主意识的短期记忆（供其他模块参考，不进行长期记忆召回）
-            session_memories = self.session_memory_manager.get_session_memories(session_id)
-
-            # 4. 转换为JSON格式
-            memories_json = self._memories_to_json(session_memories)
-
-            # 注入到事件中（使用angelmemory_context）
-            event.angelmemory_context = json.dumps({
-                'memories': memories_json,
-                'recall_query': query,  # 保留查询字符串供后续使用
-                'recall_time': time.time(),
-                'session_id': session_id,
-                'user_list': user_list  # 将新生成的"用户清单"存入上下文
-            })
-
-        except Exception as e:
-            self.logger.error(f"Memory recall failed for session {session_id}: {e}")
-
     def _parse_memory_context(self, event: AstrMessageEvent) -> Optional[Dict[str, Any]]:
         """
         解析事件中的记忆上下文数据
@@ -229,7 +177,11 @@ class DeepMind:
             return {
                 'session_id': context_data['session_id'],
                 'query': context_data.get('recall_query', ''),
-                'user_list': context_data.get('user_list', [])
+                'user_list': context_data.get('user_list', []),
+                # 添加原始数据字段
+                'raw_memories': context_data.get('raw_memories', []),
+                'raw_notes': context_data.get('raw_notes', []),
+                'core_topic': context_data.get('core_topic', '')
             }
         except (json.JSONDecodeError, KeyError) as e:
             self.logger.warning(f"Failed to parse memory context: {e}")
@@ -250,22 +202,17 @@ class DeepMind:
         Returns:
             包含 long_term_memories, candidate_notes, note_id_mapping, secretary_decision 的字典
         """
-        from .timing_diagnostics import timing_log, log_checkpoint
-
-        log_checkpoint("开始链式召回")
-
         # 1. 预处理记忆检索查询词
         memory_query = self.query_processor.process_query_for_memory(query, event)
 
         # 1. 使用链式召回从长期记忆检索相关记忆
-        with timing_log("链式召回(chained_recall)", threshold_ms=5000):
+        long_term_memories = []
+        if self.memory_system:
             long_term_memories = self.memory_system.chained_recall(
                 query=memory_query,
                 per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
                 final_limit=self.CHAINED_RECALL_FINAL_LIMIT
             )
-
-        log_checkpoint(f"链式召回完成，获得{len(long_term_memories)}条记忆")
 
         # 2. 获取 secretary_decision 信息
         secretary_decision = {}
@@ -283,22 +230,14 @@ class DeepMind:
         # 应用统一的检索词预处理
         note_query = self.query_processor.process_query_for_notes(note_query, event)
 
-        if core_topic and core_topic.strip():
-            self.logger.info(f"使用核心话题进行笔记检索: {note_query}")
-        else:
-            self.logger.debug(f"未找到核心话题，使用聊天记录查询: {note_query}")
-
-        log_checkpoint("开始笔记检索")
-
         # 4. 获取候选笔记（用于小模型的选择）
-        with timing_log("笔记检索(search_notes_by_token_limit)", threshold_ms=5000):
+        candidate_notes = []
+        if self.note_service:
             candidate_notes = self.note_service.search_notes_by_token_limit(
                 query=note_query,
                 max_tokens=self.small_model_note_budget,
                 recall_count=self.NOTE_CANDIDATE_COUNT
             )
-
-        log_checkpoint(f"笔记检索完成，获得{len(candidate_notes)}条笔记")
 
         # 5. 创建短ID到完整ID的映射（用于后续上下文扩展）
         note_id_mapping = {}
@@ -307,8 +246,6 @@ class DeepMind:
             if note_id:
                 short_id = MemoryIDResolver.generate_short_id(note_id)
                 note_id_mapping[short_id] = note_id
-            else:
-                self.logger.warning(f"🔍 [DEBUG] 跳过无ID的笔记: {note}")
 
         # 6. 创建短期记忆ID映射表（用于解析 useful_memory_ids）
         memory_id_mapping = {}
@@ -316,8 +253,6 @@ class DeepMind:
             memory_id_mapping = MemoryIDResolver.generate_id_mapping(
                 [memory.to_dict() for memory in long_term_memories], 'id'
             )
-        else:
-            self.logger.warning("🔍 [DEBUG] 没有长期记忆，memory_id_mapping为空")
 
         return {
             'long_term_memories': long_term_memories,
@@ -328,118 +263,6 @@ class DeepMind:
             'core_topic': core_topic
         }
 
-    async def _filter_memories_with_llm(
-        self,
-        query: str,
-        long_term_memories: List,
-        user_list: List,
-        candidate_notes: List,
-        secretary_decision: Dict,
-        note_id_mapping: Dict[str, str],
-        memory_id_mapping: Dict[str, str],
-        session_id: str,
-        core_topic: str = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        使用LLM筛选记忆和笔记
-
-        Args:
-            query: 查询字符串
-            long_term_memories: 长期记忆列表
-            user_list: 用户列表
-            candidate_notes: 候选笔记列表
-            secretary_decision: 秘书决策信息
-            note_id_mapping: 笔记ID映射
-            memory_id_mapping: 短期记忆ID映射
-            session_id: 会话ID
-            core_topic: 当前对话的核心话题
-
-        Returns:
-            包含 feedback_data, useful_note_short_ids, note_context 的字典，失败返回 None
-        """
-        # 1. 构建小模型提示词
-        prompt = self.prompt_builder.build_memory_prompt(
-            query, long_term_memories, user_list, candidate_notes, secretary_decision, core_topic, memory_config=self.config
-        )
-
-        # 调试日志：记录提示词和候选笔记
-        if not candidate_notes:
-            self.logger.warning("🔍 [DEBUG] 候选笔记为空！")
-
-        # 输出小模型的请求内容
-        self.logger.debug(f"Small model request content for session {session_id}:\n{prompt}")
-
-        # 2. 获取 LLM 提供商
-        provider = self.context.get_provider_by_id(self.provider_id)
-        if not provider:
-            self.logger.error(f"Provider not found: {self.provider_id} for session {session_id}")
-            return None
-
-        # 3. 调用 LLM（添加5秒超时）
-        import asyncio
-        try:
-            llm_response = await asyncio.wait_for(
-                provider.text_chat(prompt=prompt),
-                timeout=30.0  # 30秒超时，适合实时对话
-            )
-        except asyncio.TimeoutError:
-            self.logger.warning(f"⏱️ LLM调用超时(30秒) for session {session_id}，跳过记忆整理")
-            return None
-
-        if not llm_response or not llm_response.completion_text:
-            self.logger.error(f"LLM API call failed for session {session_id}")
-            return None
-
-        # 4. 提取响应文本
-        response_text = llm_response.completion_text
-
-        # 输出小模型的原始响应
-        self.logger.debug(f"Small model raw response for session {session_id}:\n{response_text}")
-
-        # 5. 解析完整的结构化输出
-        full_json_data = self.json_parser.extract_json(response_text)
-        self.logger.debug(f"Parsed full_json_data: {full_json_data}")
-
-        if not isinstance(full_json_data, dict):
-            self.logger.error(f"JSON parsing failed or did not return a dict for session {session_id}")
-            return None
-
-        # 6. 分别提取 useful_notes 和 feedback_data
-        useful_note_short_ids = full_json_data.get('useful_notes', [])
-        feedback_data = full_json_data.get('feedback_data', {})
-
-        # 7. ID解析：使用正确的映射解析ID (现在作用于 feedback_data)
-        if 'useful_memory_ids' in feedback_data:
-            # 使用短期记忆映射解析 useful_memory_ids
-            feedback_data['useful_memory_ids'] = MemoryIDResolver.resolve_memory_ids(
-                feedback_data.get('useful_memory_ids', []),
-                long_term_memories,
-                self.logger
-            )
-        else:
-            self.logger.warning("🔍 [DEBUG] feedback_data中没有useful_memory_ids字段")
-
-        if not isinstance(feedback_data, dict):
-            self.logger.error(f"feedback_data is not a dict, it's {type(feedback_data)}: {feedback_data}")
-            feedback_data = {}  # 安全降级
-
-        # 8. 处理选中的笔记ID，进行上下文扩展
-        note_context = ""
-        if useful_note_short_ids:
-
-            # 进行上下文扩展
-            note_context = NoteContextBuilder.expand_context_from_note_ids(
-                useful_note_short_ids,
-                self.note_service,
-                self.large_model_note_budget,
-                note_id_mapping
-            )
-
-        return {
-            'feedback_data': feedback_data,
-            'useful_note_short_ids': useful_note_short_ids,
-            'note_context': note_context
-        }
 
     def _inject_memories_to_request(
         self,
@@ -455,10 +278,14 @@ class DeepMind:
             session_id: 会话ID
             note_context: 笔记上下文
         """
+        self.logger.debug(f"开始注入记忆到请求中，会话ID: {session_id}")
+
         # 1. 从短期记忆推送给主意识（潜意识筛选后的精选记忆）
         short_term_memories = self.session_memory_manager.get_session_memories(session_id)
+        self.logger.debug(f"从短期记忆中获取到 {len(short_term_memories)} 条记忆")
 
         memory_context = self.memory_injector.format_fifo_memories_for_prompt(short_term_memories)
+        self.logger.debug(f"格式化后的记忆上下文长度: {len(memory_context)} 字符")
 
         # 2. 合并记忆和笔记上下文
         if memory_context or note_context:
@@ -470,11 +297,17 @@ class DeepMind:
                     combined_context += "\n\n---\n\n"
                 combined_context += f"相关笔记上下文：\n{note_context}"
 
+            self.logger.debug(f"合并后的上下文长度: {len(combined_context)} 字符")
+
             # 3. 注入到系统提示词
+            original_system_prompt = request.system_prompt
             request.system_prompt = self.memory_injector.inject_into_system_prompt(
-                request.system_prompt,
+                original_system_prompt,
                 combined_context
             )
+            self.logger.debug("记忆已成功注入到系统提示词中")
+        else:
+            self.logger.debug("没有记忆或笔记上下文需要注入")
 
     def _update_memory_system(
         self,
@@ -494,7 +327,8 @@ class DeepMind:
         new_memories_raw = feedback_data.get('new_memories', {})
         merge_groups_raw = feedback_data.get('merge_groups', [])
 
-        # 1. 同步更新短期记忆，确保本次请求即可使用
+        # 1. 处理有用的旧记忆
+        useful_long_term_memories = []
         if useful_memory_ids:
             memory_map = {memory.id: memory for memory in long_term_memories}
             useful_long_term_memories = [
@@ -503,44 +337,62 @@ class DeepMind:
                 if memory_id in memory_map
             ]
 
-            if useful_long_term_memories:
-                self.session_memory_manager.add_memories_to_session(session_id, useful_long_term_memories)
-                self.logger.debug(
-                    "潜意识筛选：%d条有用记忆进入短期记忆",
-                    len(useful_long_term_memories)
-                )
+        # 2. 处理新生成的记忆
+        new_memories_normalized = MemoryIDResolver.normalize_new_memories_format(new_memories_raw, self.logger)
+        new_memory_objects = []
+        if new_memories_normalized:
+            from ..llm_memory.models.data_models import BaseMemory, MemoryType
+            for mem_dict in new_memories_normalized:
+                try:
+                    # 创建一个字典副本以进行修改
+                    init_data = mem_dict.copy()
 
-        # 2. 后台异步处理长期记忆反馈
-        new_memories = MemoryIDResolver.normalize_new_memories_format(new_memories_raw, self.logger)
+                    # 将 'type' 键重命名为 'memory_type' 并转换为枚举类型
+                    if 'type' in init_data:
+                        init_data['memory_type'] = MemoryType(init_data.pop('type'))
+
+                    # 现在，init_data 中的键与构造函数完全匹配
+                    new_memory_objects.append(BaseMemory(**init_data))
+                except Exception as e:
+                    self.logger.warning(f"为新记忆创建BaseMemory对象失败: {e}")
+
+        # 3. 将有用的旧记忆和全新的记忆合并，一起放入短期记忆
+        memories_for_session = useful_long_term_memories + new_memory_objects
+        if memories_for_session:
+            self.session_memory_manager.add_memories_to_session(session_id, memories_for_session)
+            self.logger.info(
+                "记忆更新： %d 条记忆进入短期记忆 (有用旧记忆: %d, 新生成记忆: %d)",
+                len(memories_for_session),
+                len(useful_long_term_memories),
+                len(new_memory_objects)
+            )
+
+        # 4. 新增的INFO日志逻辑
+        if new_memory_objects:
+            self.logger.info("后台分析生成了 %d 条新记忆：", len(new_memory_objects))
+            for mem in new_memory_objects:
+                # 只记录新记忆的类型和论断，保持INFO级别的日志简洁
+                self.logger.info(f"  - [新记忆: {mem.memory_type.value}] {mem.judgment}")
+
+        # 5. 后台异步处理长期记忆反馈
         merge_groups = MemoryIDResolver.normalize_merge_groups_format(merge_groups_raw)
 
-        if useful_memory_ids or new_memories or merge_groups:
+        if useful_memory_ids or new_memories_normalized or merge_groups:
             task_payload = {
                 'feedback_fn': self._execute_feedback_task,
                 'session_id': session_id,
+                # 将所有数据都放在顶层，与 'feedback_fn' 同级
+                'useful_memory_ids': list(useful_memory_ids),
+                'new_memories': new_memories_normalized,
+                'merge_groups': merge_groups,
+                # 'payload' 字段可以保留并传入 session_id，因为 _execute_feedback_task 会用到
                 'payload': {
-                    'useful_memory_ids': list(useful_memory_ids),
-                    'new_memories': new_memories,
-                    'merge_groups': merge_groups,
                     'session_id': session_id
                 }
             }
             get_feedback_queue().submit(task_payload)
-            self.logger.debug(
-                "已提交记忆反馈任务（session=%s, useful=%d, new=%d, merge=%d）",
-                session_id,
-                len(useful_memory_ids),
-                len(new_memories),
-                len(merge_groups)
-            )
         else:
             self.logger.debug("记忆反馈无待处理内容，跳过")
-
-        self.logger.info(
-            "记忆整理提交完成（会话 %s）：潜意识筛选出 %d 条有用记忆进入短期记忆",
-            session_id,
-            len(useful_memory_ids)
-        )
 
     def _execute_feedback_task(
         self,
@@ -558,11 +410,15 @@ class DeepMind:
             len(merge_groups)
         )
 
-        self.memory_system.feedback(
-            useful_memory_ids=useful_memory_ids,
-            new_memories=new_memories,
-            merge_groups=merge_groups
-        )
+        # 检查 memory_system 是否可用
+        if self.memory_system is not None:
+            self.memory_system.feedback(
+                useful_memory_ids=useful_memory_ids,
+                new_memories=new_memories,
+                merge_groups=merge_groups
+            )
+        else:
+            self.logger.warning("Memory system is not available, skipping feedback")
 
         self.logger.debug("[feedback_queue] session=%s 反馈任务完成", session_id)
 
@@ -595,7 +451,7 @@ class DeepMind:
 
         工作流程：
         1. 从记忆库找出相关的内容
-        2. 问小AI哪些信息有用
+        2. 直接注入原始内容（极速响应改造）
         3. 把有用的记忆包装成记忆包
         4. 喂给主意识（LLM）帮助他思考
 
@@ -603,64 +459,184 @@ class DeepMind:
             event: 用户的消息（触发回忆的线索）
             request: 即将发给主意识的请求（我们要往里面塞记忆）
         """
-        from .timing_diagnostics import timing_log, log_checkpoint
+        session_id = self._get_session_id(event)
+
+        # 1. 从 event.angelheart_context 中获取对话历史
+        chat_records = []
+        if hasattr(event, 'angelheart_context'):
+            try:
+                angelheart_data = json.loads(event.angelheart_context)
+                chat_records = angelheart_data.get('chat_records', [])
+            except (json.JSONDecodeError, KeyError):
+                self.logger.warning(f"Failed to parse angelheart_context for session {session_id}")
+
+        # 初始化 user_list 为空列表
+        user_list = []
+
+        # 如果没有对话记录，使用当前消息文本
+        if not chat_records:
+            message_text = self._extract_message_text(event)
+            query = message_text if message_text else ""
+        else:
+            # 2. 格式化对话历史为查询字符串
+            query, user_list = self.prompt_builder.format_chat_records(chat_records)
+
+        # 3. 读取主意识的短期记忆（供其他模块参考，不进行长期记忆召回）
+        session_memories = self.session_memory_manager.get_session_memories(session_id)
+
+        # 4. 转换为JSON格式
+        memories_json = self._memories_to_json(session_memories)
+
+        # 注入到事件中（使用angelmemory_context）
+        event.angelmemory_context = json.dumps({
+            'memories': memories_json,
+            'recall_query': query,  # 保留查询字符串供后续使用
+            'recall_time': time.time(),
+            'session_id': session_id,
+            'user_list': user_list  # 将新生成的"用户清单"存入上下文
+        })
 
         # 如果未配置 provider_id，跳过记忆整理
         if not self.provider_id:
+            self.logger.debug("未配置 provider_id，跳过记忆整理")
             return
 
         # 解析记忆上下文数据
-        with timing_log("解析记忆上下文", threshold_ms=10):
-            context_data = self._parse_memory_context(event)
-            if not context_data:
-                return
+        context_data = self._parse_memory_context(event)
+        if not context_data:
+            self.logger.debug("无法解析记忆上下文数据，跳过记忆整理")
+            return
 
         session_id = context_data['session_id']
         query = context_data['query']
-        user_list = context_data['user_list']
-
-        log_checkpoint(f"开始检索记忆 - session={session_id}")
+        self.logger.debug(f"处理会话 {session_id}，查询内容: {query}")
 
         # 检索长期记忆和候选笔记
-        with timing_log("检索长期记忆和笔记", threshold_ms=1000):
-            retrieval_data = self._retrieve_memories_and_notes(event, query)
+        retrieval_data = self._retrieve_memories_and_notes(event, query)
         long_term_memories = retrieval_data['long_term_memories']
         candidate_notes = retrieval_data['candidate_notes']
-        note_id_mapping = retrieval_data['note_id_mapping']
-        memory_id_mapping = retrieval_data['memory_id_mapping']
-        secretary_decision = retrieval_data['secretary_decision']
         core_topic = retrieval_data['core_topic']
 
+        self.logger.debug(f"检索到 {len(long_term_memories)} 条长期记忆和 {len(candidate_notes)} 条候选笔记")
+
         try:
-            # 使用LLM筛选记忆和笔记
-            filter_result = await self._filter_memories_with_llm(
-                query, long_term_memories, user_list, candidate_notes,
-                secretary_decision, note_id_mapping, memory_id_mapping, session_id, core_topic
+            # 直接将检索到的长期记忆填入短期记忆的空槽位
+            if long_term_memories and self.memory_system:
+                # 检查短期记忆是否还有空位，有空位时才填入新记忆
+                current_session_memories = self.session_memory_manager.get_session_memories(session_id)
+                # 获取各类型记忆的容量配置
+                capacity_config = self.session_memory_manager.capacity_config
+                capacity_multiplier = self.session_memory_manager.capacity_multiplier
+
+                # 按类型统计当前记忆数量
+                memory_count_by_type = {}
+                for memory in current_session_memories:
+                    memory_type = memory.memory_type
+                    memory_count_by_type[memory_type] = memory_count_by_type.get(memory_type, 0) + 1
+
+                # 筛选出还有空位的记忆类型并填入
+                memories_to_add = []
+                for memory in long_term_memories:
+                    memory_type_str = memory.memory_type.value if hasattr(memory.memory_type, 'value') else str(memory.memory_type)
+                    memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(memory_type_str, memory_type_str.lower())
+
+                    # 获取该类型的记忆容量
+                    base_capacity = getattr(capacity_config, memory_type_key, 0)
+                    capacity = int(base_capacity * capacity_multiplier)
+
+                    # 检查是否还有空位
+                    current_count = memory_count_by_type.get(memory_type_key, 0)
+                    if current_count < capacity:
+                        memories_to_add.append(memory)
+                        memory_count_by_type[memory_type_key] = current_count + 1
+
+                # 将筛选后的记忆添加到短期记忆中
+                if memories_to_add:
+                    self.session_memory_manager.add_memories_to_session(session_id, memories_to_add)
+                    self.logger.debug(
+                        "潜意识筛选：%d条有用记忆进入短期记忆",
+                        len(memories_to_add)
+                    )
+                else:
+                    self.logger.debug("没有空位可填入新的长期记忆")
+
+            # 直接注入原始笔记内容（不经过小模型筛选）
+            note_context = ""
+            if candidate_notes:
+                # 构建笔记上下文，限制token数量
+                from ..llm_memory.utils.token_utils import count_tokens
+                current_tokens = 0
+                selected_notes = []
+
+                for note in candidate_notes:
+                    note_content = note.get('content', '')
+                    note_tokens = count_tokens(note_content)
+
+                    # 检查是否超出大模型笔记预算
+                    if current_tokens + note_tokens <= self.large_model_note_budget:
+                        selected_notes.append(note)
+                        current_tokens += note_tokens
+                    else:
+                        break
+
+                # 构建笔记上下文
+                if selected_notes:
+                    # 使用现有方法构建笔记上下文
+                    note_context_parts = []
+                    for note in selected_notes:
+                        content = note.get('content', '').strip()
+                        tags = note.get('tags', [])
+                        tags_str = f"[标签: {', '.join(tags)}]" if tags else ""
+                        note_context_parts.append(f"{tags_str}\n{content}")
+                    note_context = '\n\n---\n\n'.join(note_context_parts)
+                    self.logger.debug(f"构建了包含 {len(selected_notes)} 条笔记的上下文，共 {current_tokens} tokens")
+
+            # 生成并传递ID映射表
+
+
+            # 为记忆和笔记分别生成 ID => 短ID 的映射
+            memory_id_mapping = MemoryIDResolver.generate_id_mapping(
+                [mem.to_dict() for mem in long_term_memories], 'id'
+            )
+            note_id_mapping = MemoryIDResolver.generate_id_mapping(
+                candidate_notes, 'id'
             )
 
-            if not filter_result:
-                return
+            # 将原始上下文数据存入event.angelmemory_context，供异步分析使用
+            try:
+                angelmemory_context = json.loads(event.angelmemory_context) if hasattr(event, 'angelmemory_context') and event.angelmemory_context else {}
+                angelmemory_context['raw_memories'] = [memory.to_dict() if hasattr(memory, 'to_dict') else {} for memory in long_term_memories]
+                angelmemory_context['raw_notes'] = candidate_notes
+                angelmemory_context['core_topic'] = core_topic
+                # 把ID映射表也一起存进去
+                angelmemory_context['memory_id_mapping'] = memory_id_mapping
+                angelmemory_context['note_id_mapping'] = note_id_mapping
+                event.angelmemory_context = json.dumps(angelmemory_context)
+                self.logger.debug("原始上下文数据已存入 event.angelmemory_context")
 
-            feedback_data = filter_result['feedback_data']
-            note_context = filter_result['note_context']
+                # 添加调试日志：记录存储的原始上下文数据
+                self.logger.debug(f"[注入阶段] 存储的原始上下文数据 - 会话ID: {session_id}")
+                self.logger.debug(f"  原始记忆数: {len(angelmemory_context.get('raw_memories', []))}")
+                self.logger.debug(f"  原始笔记数: {len(angelmemory_context.get('raw_notes', []))}")
+                self.logger.debug(f"  核心话题: {angelmemory_context.get('core_topic', '')}")
 
-            # 将反馈数据保存到事件中，供后续更新使用
-            event.memory_feedback = {
-                'feedback_data': feedback_data,
-                'session_id': session_id
-            }
-
-            # 更新记忆系统（将筛选出的记忆同步加入短期记忆）
-            self._update_memory_system(feedback_data, long_term_memories, session_id)
+                # 添加更详细的笔记信息日志
+                if angelmemory_context.get('raw_notes'):
+                    notes_info = []
+                    for i, note in enumerate(angelmemory_context['raw_notes'][:3]):  # 只显示前3个笔记
+                        notes_info.append(f"笔记{i+1}: ID={note.get('id', 'N/A')}, 标签={note.get('tags', [])}, 内容长度={len(note.get('content', ''))}")
+                    self.logger.debug(f"  前几个笔记信息: {notes_info}")
+            except Exception as e:
+                self.logger.warning(f"保存原始上下文数据失败: {e}")
 
             # 注入记忆到请求（从短期记忆中读取并注入）
             self._inject_memories_to_request(request, session_id, note_context)
+            self.logger.debug("记忆已注入到请求中")
 
         except Exception as e:
             import traceback
             self.logger.error(f"Memory organization failed for session {session_id}: {e}")
             self.logger.error(f"Traceback: {traceback.format_exc()}")
-
 
 
     def _extract_message_text(self, event: AstrMessageEvent) -> Optional[str]:
@@ -730,8 +706,12 @@ class DeepMind:
             return
 
         try:
-            self.memory_system.consolidate_memories()
-            self.logger.info("记忆巩固完成")
+            # 检查 memory_system 是否可用
+            if self.memory_system is not None:
+                self.memory_system.consolidate_memories()
+                self.logger.info("记忆巩固完成")
+            else:
+                self.logger.warning("Memory system is not available, skipping consolidation")
         except Exception as e:
             self.logger.error(f"记忆巩固失败: {e}")
 
@@ -772,3 +752,267 @@ class DeepMind:
         stop_feedback_queue(timeout=5)
 
         self.logger.info("AI潜意识已休息，下次再见！")
+
+    async def async_analyze_and_update_memory(self, event: AstrMessageEvent, response):
+        """
+        异步分析并更新记忆系统
+
+        Args:
+            event: 消息事件
+            response: 主LLM的响应
+        """
+        # 获取会话ID
+        session_id = self._get_session_id(event)
+
+        self.logger.info(f"[异步分析] 任务提交 - 会话ID: {session_id}")
+
+        # 直接将任务提交到后台队列，不等待LLM响应
+        task_payload = {
+            'feedback_fn': self._execute_async_analysis_task,
+            'session_id': session_id,
+            'payload': {
+                'event_data': self._serialize_event_data(event),
+                'response_data': self._serialize_response_data(response),
+                'session_id': session_id
+            },
+            # 添加这些字段以确保任务能被正确刷新到队列中
+            # 即使是空列表，也能确保任务被处理
+            'useful_memory_ids': [],  # 这些字段是为了确保任务能被反馈队列正确处理
+            'new_memories': [],
+            'merge_groups': []
+        }
+
+        # 提交到反馈队列后台执行
+        get_feedback_queue().submit(task_payload)
+
+        self.logger.debug(f"异步记忆分析任务已提交到后台队列，会话ID: {session_id}")
+
+    def _serialize_event_data(self, event: AstrMessageEvent) -> Dict:
+        """序列化事件数据以便在后台线程中使用"""
+        try:
+            # 提取事件中的关键数据
+            event_data = {
+                'angelmemory_context': getattr(event, 'angelmemory_context', None),
+                'angelheart_context': getattr(event, 'angelheart_context', None),
+                'unified_msg_origin': getattr(event, 'unified_msg_origin', None)
+            }
+
+            # 如果有 angelmemory_context，尝试解析它以确保数据完整性
+            if event_data['angelmemory_context']:
+                try:
+                    context_json = json.loads(event_data['angelmemory_context'])
+                    event_data['angelmemory_context_parsed'] = context_json
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            return event_data
+        except Exception as e:
+            self.logger.warning(f"序列化事件数据失败: {e}")
+            return {}
+
+    def _serialize_response_data(self, response) -> Dict:
+        """序列化响应数据以便在后台线程中使用"""
+        try:
+            # 提取响应中的关键数据
+            response_data = {
+                'completion_text': getattr(response, 'completion_text', str(response)) if response else ""
+            }
+            return response_data
+        except Exception as e:
+            self.logger.warning(f"序列化响应数据失败: {e}")
+            return {'completion_text': ''}
+
+    def _execute_async_analysis_task(self, event_data: Dict, response_data: Dict, session_id: str):
+        """
+        在后台线程执行的异步分析任务
+
+        Args:
+            event_data: 序列化的事件数据
+            response_data: 序列化的响应数据
+            session_id: 会话ID
+        """
+        try:
+            self.logger.info(f"[异步分析] 后台任务执行开始 - 会话ID: {session_id}")
+
+            # 重构事件对象的部分数据用于处理
+            class SimpleEvent:
+                def __init__(self, data):
+                    self.angelmemory_context = data.get('angelmemory_context')
+                    self.angelheart_context = data.get('angelheart_context')
+                    self.unified_msg_origin = data.get('unified_msg_origin')
+
+            event = SimpleEvent(event_data)
+
+            # 获取原始上下文数据
+            context_data = self._parse_memory_context(event)
+            if not context_data:
+                self.logger.debug(f"[后台任务] 无法解析记忆上下文数据，会话ID: {session_id}")
+                return
+
+            query = context_data['query']
+            user_list = context_data.get('user_list', [])
+
+            # 获取原始记忆和笔记数据
+            raw_memories_data = context_data.get('raw_memories', [])
+            raw_notes_data = context_data.get('raw_notes', [])
+            core_topic = context_data.get('core_topic', '')
+
+            self.logger.debug(f"[后台任务] 解析上下文数据完成，会话ID: {session_id}, 查询: {query[:50]}..., 记忆数: {len(raw_memories_data)}, 笔记数: {len(raw_notes_data)}")
+
+            # 将原始数据转换为记忆对象
+            from ..llm_memory.models.data_models import BaseMemory
+            long_term_memories = []
+            for memory_dict in raw_memories_data:
+                try:
+                    memory = BaseMemory.from_dict(memory_dict)
+                    if memory:
+                        long_term_memories.append(memory)
+                except Exception as e:
+                    self.logger.warning(f"转换记忆对象失败: {e}")
+
+            # 获取主LLM的最终回答
+            response_text = response_data.get('completion_text', '')
+
+            self.logger.debug(f"[后台任务] 准备构建提示词，会话ID: {session_id}")
+
+            # 从上下文数据中获取ID映射表
+            memory_id_mapping = context_data.get('memory_id_mapping', {})
+            note_id_mapping = context_data.get('note_id_mapping', {})
+
+            # 构建反思提示词（使用模块化的提示词构建器，现在展示短ID）
+            prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompt(
+                historical_query=query,
+                main_llm_response=response_text,
+                raw_memories=long_term_memories,
+                raw_notes=raw_notes_data,
+                core_topic=core_topic,
+                memory_id_mapping=memory_id_mapping,  # 传递记忆ID映射表
+                note_id_mapping=note_id_mapping,       # 传递笔记ID映射表
+                config=self.config
+            )
+
+            self.logger.debug(f"[后台任务] 提示词构建完成，会话ID: {session_id}，提示词长度: {len(prompt)}")
+
+            # 添加调试日志：记录给小模型的所有输入内容
+            self.logger.debug(f"[后台任务] 给小模型的输入内容 - 会话ID: {session_id}")
+            self.logger.debug(f"  查询内容: {query}")
+            self.logger.debug(f"  核心话题: {core_topic}")
+            self.logger.debug(f"  记忆数量: {len(long_term_memories)}")
+            self.logger.debug(f"  笔记数量: {len(raw_notes_data)}")
+            self.logger.debug(f"  用户列表: {user_list}")
+            self.logger.debug(f"  完整提示词长度: {len(prompt)}")
+
+            # 添加更详细的笔记信息日志
+            if raw_notes_data:
+                notes_info = []
+                for i, note in enumerate(raw_notes_data[:3]):  # 只显示前3个笔记
+                    notes_info.append(f"笔记{i+1}: ID={note.get('id', 'N/A')}, 标签={note.get('tags', [])}, 内容长度={len(note.get('content', ''))}")
+                self.logger.debug(f"  前几个笔记信息: {notes_info}")
+
+            # 调用小模型进行分析（在后台线程中同步调用）
+            provider = self.context.get_provider_by_id(self.provider_id)
+            if not provider:
+                self.logger.error(f"Provider not found: {self.provider_id} for session {session_id}")
+                return
+
+            try:
+                self.logger.info(f"[异步分析] 开始调用分析LLM - 会话ID: {session_id}")
+                # 在后台线程中同步调用，不使用async/await
+                llm_response = provider.text_chat(prompt=prompt)
+
+                # 等待响应完成
+                if hasattr(llm_response, '__await__'):
+                    # 如果返回的是协程对象，需要在事件循环中运行
+                    import asyncio
+                    llm_response = asyncio.run(llm_response)
+
+                self.logger.debug(f"[后台任务] LLM调用完成，会话ID: {session_id}")
+            except Exception as e:
+                self.logger.warning(f"⏱️ LLM调用失败 for session {session_id}，跳过记忆整理: {e}")
+                return
+
+            if not llm_response or not getattr(llm_response, 'completion_text', ''):
+                self.logger.error(f"LLM API call failed for session {session_id}")
+                return
+
+            # 提取响应文本
+            response_text = llm_response.completion_text
+
+            # 添加调试日志：记录小模型的回复
+            self.logger.debug(f"[后台任务] 小模型回复 - 会话ID: {session_id}")
+            self.logger.debug(f"  回复长度: {len(response_text)}")
+            self.logger.debug(f"  回复内容: {response_text}")  # 显示完整回复
+
+            self.logger.debug(f"[后台任务] 开始解析JSON响应，会话ID: {session_id}，响应长度: {len(response_text)}")
+
+            # 解析完整的结构化输出
+            full_json_data = self.json_parser.extract_json(response_text)
+            self.logger.debug(f"Parsed full_json_data: {full_json_data}")
+
+            if not isinstance(full_json_data, dict):
+                self.logger.error(f"JSON parsing failed or did not return a dict for session {session_id}")
+                return
+
+            # 提取 feedback_data
+            feedback_data = full_json_data.get('feedback_data', {})
+
+            # ID解析：使用映射表将LLM返回的短ID翻译回长ID
+            memory_id_mapping = context_data.get('memory_id_mapping', {})
+            note_id_mapping = context_data.get('note_id_mapping', {})
+
+            if 'useful_memory_ids' in feedback_data:
+                # 使用映射表将短ID翻译回长ID
+                short_ids = feedback_data.get('useful_memory_ids', [])
+                long_ids = [memory_id_mapping.get(short_id, short_id) for short_id in short_ids]
+                feedback_data['useful_memory_ids'] = long_ids
+            else:
+                self.logger.warning("🔍 [DEBUG] feedback_data中没有useful_memory_ids字段")
+
+            if not isinstance(feedback_data, dict):
+                self.logger.error(f"feedback_data is not a dict, it's {type(feedback_data)}: {feedback_data}")
+                feedback_data = {}  # 安全降级
+
+            # === 新的简化接口实现 ===
+
+            # --- 开始最终修正 ---
+
+            # 1. 从 feedback_data 中获取原始的、按类型分组的新记忆字典
+            new_memories_raw = feedback_data.get('new_memories', {})
+
+            # 2. 调用已有的工具函数，将其转换为底层服务期望的"扁平列表"格式
+            new_memories_normalized = MemoryIDResolver.normalize_new_memories_format(new_memories_raw, self.logger)
+
+            # --- 修正结束 ---
+
+            # 3. 调用封装好的 feedback 接口，并使用"转换后"的扁平列表
+            #    (以及我们之前讨论过的，让 feedback 返回新创建的对象)
+            newly_created_memories = []
+            if self.memory_system:
+                newly_created_memories = self.memory_system.feedback(
+                    useful_memory_ids=feedback_data.get('useful_memory_ids', []),
+                    new_memories=new_memories_normalized,  # <--- 使用转换后的数据
+                    merge_groups=feedback_data.get('merge_groups', [])
+                )
+
+            # 2. 更新短期记忆
+            # 获取有用的旧记忆
+            useful_ids = feedback_data.get('useful_memory_ids', [])
+            useful_long_term_memories = [mem for mem in long_term_memories if mem.id in useful_ids]
+
+            # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆
+            memories_for_session = useful_long_term_memories + newly_created_memories
+            if memories_for_session:
+                self.session_memory_manager.add_memories_to_session(session_id, memories_for_session)
+                self.logger.info(
+                    "记忆更新： %d 条记忆进入短期记忆 (有用旧记忆: %d, 新生成记忆: %d)",
+                    len(memories_for_session),
+                    len(useful_long_term_memories),
+                    len(newly_created_memories)
+                )
+
+            self.logger.info(f"[异步分析] 长期记忆更新指令已发送 - 会话ID: {session_id}")
+
+        except Exception as e:
+            import traceback
+            self.logger.error(f"异步记忆分析失败 - session={session_id}: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")

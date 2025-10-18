@@ -119,33 +119,6 @@ class AngelMemoryPlugin(Star):
                 "file_monitor": self.file_monitor
             }
             self.plugin_manager.set_main_thread_components(main_components)
-
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE | filter.EventMessageType.PRIVATE_MESSAGE, priority=100)
-    async def on_message_event(self, event: AstrMessageEvent):
-        """
-        事件到达时立即注入初始记忆
-
-        Args:
-            event: 消息事件
-        """
-        try:
-            # 更新组件引用
-            self.update_components()
-
-            # 使用共享的PluginContext处理事件
-            result = await self.plugin_manager.handle_message_event(event, self.plugin_context)
-
-            if result["status"] == "waiting":
-                self.logger.info("系统正在初始化中，跳过此次事件注入")
-                return
-            elif result["status"] == "success":
-                self.logger.debug("消息事件处理完成")
-            else:
-                self.logger.error(f"事件处理失败: {result.get('message', '未知错误')}")
-
-        except Exception as e:
-            self.logger.error(f"EVENT_INJECT failed: {e}")
-
     @filter.on_llm_request(priority=-51)
     async def on_llm_request(self, event: AstrMessageEvent, request: ProviderRequest):
         """
@@ -155,12 +128,15 @@ class AngelMemoryPlugin(Star):
             event: 消息事件
             request: LLM请求对象
         """
+        self.logger.debug("开始执行 on_llm_request")
         try:
             # 更新组件引用
             self.update_components()
+            self.logger.debug("组件引用已更新")
 
             # 使用共享的PluginContext处理请求
             result = await self.plugin_manager.handle_llm_request(event, request, self.plugin_context)
+            self.logger.debug(f"handle_llm_request 返回结果: {result}")
 
             if result["status"] == "waiting":
                 self.logger.info("系统正在初始化中，跳过此次LLM请求处理")
@@ -172,6 +148,36 @@ class AngelMemoryPlugin(Star):
 
         except Exception as e:
             self.logger.error(f"LLM_REQUEST failed: {e}")
+
+    @filter.on_llm_response(priority=-100)
+    async def on_llm_response(self, event: AstrMessageEvent, response):
+        """
+        LLM调用后异步分析并更新记忆
+
+        Args:
+            event: 消息事件
+            response: LLM响应对象
+        """
+        self.logger.debug("开始执行 on_llm_response")
+        try:
+            # 更新组件引用
+            self.update_components()
+            self.logger.debug("组件引用已更新")
+
+            # 使用共享的PluginContext处理响应
+            result = await self.plugin_manager.handle_llm_response(event, response, self.plugin_context)
+            self.logger.debug(f"handle_llm_response 返回结果: {result}")
+
+            if result["status"] == "waiting":
+                self.logger.info("系统正在初始化中，跳过此次LLM响应处理")
+                return
+            elif result["status"] == "success":
+                self.logger.debug("LLM响应处理完成")
+            else:
+                self.logger.error(f"LLM响应处理失败: {result.get('message', '未知错误')}")
+
+        except Exception as e:
+            self.logger.error(f"LLM_RESPONSE failed: {e}")
 
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""

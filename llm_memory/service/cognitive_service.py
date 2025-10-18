@@ -145,7 +145,7 @@ class CognitiveService:
         useful_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
         merge_groups: List[List[str]] = None
-    ):
+    ) -> List[BaseMemory]:
         """统一反馈接口 - 处理回忆后的反馈（核心工作流）"""
         memory_handlers = self.memory_handler_factory.handlers
         return self.memory_manager.process_feedback(useful_memory_ids, new_memories, merge_groups, memory_handlers)
@@ -171,19 +171,15 @@ class CognitiveService:
         AI就能知道如何维护记忆系统。
 
         Args:
-            memory_config: 记忆配置对象，用于确定是否使用思考引导版本的提示词
+            memory_config: 记忆配置对象（为了保持兼容性，但实际总是使用异步提示词）
 
         Returns:
             记忆系统使用指南的完整内容
         """
         from ..utils.path_manager import PathManager
 
-        # 如果提供了配置，根据配置选择提示词文件，否则默认使用思考引导版本
-        enable_thinking_guidance = True
-        if memory_config and hasattr(memory_config, 'enable_thinking_guidance'):
-            enable_thinking_guidance = memory_config.enable_thinking_guidance
-
-        prompt_path = PathManager.get_prompt_path(enable_thinking_guidance)
+        # 默认使用异步版本的提示词
+        prompt_path = PathManager.get_prompt_path()
 
         try:
             with open(prompt_path, 'r', encoding='utf-8') as f:

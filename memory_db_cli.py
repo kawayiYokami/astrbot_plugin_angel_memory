@@ -106,7 +106,7 @@ class DatabasePathResolver:
             # 5. 验证路径
             if not db_dir.exists():
                 print(f"⚠️  数据库目录不存在: {db_dir}")
-                print(f"   这可能意味着数据库尚未初始化。")
+                print("   这可能意味着数据库尚未初始化。")
                 return None
 
             print(f"✅ 成功定位数据库: {db_dir}")
@@ -349,7 +349,7 @@ class MemoryDBDebugger(MemoryDBAnalyzer):
 
         try:
             # 1. 使用嵌入提供商对查询进行向量化
-            print(f"🔄 正在对查询进行向量化...")
+            print("🔄 正在对查询进行向量化...")
             query_embedding = self.embedding_provider.embed_documents_sync([query])[0]
             print(f"✓ 向量化完成 (维度: {len(query_embedding)})")
 
@@ -357,7 +357,7 @@ class MemoryDBDebugger(MemoryDBAnalyzer):
             collection = self.client.get_collection(collection_name)
 
             # 3. 执行向量相似度搜索
-            print(f"🔍 正在执行向量搜索...")
+            print("🔍 正在执行向量搜索...")
             results = collection.query(
                 query_embeddings=[query_embedding],
                 n_results=limit
@@ -555,13 +555,13 @@ def create_cli():
             where_clause = json.loads(where)
         except json.JSONDecodeError as e:
             console.print(f"[red]❌ 无效的 JSON 格式: {e}[/red]")
-            console.print(f"[yellow]示例: '{{\"source\": \"file.md\"}}'[/yellow]")
+            console.print("[yellow]示例: '{\"source\": \"file.md\"}'[/yellow]")
             raise typer.Exit(1)
 
         results = analyzer.filter_collection(collection, where_clause, limit)
 
         if not results:
-            console.print(f"[yellow]⚠️  没有匹配的结果[/yellow]")
+            console.print("[yellow]⚠️  没有匹配的结果[/yellow]")
             return
 
         # 输出 JSON
@@ -593,7 +593,7 @@ def create_cli():
         results = analyzer.search(collection, query, limit)
 
         if not results:
-            console.print(f"[yellow]⚠️  没有找到匹配结果[/yellow]")
+            console.print("[yellow]⚠️  没有找到匹配结果[/yellow]")
             return
 
         # 输出结果

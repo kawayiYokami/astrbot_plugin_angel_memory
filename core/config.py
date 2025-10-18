@@ -83,7 +83,6 @@ class MemoryConfig:
         self._provider_id = config_get("provider_id", "")
         self._small_model_note_budget = self._validate_token_budget(config_get("small_model_note_budget", 8000), "small_model_note_budget")
         self._large_model_note_budget = self._validate_token_budget(config_get("large_model_note_budget", 12000), "large_model_note_budget")
-        self._enable_thinking_guidance = self._validate_bool(config_get("enable_thinking_guidance", True), "enable_thinking_guidance")
 
     @property
     def min_message_length(self) -> int:
@@ -120,10 +119,6 @@ class MemoryConfig:
         """获取大模型笔记Token预算"""
         return self._large_model_note_budget
 
-    @property
-    def enable_thinking_guidance(self) -> bool:
-        """获取是否启用思考引导"""
-        return self._enable_thinking_guidance
 
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """
@@ -147,8 +142,7 @@ class MemoryConfig:
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "small_model_note_budget": self.small_model_note_budget,
-            "large_model_note_budget": self.large_model_note_budget,
-            "enable_thinking_guidance": self.enable_thinking_guidance
+            "large_model_note_budget": self.large_model_note_budget
         }
 
     def get_capacity_config(self) -> MemoryCapacityConfig:

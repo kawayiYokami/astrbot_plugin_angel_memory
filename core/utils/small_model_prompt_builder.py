@@ -202,3 +202,94 @@ class SmallModelPromptBuilder:
         parts.append("\n\n请按照任务进行处理")
 
         return "".join(parts)
+
+    @staticmethod
+    def build_post_hoc_analysis_prompt(
+        historical_query: str,
+        main_llm_response: str,
+        raw_memories: List,
+        raw_notes: List,
+        core_topic: str = "",
+        memory_id_mapping: Dict[str, str] = None,
+        note_id_mapping: Dict[str, str] = None,
+        config=None
+    ) -> str:
+        """
+        构建用于事后反思的提示词
+
+        Args:
+            historical_query: 历史对话内容
+            main_llm_response: 主LLM的回答内容
+            raw_memories: 原始记忆列表
+            raw_notes: 原始笔记列表
+            core_topic: 核心话题（可选）
+            config: 配置对象（可选）
+
+        Returns:
+            完整的反思提示词字符串
+        """
+        # 读取反思指南
+        import os
+        guide_path = os.path.join(os.path.dirname(__file__), '..', '..', 'llm_memory', 'prompts', 'memory_system_guide_async.md')
+        with open(guide_path, 'r', encoding='utf-8') as f:
+            guide_content = f.read()
+
+        # 构建反思上下文
+        reflection_context = f"""
+### 历史对话内容
+
+{historical_query}
+
+### 你做出的回答
+
+{main_llm_response}
+
+### 现在请你反思
+
+根据以上对话和你做出的回答，请分析以下"相关记忆"和"相关笔记"哪些是真正有用的，哪些是无用的。并判断是否可以根据这次成功的回答，总结出任何新的、有价值的记忆。
+
+#### 召回的相关记忆
+
+"""
+
+        # 添加记忆信息
+        if raw_memories:
+            for i, memory in enumerate(raw_memories):
+                # 使用短ID显示（如果有映射表）
+                short_id = memory_id_mapping.get(memory.id, memory.id) if memory_id_mapping else memory.id
+                reflection_context += f"""
+- **id**: `{short_id}`
+- **type**: `{memory.memory_type.value if hasattr(memory.memory_type, 'value') else memory.memory_type}`
+- **judgment**: `{memory.judgment}`
+"""
+        else:
+            reflection_context += "\n无相关记忆\n"
+
+        # 添加笔记信息
+        reflection_context += "\n#### 你以前做的相关笔记\n"
+
+        if raw_notes:
+            for i, note in enumerate(raw_notes):
+                # 使用短ID显示（如果有映射表）
+                note_id = note.get('id', 'N/A')
+                short_id = note_id_mapping.get(note_id, note_id) if note_id_mapping else note_id
+                reflection_context += f"""
+- **id**: `{short_id}`
+- **content**: `{note.get('content', '')[:200]}...`
+"""
+        else:
+            reflection_context += "\n无相关笔记\n"
+
+        # 组合完整提示词
+        full_prompt = f"""{guide_content}
+
+---
+
+{reflection_context}
+
+---
+
+请按照指南要求，先用自然语言详细描述你的反思过程，然后输出JSON格式的结果。
+"""
+
+        return full_prompt

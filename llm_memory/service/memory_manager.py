@@ -241,7 +241,7 @@ class MemoryManager:
                             # 检查是否超过每类型限制（第二轮不限制，或者可以设置更宽松的限制）
                             recalled_by_type[assoc_type].append(assoc_memory)
                             all_recalled_ids.add(assoc_id)
- 
+
                     except Exception as e:
                         self.logger.warning(f"获取关联记忆 {assoc_id} 失败: {str(e)}")
                         continue
@@ -412,7 +412,7 @@ class MemoryManager:
         new_memories: List[dict] = None,
         merge_groups: List[List[str]] = None,
         memory_handlers: Dict[str, object] = None
-    ):
+    ) -> List[BaseMemory]:
         """
         统一反馈接口 - 处理回忆后的反馈（核心工作流）
 
@@ -430,6 +430,9 @@ class MemoryManager:
             merge_groups: 要合并的记忆ID组列表，每组是要合并的ID列表
             memory_handlers: 记忆处理器字典，用于创建新记忆
 
+        Returns:
+            新创建的记忆对象列表
+
         功能：
         1. 标记有用回忆 → 强化 + 两两建立关联（双向、去重、累加）
         2. 批量创建新记忆 → 两两建立关联（初始强度1）
@@ -440,6 +443,8 @@ class MemoryManager:
         new_memories = new_memories or []
         merge_groups = merge_groups or []
         memory_handlers = memory_handlers or {}
+
+        created_memories = []  # 新增：收集创建的记忆对象
 
         association_cache: Dict[str, MemorySnapshot] = {}
         if useful_memory_ids:
@@ -471,20 +476,21 @@ class MemoryManager:
             tags = mem_data.get("tags", [])
 
 
-            # 根据类型创建记忆，获取返回的ID
-            memory_id = None
+            # 根据类型创建记忆，获取返回的对象
+            new_memory_object = None
             handler = memory_handlers.get(mem_type)
             if handler:
-                memory_id = handler.remember(judgment, reasoning, tags)
+                new_memory_object = handler.remember(judgment, reasoning, tags)
             else:
                 self.logger.warning(f"未找到记忆类型 {mem_type} 的处理器，跳过创建")
 
-            if memory_id:
-                created_ids.append(memory_id)
+            if new_memory_object:
+                created_ids.append(new_memory_object.id)
+                created_memories.append(new_memory_object)  # 收集创建的对象
 
                 # 任务记忆特殊状态管理：新任务记忆创建时，将之前最新的任务记忆转为已巩固状态
                 if mem_type == "task":
-                    self._consolidate_previous_task_memory(memory_id)
+                    self._consolidate_previous_task_memory(new_memory_object.id)
 
         if created_ids:
             association_cache = self.association_manager.preload_memories(created_ids, association_cache)
@@ -516,6 +522,8 @@ class MemoryManager:
                         new_reasoning=metadata.get("reasoning", "合并多个相似记忆"),
                         new_tags=metadata.get("tags", "").split(", ") if metadata.get("tags") else []
                     )
+
+        return created_memories  # 返回新创建的记忆对象列表
 
     def _consolidate_previous_task_memory(self, current_task_id: str):
         """

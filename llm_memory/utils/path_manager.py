@@ -77,7 +77,7 @@ class PathManager:
 
         logger.info(f"PathManager供应商设置完成: {provider_id} -> {safe_provider_id}, 基础目录: {self._base_dir}")
 
-    
+
     def get_current_provider(self) -> str:
         """获取当前供应商ID"""
         if self._current_provider is None:
@@ -134,14 +134,14 @@ class PathManager:
     # === 对外路径方法（仅提示词路径） ===
 
     @classmethod
-    def get_prompt_path(cls, enable_thinking_guidance: bool = True) -> Path:
+    def get_prompt_path(cls) -> Path:
         """获取提示词文件路径（插件根目录的唯一对外用途）
 
-        Args:
-            enable_thinking_guidance: 是否启用思考引导，True则使用thinking版本的提示词
+        Returns:
+            提示词文件路径（始终返回异步思考提示词）
         """
-        filename = "memory_system_guide_think.md" if enable_thinking_guidance else "memory_system_guide.md"
-        return cls._get_plugin_root() / "llm_memory" / "prompts" / filename
+        # 总是返回异步思考提示词
+        return cls._get_plugin_root() / "llm_memory" / "prompts" / "memory_system_guide_async.md"
 
     # === 便捷方法 ===
 

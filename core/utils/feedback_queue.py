@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import threading
 import queue
-from typing import Callable, Optional, Dict, Any, List
+from typing import Callable, Optional, Dict, Any, List, Union
 
 try:
     from astrbot.api import logger
@@ -16,7 +16,7 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 
-FeedbackTask = Dict[str, Any]
+FeedbackTask = Union[Dict[str, Any], None]
 
 
 class FeedbackQueue:
@@ -38,15 +38,40 @@ class FeedbackQueue:
         logger.info("反馈队列线程已启动: %s", worker_name)
 
     def submit(self, task: FeedbackTask) -> None:
+        # 检查任务是否为None
+        if task is None:
+            logger.warning("反馈队列收到空任务，拒绝处理")
+            return
+
         if self._stop_event.is_set():
             logger.warning("反馈队列已停止，拒绝新任务: %s", task.get("session_id"))
             return
 
-        session_id = task.get("session_id", "unknown")
+        # --- 开始新增的逻辑 ---
+        # 通过检查任务的 payload 是否包含 'event_data' 来识别新型异步分析任务
         payload = task.get("payload", {})
-        useful_ids: List[str] = payload.get("useful_memory_ids", [])
-        new_memories: List[Dict[str, Any]] = payload.get("new_memories", [])
-        merge_groups: List[List[str]] = payload.get("merge_groups", [])
+        is_analysis_task = 'event_data' in payload
+
+        if is_analysis_task:
+            session_id = task.get("session_id", "unknown")
+            logger.info(f"[反馈队列] 收到[异步分析]任务，直接入队 - 会话ID: {session_id}")
+            # 对于新任务，绕过缓冲，直接放入执行队列
+            self._queue.put(task)
+            return
+        # --- 新增逻辑结束 ---
+
+        session_id = task.get("session_id", "unknown")
+        useful_ids: List[str] = task.get("useful_memory_ids", [])
+        new_memories: List[Dict[str, Any]] = task.get("new_memories", [])
+        merge_groups: List[List[str]] = task.get("merge_groups", [])
+
+        logger.info(f"[反馈队列] 收到[记忆反馈]任务，进入缓冲 - 会话ID: {session_id}")
+        logger.debug(f"[反馈队列] 收到任务提交，会话ID: {session_id}，有用记忆数: {len(useful_ids)}，新记忆数: {len(new_memories)}，合并组数: {len(merge_groups)}")
+
+        # 添加更多调试信息
+        if payload:
+            logger.debug(f"[反馈队列] 任务负载信息 - 会话ID: {session_id}")
+            logger.debug(f"  负载键: {list(payload.keys())}")
 
         with self._buffer_lock:
             buffer = self._buffers.setdefault(session_id, {
@@ -72,13 +97,19 @@ class FeedbackQueue:
                 len(buffer["merge_groups"]) >= self.batch_threshold
             )
 
+            logger.debug(f"[反馈队列] 会话 {session_id} 缓冲区状态 - 有用记忆: {len(buffer['useful_ids'])}, 新记忆: {len(buffer['new_memories'])}, 合并组: {len(buffer['merge_groups'])}")
+
             if should_flush:
+                logger.debug(f"[反馈队列] 会话 {session_id} 达到批处理阈值，立即刷新")
                 self._enqueue_buffer_locked(session_id)
             elif session_id not in self._scheduled:
+                logger.debug(f"[反馈队列] 会话 {session_id} 设置定时刷新，间隔: {self.flush_interval}秒")
                 timer = threading.Timer(self.flush_interval, self._flush_session, args=[session_id])
                 timer.daemon = True
                 self._scheduled[session_id] = timer
                 timer.start()
+            else:
+                logger.debug(f"[反馈队列] 会话 {session_id} 已有定时任务，等待执行")
 
     def stop(self, timeout: Optional[float] = 5.0) -> None:
         self.flush_all()
@@ -111,9 +142,16 @@ class FeedbackQueue:
                 self._queue.task_done()
 
     def _process_task(self, task: FeedbackTask) -> None:
+        # 检查任务是否为None
+        if task is None:
+            logger.warning("反馈队列收到空任务，跳过处理")
+            return
+
         feedback_fn: Callable[..., None] = task["feedback_fn"]
         session_id: str = task.get("session_id", "unknown")
         payload = task.get("payload", {})
+
+        logger.info(f"[后台工人] 开始处理任务 - 会话ID: {session_id}, 任务类型: {feedback_fn.__name__}")
 
         try:
             feedback_fn(**payload)
@@ -132,6 +170,7 @@ class FeedbackQueue:
             timer.cancel()
 
         if not buffer:
+            logger.debug(f"[反馈队列] 会话 {session_id} 没有缓冲区数据，跳过")
             return
 
         useful_ids = list(buffer["useful_ids"])
@@ -139,6 +178,7 @@ class FeedbackQueue:
         merge_groups = buffer["merge_groups"]
 
         if not useful_ids and not new_memories and not merge_groups:
+            logger.debug(f"[反馈队列] 会话 {session_id} 没有需要处理的数据，跳过")
             return
 
         aggregated_task = {
@@ -152,7 +192,16 @@ class FeedbackQueue:
             }
         }
         self._queue.put(aggregated_task)
+        logger.debug(f"[反馈队列] 会话 {session_id} 任务已加入队列，有用记忆: {len(useful_ids)}, 新记忆: {len(new_memories)}, 合并组: {len(merge_groups)}")
 
+        # 添加更多调试信息
+        if new_memories:
+            logger.debug(f"[反馈队列] 会话 {session_id} 新记忆类型统计:")
+            type_count = {}
+            for memory in new_memories:
+                mem_type = memory.get('type', 'unknown')
+                type_count[mem_type] = type_count.get(mem_type, 0) + 1
+            logger.debug(f"  {type_count}")
 
 _queue_instance: Optional[FeedbackQueue] = None
 _instance_lock = threading.Lock()

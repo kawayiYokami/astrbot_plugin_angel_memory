@@ -23,7 +23,7 @@
   "provider_id": {
     "type": "string",
     "title": "记忆整理LLM提供商ID",
-    "description": "用于记忆整理的LLM提供商ID，建议为快速的小模型",
+    "description": "用于记忆整理的LLM提供商ID，建议为拥有思考能力的模型",
     "default": "",
     "hint": "留空则只召回记忆不进行整理，填写提供商ID则会调用LLM进行记忆筛选和整理"
   },
@@ -47,12 +47,5 @@
     "description": "用于向量化的嵌入式模型提供商ID，优先使用官方API",
     "default": "",
     "hint": "留空则使用本地模型，填写提供商ID则使用官方API，API不可用时自动降级到本地模型"
-  },
-  "enable_thinking_guidance": {
-    "type": "bool",
-    "title": "是否启用思考引导",
-    "description": "是否为AI提供思考引导的提示词",
-    "default": true,
-    "hint": "启用时使用包含思考引导的提示词文件，禁用时使用标准提示词文件"
   }
 }

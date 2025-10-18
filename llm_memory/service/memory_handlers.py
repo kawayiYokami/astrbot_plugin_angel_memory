@@ -36,7 +36,7 @@ class MemoryHandler:
         self.store = vector_store
         self.logger = logger
 
-    def remember(self, judgment: str, reasoning: str, tags: List[str]) -> str:
+    def remember(self, judgment: str, reasoning: str, tags: List[str]) -> BaseMemory:
         """
         记住一条记忆。
 
@@ -46,7 +46,7 @@ class MemoryHandler:
             tags: 标签列表
 
         Returns:
-            创建的记忆ID
+            创建的记忆对象
         """
         memory = BaseMemory(
             memory_type=self.memory_type,
@@ -55,7 +55,7 @@ class MemoryHandler:
             tags=tags
         )
         self.store.remember(self.collection, memory)
-        return memory.id
+        return memory
 
     def recall(self, query: str, limit: int = 10, include_consolidated: bool = True, similarity_threshold: float = 0.6) -> List[BaseMemory]:
         """

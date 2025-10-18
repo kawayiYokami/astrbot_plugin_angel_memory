@@ -45,30 +45,6 @@ class PluginManager:
         self.logger.info(f"   数据目录: {plugin_context.get_index_dir()}")
         self.logger.info(f"   有可用提供商: {plugin_context.has_providers()}")
         self.logger.info("   初始化架构: PluginContext + InitializationManager 协作模式")
-
-    async def handle_message_event(self, event, event_plugin_context=None):
-        """
-        处理消息事件
-
-        Args:
-            event: 消息事件对象
-            event_plugin_context: 事件专用的PluginContext（可选）
-
-        Returns:
-            dict: 处理结果
-        """
-
-        # 等待系统准备就绪
-        if not self.init_manager.wait_until_ready(timeout=30):
-            self.logger.info("⏳ 系统正在初始化中，消息事件将跳过")
-            return {
-                "status": "waiting",
-                "message": "系统正在初始化中，请稍候..."
-            }
-
-        # 系统准备就绪，正常处理业务
-        return await self._process_message_event(event, event_plugin_context)
-
     async def handle_llm_request(self, event, request, event_plugin_context=None):
         """
         处理LLM请求
@@ -93,6 +69,30 @@ class PluginManager:
         # 系统准备就绪，正常处理业务
         return await self._process_llm_request(event, request, event_plugin_context)
 
+    async def handle_llm_response(self, event, response, event_plugin_context=None):
+        """
+        处理LLM响应
+
+        Args:
+            event: 消息事件对象
+            response: LLM响应对象
+            event_plugin_context: 事件专用的PluginContext（可选）
+
+        Returns:
+            dict: 处理结果
+        """
+
+        # 等待系统准备就绪
+        if not self.init_manager.wait_until_ready(timeout=30):
+            self.logger.info("⏳ 系统正在初始化中，LLM响应将跳过")
+            return {
+                "status": "waiting",
+                "message": "系统正在初始化中，请稍候..."
+            }
+
+        # 系统准备就绪，正常处理业务
+        return await self._process_llm_response(event, response, event_plugin_context)
+
     def set_main_thread_components(self, components: dict):
         """
         设置主线程组件实例
@@ -101,49 +101,6 @@ class PluginManager:
             components: 主线程创建的组件字典
         """
         self.main_thread_components = components
-
-    async def _process_message_event(self, event, event_plugin_context=None):
-        """
-        处理消息事件的具体逻辑
-
-        Args:
-            event: 消息事件对象
-            event_plugin_context: 事件专用的PluginContext（可选）
-
-        Returns:
-            dict: 处理结果
-        """
-        try:
-            # 优先使用主线程组件，其次使用后台初始化的组件
-            deepmind = self.main_thread_components.get("deepmind")
-            if not deepmind:
-                # 如果主线程组件还没设置，使用后台组件（向后兼容）
-                components = self.background_initializer.get_initialized_components()
-                deepmind = components.get("deepmind")
-
-            if deepmind:
-                # 直接使用 await 处理异步任务
-                deepmind.inject_initial_memories(event)
-
-                return {
-                    "status": "success",
-                    "message": "消息事件处理完成",
-                    "event_type": "message"
-                }
-            else:
-                self.logger.warning("DeepMind组件尚未初始化完成")
-                return {
-                    "status": "waiting",
-                    "message": "DeepMind组件尚未初始化完成"
-                }
-
-        except Exception as e:
-            self.logger.error(f"消息事件处理失败: {e}")
-            return {
-                "status": "error",
-                "message": f"消息事件处理失败: {str(e)}"
-            }
-
     async def _process_llm_request(self, event, request, event_plugin_context=None):
         """
         处理LLM请求的具体逻辑
@@ -156,6 +113,7 @@ class PluginManager:
         Returns:
             dict: 处理结果
         """
+        self.logger.debug("开始执行 _process_llm_request")
         try:
             # 优先使用主线程组件，其次使用后台初始化的组件
             deepmind = self.main_thread_components.get("deepmind")
@@ -165,8 +123,10 @@ class PluginManager:
                 deepmind = components.get("deepmind")
 
             if deepmind:
+                self.logger.debug("找到 DeepMind 组件，开始执行 organize_and_inject_memories")
                 # 直接使用 await 处理异步任务
                 await deepmind.organize_and_inject_memories(event, request)
+                self.logger.debug("organize_and_inject_memories 执行完成")
 
                 return {
                     "status": "success",
@@ -185,6 +145,52 @@ class PluginManager:
             return {
                 "status": "error",
                 "message": f"LLM请求处理失败: {str(e)}"
+            }
+
+    async def _process_llm_response(self, event, response, event_plugin_context=None):
+        """
+        处理LLM响应的具体逻辑
+
+        Args:
+            event: 消息事件对象
+            response: LLM响应对象
+            event_plugin_context: 事件专用的PluginContext（可选）
+
+        Returns:
+            dict: 处理结果
+        """
+        self.logger.debug("开始执行 _process_llm_response")
+        try:
+            # 优先使用主线程组件，其次使用后台初始化的组件
+            deepmind = self.main_thread_components.get("deepmind")
+            if not deepmind:
+                # 如果主线程组件还没设置，使用后台组件（向后兼容）
+                components = self.background_initializer.get_initialized_components()
+                deepmind = components.get("deepmind")
+
+            if deepmind:
+                self.logger.debug("找到 DeepMind 组件，开始执行 async_analyze_and_update_memory")
+                # 调用异步分析方法
+                await deepmind.async_analyze_and_update_memory(event, response)
+                self.logger.debug("async_analyze_and_update_memory 执行完成")
+
+                return {
+                    "status": "success",
+                    "message": "LLM响应处理完成",
+                    "response_type": "llm"
+                }
+            else:
+                self.logger.warning("DeepMind组件尚未初始化完成")
+                return {
+                    "status": "waiting",
+                    "message": "DeepMind组件尚未初始化完成"
+                }
+
+        except Exception as e:
+            self.logger.error(f"LLM响应处理失败: {e}")
+            return {
+                "status": "error",
+                "message": f"LLM响应处理失败: {str(e)}"
             }
 
     def get_initialized_components(self):
