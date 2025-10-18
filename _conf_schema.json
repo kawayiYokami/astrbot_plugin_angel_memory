@@ -25,7 +25,7 @@
     "title": "记忆整理LLM提供商ID",
     "description": "用于记忆整理的LLM提供商ID，建议为拥有思考能力的模型",
     "default": "",
-    "hint": "留空则只召回记忆不进行整理，填写提供商ID则会调用LLM进行记忆筛选和整理"
+    "hint": "留空则只使用本地模型"
   },
   "small_model_note_budget": {
     "type": "int",
