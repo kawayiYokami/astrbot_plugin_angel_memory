@@ -43,9 +43,12 @@ class SQLiteDatabaseManager(ABC):
         self.provider_id = provider_id
         self.db_name = db_name
 
-        # 在生成数据库文件名时确保安全
-        safe_provider_id = re.sub(r'[^\w\-]', '_', str(provider_id))
-        self.db_path = self.data_directory / f"{db_name}_{safe_provider_id}.db"
+        # 在生成数据库文件名时确保安全 (保留连字符，但对文件名是合法的)
+        safe_provider_id_for_filename = re.sub(r'[^\w\-]', '_', str(provider_id))
+        self.db_path = self.data_directory / f"{db_name}_{safe_provider_id_for_filename}.db"
+
+        # 新增：创建一个对SQL表名安全的ID (不允许连字符)
+        self.safe_table_provider_id = re.sub(r'[^\w]', '_', str(provider_id))
 
         self._lock = threading.Lock()
         # 优化：使用连接池替代线程本地存储
@@ -68,7 +71,7 @@ class SQLiteDatabaseManager(ABC):
     def _initialize_pool(self, initial_size: int = 2):
         """
         初始化连接池，预先创建指定数量的连接
-        
+
         Args:
             initial_size: 初始连接数量
         """
@@ -82,7 +85,7 @@ class SQLiteDatabaseManager(ABC):
     def _create_optimized_connection(self) -> sqlite3.Connection:
         """
         创建优化的SQLite连接
-        
+
         Returns:
             配置好的SQLite连接对象
         """
@@ -93,7 +96,7 @@ class SQLiteDatabaseManager(ABC):
         )
         # 设置优化参数
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL") 
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=10000")
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA wal_autocheckpoint=1000")
@@ -158,11 +161,11 @@ class SQLiteDatabaseManager(ABC):
     def _execute_with_connection(self, query_func, caller: str = "unknown"):
         """
         包装数据库操作，自动管理连接
-        
+
         Args:
             query_func: 接收连接对象作为参数的函数
             caller: 调用者说明
-        
+
         Returns:
             query_func的返回值
         """
@@ -196,7 +199,7 @@ class SQLiteDatabaseManager(ABC):
             else:
                 cursor.execute(query)
             return cursor
-        
+
         try:
             return self._execute_with_connection(query_func, caller)
         except sqlite3.Error as e:
@@ -250,7 +253,7 @@ class SQLiteDatabaseManager(ABC):
             if auto_commit:
                 conn.commit()
             return cursor
-        
+
         try:
             return self._execute_with_connection(query_func, caller)
         except sqlite3.Error as e:
@@ -409,7 +412,7 @@ class SQLiteDatabaseManager(ABC):
     def _return_connection(self, conn: sqlite3.Connection):
         """
         将连接返回到连接池
-        
+
         Args:
             conn: SQLite连接对象
         """

@@ -33,7 +33,7 @@ class FileIndexManager(SQLiteDatabaseManager):
 
     def _get_table_name(self) -> str:
         """获取文件索引表名"""
-        return f"file_index_{self.provider_id}"
+        return f"file_index_{self.safe_table_provider_id}"
 
     def _init_database(self) -> None:
         """初始化文件索引数据库表结构"""
@@ -116,14 +116,14 @@ class FileIndexManager(SQLiteDatabaseManager):
                     caller="小弟insert_file_id"
                 )
                 file_id = cursor.lastrowid
-                
+
                 # 加载到内存缓存
                 with self._cache_lock:
                     self._path_cache[relative_path] = (file_id, timestamp)
                     self._id_cache[file_id] = relative_path
-                
+
                 return file_id
-                
+
             except Exception as insert_error:
                 # 插入失败（UNIQUE冲突），说明其他地方已创建，查询获取
                 if "UNIQUE constraint failed" in str(insert_error):
@@ -133,15 +133,15 @@ class FileIndexManager(SQLiteDatabaseManager):
                         caller="get_or_create_file_id->查询冲突"
                     )
                     result = cursor.fetchone()
-                    
+
                     if result:
                         file_id, current_timestamp = result
-                        
+
                         # 加载到内存缓存
                         with self._cache_lock:
                             self._path_cache[relative_path] = (file_id, current_timestamp)
                             self._id_cache[file_id] = relative_path
-                        
+
                         # 检查是否需要更新时间戳
                         if timestamp > 0 and timestamp > current_timestamp:
                             self._execute_single(
@@ -151,7 +151,7 @@ class FileIndexManager(SQLiteDatabaseManager):
                             )
                             with self._cache_lock:
                                 self._path_cache[relative_path] = (file_id, timestamp)
-                        
+
                         return file_id
                 else:
                     # 其他错误，重新抛出
@@ -185,7 +185,7 @@ class FileIndexManager(SQLiteDatabaseManager):
                 (file_id,)
             )
             result = cursor.fetchone()
-            
+
             if result:
                 relative_path = result[0]
                 # 加载到内存缓存
@@ -195,7 +195,7 @@ class FileIndexManager(SQLiteDatabaseManager):
                 return relative_path
             else:
                 return None
-                
+
         except Exception as e:
             self.logger.error(f"获取文件路径失败 (ID: {file_id}): {e}")
             return None
@@ -278,7 +278,7 @@ class FileIndexManager(SQLiteDatabaseManager):
 
             # 删除数据库记录
             success = self.delete_by_id(file_id)
-            
+
             if success and relative_path:
                 # 清理内存缓存
                 with self._cache_lock:
@@ -287,7 +287,7 @@ class FileIndexManager(SQLiteDatabaseManager):
                     self.logger.debug(f"已清理缓存: file_id={file_id}, path={relative_path}")
 
             return success
-            
+
         except Exception as e:
             self.logger.error(f"删除文件索引失败 (ID: {file_id}): {e}")
             return False
@@ -395,7 +395,7 @@ class FileIndexManager(SQLiteDatabaseManager):
         try:
             with self._cache_lock:
                 cached_files = len(self._id_cache)
-                
+
             table_name = self._get_table_name()
             cursor = self._execute_query(f'SELECT COUNT(*) FROM {table_name}')
             total_count = cursor.fetchone()[0]

@@ -71,7 +71,21 @@ class ComponentFactory:
             embedding_provider = await self._create_embedding_provider()
             self._components["embedding_provider"] = embedding_provider
 
-            # 2. 创建向量存储
+            # 新增：检查嵌入提供商是否可用
+            if not embedding_provider.is_available():
+                self.logger.critical("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                self.logger.critical("!!! 核心组件 embedding_provider 加载失败！")
+                self.logger.critical("!!! 可能原因：网络问题导致无法下载模型，或模型文件损坏。")
+                self.logger.critical("!!! 插件将以功能受限模式启动，所有记忆相关功能将不可用。")
+                self.logger.critical("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+
+                # 标记初始化完成（以受限模式）并立即返回，不再创建后续组件
+                self._initialized = True
+                if self.init_manager:
+                    self.init_manager.mark_ready() # 同样需要标记，否则主程序可能卡住
+                return self._components
+
+            # 2. 创建向量存储 (只有在 embedding_provider 可用时才会执行)
             vector_store = self._create_vector_store(embedding_provider)
             self._components["vector_store"] = vector_store
 

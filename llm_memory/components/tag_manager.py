@@ -32,7 +32,7 @@ class TagManager(SQLiteDatabaseManager):
 
     def _get_table_name(self) -> str:
         """获取标签表名"""
-        return f"tag_{self.provider_id}"
+        return f"tag_{self.safe_table_provider_id}"
 
     def _init_database(self) -> None:
         """初始化标签数据库表"""
@@ -167,19 +167,19 @@ class TagManager(SQLiteDatabaseManager):
                     # 在一个事务中完成插入和查询
                     def batch_create_and_query(conn):
                         cursor = conn.cursor()
-                        
+
                         # 使用INSERT OR IGNORE批量插入，忽略重复标签
                         insert_query = f'INSERT OR IGNORE INTO {table_name} (name) VALUES (?)'
                         params_list = [(tag_name,) for tag_name in new_tag_names]
                         cursor.executemany(insert_query, params_list)
                         conn.commit()
-                        
+
                         # 重新查询所有新标签的ID（包括已存在的和新插入的）
                         placeholders = ','.join(['?' for _ in new_tag_names])
                         cursor.execute(f'SELECT id, name FROM {table_name} WHERE name IN ({placeholders})', new_tag_names)
                         results = cursor.fetchall()
                         return results
-                    
+
                     # 执行整个事务
                     results = self._execute_with_connection(batch_create_and_query, caller="小弟批量创建和查询tags")
 
@@ -216,10 +216,10 @@ class TagManager(SQLiteDatabaseManager):
         """
         if not tag_ids:
             return []
-        
+
         result = []
         missing_ids = []
-        
+
         # 先从缓存中查找
         with self._cache_lock:
             for tag_id in tag_ids:
@@ -229,7 +229,7 @@ class TagManager(SQLiteDatabaseManager):
                     # 缓存没有，记录下来去数据库查
                     missing_ids.append(tag_id)
                     result.append(None)  # 占位
-        
+
         # 如果有缺失的，去数据库查询
         if missing_ids:
             db_names = self._batch_get_names_by_ids(missing_ids, 'name', caller="get_tag_names->查询缺失")
@@ -243,7 +243,7 @@ class TagManager(SQLiteDatabaseManager):
                         if tag_name:
                             self._id_cache[tag_id] = tag_name
                         missing_idx += 1
-        
+
         return [name for name in result if name is not None]
 
     def get_all_tags(self) -> List[Dict]:

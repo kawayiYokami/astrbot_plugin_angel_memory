@@ -58,7 +58,8 @@ class PathManager:
         """
         # 只检查空值，不验证格式（上游会验证）
         if not provider_id or not provider_id.strip():
-            raise ValueError("供应商ID不能为空")
+            logger.warning("未提供provider_id，将使用默认值 'local_default'")
+            provider_id = "local_default"
 
         # 强制要求传入数据目录
         if not base_data_dir:
