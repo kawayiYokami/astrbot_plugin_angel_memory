@@ -356,16 +356,21 @@ class DeepMind:
                 except Exception as e:
                     self.logger.warning(f"为新记忆创建BaseMemory对象失败: {e}")
 
-        # 3. 将有用的旧记忆和全新的记忆合并，一起放入短期记忆
-        memories_for_session = useful_long_term_memories + new_memory_objects
-        if memories_for_session:
-            self.session_memory_manager.add_memories_to_session(session_id, memories_for_session)
-            self.logger.info(
-                "记忆更新： %d 条记忆进入短期记忆 (有用旧记忆: %d, 新生成记忆: %d)",
-                len(memories_for_session),
-                len(useful_long_term_memories),
-                len(new_memory_objects)
-            )
+        # 3. 更新短期记忆：添加新记忆，评估现有记忆，清理死亡记忆
+        useful_memory_ids = [memory.id for memory in useful_long_term_memories]
+        self.session_memory_manager.update_session_memories(
+            session_id,
+            new_memory_objects,
+            useful_memory_ids
+        )
+
+        total_memories = len(useful_long_term_memories) + len(new_memory_objects)
+        self.logger.info(
+            "记忆更新： %d 条记忆进入短期记忆 (有用旧记忆: %d, 新生成记忆: %d)",
+            total_memories,
+            len(useful_long_term_memories),
+            len(new_memory_objects)
+        )
 
         # 4. 新增的INFO日志逻辑
         if new_memory_objects:

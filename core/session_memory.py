@@ -6,8 +6,8 @@
 """
 
 import threading
+import time
 from typing import Dict, List, Any
-from collections import deque
 from dataclasses import dataclass
 from ..llm_memory.models.data_models import BaseMemory
 from .config import MemoryConstants, MemoryCapacityConfig
@@ -22,6 +22,8 @@ class MemoryItem:
     reasoning: str
     tags: List[str]
     strength: int = 0
+    life_points: int = 3  # 生命值，新记忆默认3点
+    created_at: float = 0.0  # 创建时间戳
 
 
 class SessionMemory:
@@ -41,14 +43,11 @@ class SessionMemory:
         self.capacity_multiplier = capacity_multiplier
         self.lock = threading.Lock()
 
-        # 初始化各类型记忆通道（使用deque实现FIFO）
-        self.memories = {
-            memory_type: deque(maxlen=int(getattr(capacity_config, memory_type, 0) * capacity_multiplier))
-            for memory_type in ['knowledge', 'emotional', 'skill', 'task', 'event']
-        }
+        # 使用普通列表存储记忆（移除FIFO机制）
+        self.memories = []  # List[MemoryItem]
 
         # 记忆ID到记忆项的映射（用于快速查找）
-        self.memory_map = {}
+        self.memory_map = {}  # Dict[str, MemoryItem]
 
     def add_memories(self, memories: List[BaseMemory]) -> None:
         """
@@ -71,21 +70,55 @@ class SessionMemory:
                     judgment=getattr(memory, 'judgment', ''),
                     reasoning=getattr(memory, 'reasoning', ''),
                     tags=getattr(memory, 'tags', []),
-                    strength=getattr(memory, 'strength', 0)
+                    strength=getattr(memory, 'strength', 0),
+                    life_points=3,  # 新记忆默认3点生命值
+                    created_at=time.time()  # 记录创建时间
                 )
 
                 # 如果记忆已存在，先移除旧的
                 if memory.id in self.memory_map:
                     old_memory = self.memory_map[memory.id]
-                    if old_memory.memory_type in self.memories:
-                        try:
-                            self.memories[old_memory.memory_type].remove(old_memory)
-                        except ValueError:
-                            pass  # 记忆可能已经被FIFO移除
+                    if old_memory in self.memories:
+                        self.memories.remove(old_memory)
 
                 # 添加新记忆
-                self.memories[memory_type_key].append(memory_item)
+                self.memories.append(memory_item)
                 self.memory_map[memory.id] = memory_item
+
+                # 检查容量并智能清理
+                self._cleanup_by_capacity(memory_type_key)
+
+    def _cleanup_by_capacity(self, memory_type: str) -> None:
+        """
+        根据容量清理记忆：删除该类型中生命值最低且最旧的记忆
+
+        Args:
+            memory_type: 记忆类型
+        """
+        # 获取该类型的记忆
+        type_memories = [memory for memory in self.memories if memory.memory_type == memory_type]
+
+        # 获取该类型的容量限制
+        base_capacity = getattr(self.capacity_config, memory_type, 0)
+        capacity = int(base_capacity * self.capacity_multiplier)
+
+        # 如果容量为0或未超限，不需要清理
+        if capacity <= 0 or len(type_memories) <= capacity:
+            return
+
+        # 计算需要删除的数量
+        excess_count = len(type_memories) - capacity
+
+        # 按生命值升序，时间戳升序排序（生命值最低且最旧的排在前面）
+        type_memories.sort(key=lambda x: (x.life_points, x.created_at))
+
+        # 删除最差的记忆
+        for i in range(excess_count):
+            memory_to_remove = type_memories[i]
+            if memory_to_remove in self.memories:
+                self.memories.remove(memory_to_remove)
+            if memory_to_remove.id in self.memory_map:
+                del self.memory_map[memory_to_remove.id]
 
     def get_memories(self) -> List[MemoryItem]:
         """
@@ -95,11 +128,7 @@ class SessionMemory:
             记忆列表
         """
         with self.lock:
-            all_memories = []
-            for memory_type, memory_deque in self.memories.items():
-                all_memories.extend(list(memory_deque))
-
-            return all_memories
+            return list(self.memories)
 
     def get_memories_by_type(self, memory_type: str) -> List[MemoryItem]:
         """
@@ -112,16 +141,72 @@ class SessionMemory:
             指定类型的记忆列表
         """
         with self.lock:
-            if memory_type in self.memories:
-                return list(self.memories[memory_type])
-            return []
+            return [memory for memory in self.memories if memory.memory_type == memory_type]
 
     def clear(self) -> None:
         """清空会话记忆"""
         with self.lock:
-            for memory_deque in self.memories.values():
-                memory_deque.clear()
+            self.memories.clear()
             self.memory_map.clear()
+
+    def update_memories(self, new_memories: List[BaseMemory], useful_memory_ids: List[str]) -> None:
+        """
+        更新会话记忆：添加新记忆，评估现有记忆，清理死亡记忆
+
+        Args:
+            new_memories: 新记忆列表
+            useful_memory_ids: 有用记忆ID列表
+        """
+        with self.lock:
+            # 1. 添加新记忆
+            for memory in new_memories:
+                memory_type_str = memory.memory_type.value if hasattr(memory.memory_type, 'value') else str(memory.memory_type)
+                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(memory_type_str, memory_type_str.lower())
+
+                memory_item = MemoryItem(
+                    id=memory.id,
+                    memory_type=memory_type_key,
+                    judgment=getattr(memory, 'judgment', ''),
+                    reasoning=getattr(memory, 'reasoning', ''),
+                    tags=getattr(memory, 'tags', []),
+                    strength=getattr(memory, 'strength', 0),
+                    life_points=3,  # 新记忆默认3点生命值
+                    created_at=time.time()  # 记录创建时间
+                )
+
+                # 如果记忆已存在，先移除旧的
+                if memory.id in self.memory_map:
+                    old_memory = self.memory_map[memory.id]
+                    if old_memory in self.memories:
+                        self.memories.remove(old_memory)
+
+                # 添加新记忆
+                self.memories.append(memory_item)
+                self.memory_map[memory.id] = memory_item
+
+                # 检查容量并智能清理
+                self._cleanup_by_capacity(memory_type_key)
+
+            # 2. 评估现有记忆的生命值
+            memories_to_remove = []
+            for memory in self.memories:
+                if memory.id in useful_memory_ids:
+                    # 有用记忆+1生命值
+                    memory.life_points += 1
+                else:
+                    # 其他记忆-1生命值
+                    memory.life_points -= 1
+
+                # 记录需要删除的记忆（生命值为0）
+                if memory.life_points <= 0:
+                    memories_to_remove.append(memory)
+
+            # 3. 清理死亡记忆
+            for memory in memories_to_remove:
+                if memory in self.memories:
+                    self.memories.remove(memory)
+                if memory.id in self.memory_map:
+                    del self.memory_map[memory.id]
 
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -134,18 +219,40 @@ class SessionMemory:
             stats = {
                 'session_id': self.session_id,
                 'capacity_multiplier': self.capacity_multiplier,
-                'total_memories': len(self.memory_map),
-                'by_type': {}
+                'total_memories': len(self.memories),
+                'by_type': {},
+                'life_points_distribution': {
+                    'high': 0,  # >5
+                    'medium': 0,  # 2-5
+                    'low': 0,  # 1
+                    'critical': 0  # =0 (即将死亡)
+                }
             }
 
-            for memory_type, memory_deque in self.memories.items():
-                base_capacity = getattr(self.capacity_config, memory_type, 0)
-                capacity = int(base_capacity * self.capacity_multiplier)
-                stats['by_type'][memory_type] = {
-                    'current': len(memory_deque),
-                    'capacity': capacity,
-                    'usage': len(memory_deque) / capacity if capacity > 0 else 0
-                }
+            # 按类型统计
+            for memory in self.memories:
+                memory_type = memory.memory_type
+                if memory_type not in stats['by_type']:
+                    stats['by_type'][memory_type] = {
+                        'current': 0,
+                        'capacity': int(getattr(self.capacity_config, memory_type, 0) * self.capacity_multiplier),
+                        'usage': 0.0
+                    }
+                stats['by_type'][memory_type]['current'] += 1
+
+                # 生命值分布统计
+                if memory.life_points > 5:
+                    stats['life_points_distribution']['high'] += 1
+                elif memory.life_points >= 2:
+                    stats['life_points_distribution']['medium'] += 1
+                elif memory.life_points == 1:
+                    stats['life_points_distribution']['low'] += 1
+
+            # 计算使用率
+            for memory_type, type_stats in stats['by_type'].items():
+                capacity = type_stats['capacity']
+                if capacity > 0:
+                    type_stats['usage'] = type_stats['current'] / capacity
 
             return stats
 
@@ -194,6 +301,18 @@ class SessionMemoryManager:
         """
         session = self.get_or_create_session(session_id)
         session.add_memories(memories)
+
+    def update_session_memories(self, session_id: str, new_memories: List[BaseMemory], useful_memory_ids: List[str]) -> None:
+        """
+        更新会话记忆：添加新记忆，评估现有记忆，清理死亡记忆
+
+        Args:
+            session_id: 会话ID
+            new_memories: 新记忆列表
+            useful_memory_ids: 有用记忆ID列表
+        """
+        session = self.get_or_create_session(session_id)
+        session.update_memories(new_memories, useful_memory_ids)
 
     def get_session_memories(self, session_id: str) -> List[MemoryItem]:
         """

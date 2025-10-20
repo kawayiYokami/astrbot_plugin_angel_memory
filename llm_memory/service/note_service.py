@@ -303,26 +303,10 @@ class NoteService:
         # 根据标签分数进行降序排序
         all_recalled_notes.sort(key=lambda x: x["tag_score"], reverse=True)
 
-        # 文档去重：在同一文档中只保留排名最高的片段
-        # 由于已按标签分数排序，第一次出现的就是该文档中标签最相关的块
-        seen_file_ids = set()
-        deduplicated_notes = []
-
-        for note in all_recalled_notes:
-            file_id = note["metadata"].get("file_id")
-            if file_id is None:
-                self.logger.warning(f"Note {note['id']} is missing 'file_id' in metadata, skipping deduplication for this item.")
-                deduplicated_notes.append(note)
-                continue
-
-            if file_id not in seen_file_ids:
-                seen_file_ids.add(file_id)
-                deduplicated_notes.append(note)
-
         # 4. 组装最终结果
         # 截取所需数量的结果，并格式化输出
         final_results = []
-        for note in deduplicated_notes[:max_results]:
+        for note in all_recalled_notes[:max_results]:
             final_results.append(
                 {
                     "id": note["id"],
