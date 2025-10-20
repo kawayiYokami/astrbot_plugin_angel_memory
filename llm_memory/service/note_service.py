@@ -145,7 +145,7 @@ class NoteService:
         return True
 
     def search_notes(
-        self, query: str, max_results: int = 10, tag_filter: List[str] = None, threshold: float = 0.55
+        self, query: str, max_results: int = 10, tag_filter: List[str] = None, threshold: float = 0.5
     ) -> List[Dict]:
         """
         搜索笔记
@@ -230,7 +230,7 @@ class NoteService:
         query: str,
         max_results: int = 10,
         recall_count: int = 100,
-        threshold: float = 0.55,
+        threshold: float = 0.5,
     ) -> List[Dict]:
         """
         两阶段混合检索: 先过滤，后重排。
