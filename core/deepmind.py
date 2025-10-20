@@ -898,15 +898,6 @@ class DeepMind:
 
             self.logger.debug(f"[后台任务] 提示词构建完成，会话ID: {session_id}，提示词长度: {len(prompt)}")
 
-            # 添加调试日志：记录给小模型的所有输入内容
-            self.logger.debug(f"[后台任务] 给小模型的输入内容 - 会话ID: {session_id}")
-            self.logger.debug(f"  查询内容: {query}")
-            self.logger.debug(f"  核心话题: {core_topic}")
-            self.logger.debug(f"  记忆数量: {len(long_term_memories)}")
-            self.logger.debug(f"  笔记数量: {len(raw_notes_data)}")
-            self.logger.debug(f"  用户列表: {user_list}")
-            self.logger.debug(f"  完整提示词长度: {len(prompt)}")
-
             # 添加更详细的笔记信息日志
             if raw_notes_data:
                 notes_info = []
@@ -942,13 +933,6 @@ class DeepMind:
 
             # 提取响应文本
             response_text = llm_response.completion_text
-
-            # 添加调试日志：记录小模型的回复
-            self.logger.debug(f"[后台任务] 小模型回复 - 会话ID: {session_id}")
-            self.logger.debug(f"  回复长度: {len(response_text)}")
-            self.logger.debug(f"  回复内容: {response_text}")  # 显示完整回复
-
-            self.logger.debug(f"[后台任务] 开始解析JSON响应，会话ID: {session_id}，响应长度: {len(response_text)}")
 
             # 解析完整的结构化输出
             full_json_data = self.json_parser.extract_json(response_text)
