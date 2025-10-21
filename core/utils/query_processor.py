@@ -3,14 +3,11 @@
 
 统一处理笔记检索和记忆检索的查询词预处理：
 1. 删除助理的各种昵称别名
-2. 使用jieba进行分词，过滤掉无用的词
-3. 保留数字、动词、形容词等有价值词汇
+2. 从后往前保留500token
 """
 
 import re
-import jieba
-import jieba.posseg as pseg
-from typing import List, Set
+from typing import Set
 from astrbot.api.event import AstrMessageEvent
 import json
 
@@ -22,32 +19,6 @@ class QueryProcessor:
 
     def __init__(self):
         self.logger = logger
-
-        # 词性过滤规则 - 保留有价值的词性
-        self.keep_pos = {
-            'n',    # 名词
-            'nr',   # 人名
-            'ns',   # 地名
-            'nt',   # 机构团体
-            'nz',   # 其他专名
-            'v',    # 动词
-            'vd',   # 副动词
-            'vn',   # 名动词
-            'a',    # 形容词
-            'ad',   # 副形词
-            'an',   # 名形词
-            'm',    # 数词
-            'q',    # 量词
-            'mq',   # 数量词
-            't',    # 时间词
-            'tg',   # 时间词性语素
-            's',    # 处所词
-            'f',    # 方位词
-            'b',    # 区别词
-            'z',    # 状态词
-            'x',    # 非语素字（保留英文字母）
-            'eng',  # 英文
-        }
 
     def _extract_assistant_names(self, event: AstrMessageEvent) -> Set[str]:
         """
@@ -114,54 +85,44 @@ class QueryProcessor:
 
         return filtered_query
 
-    def _tokenize_and_filter(self, text: str) -> List[str]:
+    def _truncate_text(self, text: str, max_tokens: int = 500) -> str:
         """
-        使用jieba分词并过滤停用词，保留有价值词汇
-        添加去重功能，避免重复词汇
+        从后往前保留指定数量的token
 
         Args:
             text: 输入文本
+            max_tokens: 最大token数量，默认为500
 
         Returns:
-            过滤后的词列表（去重后保持顺序）
+            截断后的文本
         """
         if not text.strip():
-            return []
+            return ""
 
         try:
-            # 使用jieba进行分词和词性标注
-            seen_words = set()  # 用于去重
-            words = []
-            
-            for word, flag in pseg.cut(text):
-                word = word.strip()
-                if not word:
-                    continue
+            # 使用token工具从后往前截断文本
+            # 先获取全部tokens，然后取最后max_tokens个
+            from ...llm_memory.utils.token_utils import get_tokenizer
 
-                # 保留有价值的词性
-                if flag in self.keep_pos:
-                    # 去重检查 - 避免重复添加相同的词
-                    if word not in seen_words:
-                        words.append(word)
-                        seen_words.add(word)
+            tokenizer = get_tokenizer()
+            tokens = tokenizer.encode(text)
 
-            return words
+            if len(tokens) <= max_tokens:
+                return text
 
+            # 取最后max_tokens个token
+            truncated_tokens = tokens[-max_tokens:]
+            return tokenizer.decode(truncated_tokens)
         except Exception as e:
-            self.logger.warning(f"分词处理失败: {e}")
-            # 降级处理：简单分词，同时添加去重
-            seen_words = set()
-            words = []
-            for w in jieba.cut(text):
-                w = w.strip()
-                if w and w not in seen_words:
-                    words.append(w)
-                    seen_words.add(w)
-            return words
+            self.logger.warning(f"Token截断处理失败: {e}")
+            # 降级处理：简单字符截断（从后往前）
+            if len(text) <= max_tokens * 4:  # 粗略估计1 token ≈ 4 字符
+                return text
+            return text[-(max_tokens * 4):]
 
     def _clean_text(self, text: str) -> str:
         """
-        清理文本中的多余空格和标点
+        清理文本中的多余空格，但保留标点符号
 
         Args:
             text: 输入文本
@@ -174,11 +135,6 @@ class QueryProcessor:
 
         # 替换多个连续空格为单个空格
         text = re.sub(r'\s+', ' ', text)
-
-        # 清理多余标点
-        text = re.sub(r'[，,。\.]{2,}', '。', text)
-        text = re.sub(r'[！!]{2,}', '！', text)
-        text = re.sub(r'[？?]{2,}', '？', text)
 
         return text.strip()
 
@@ -205,18 +161,11 @@ class QueryProcessor:
             if assistant_names:
                 query = self._filter_assistant_names(query, assistant_names)
                 query = self._clean_text(query)
-            # 步骤2: jieba分词并过滤
-            if query.strip():
-                words = self._tokenize_and_filter(query)
-                if words:
-                    query = ' '.join(words)
-                    query = self._clean_text(query)
-                else:
-                    # 如果分词后没有保留词，保留原始查询（避免完全清空）
-                    query = original_query
 
-            # 最终清理
-            query = self._clean_text(query)
+            # 步骤2: 从后往前保留500token
+            if query.strip():
+                query = self._truncate_text(query, 500)
+                query = self._clean_text(query)
 
             return query
 
