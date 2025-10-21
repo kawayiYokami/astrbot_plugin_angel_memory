@@ -152,24 +152,33 @@ class MarkdownParser:
         return headers
 
     def _identify_sections(self, lines: List[str], headers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """识别章节（标题与标题之间的所有内容）"""
+        """识别章节（包含标题行和文档开头内容）"""
         sections = []
-        header_lines = [h['line'] for h in headers] + [len(lines)]
 
-        for i in range(len(header_lines) - 1):
-            start_line = header_lines[i] + 1
-            end_line = header_lines[i + 1]
-
-            section_lines = []
-            for line_num in range(start_line, end_line):
-                if line_num < len(lines):
-                    section_lines.append(lines[line_num])
-
-            content = '\n'.join(section_lines).strip()
-
-            if content:
+        # 1. 处理第一个标题之前的内容
+        if not headers or headers[0]['line'] > 0:
+            # 如果没有标题，或者第一个标题不在第0行
+            first_header_line = headers[0]['line'] if headers else len(lines)
+            content_before_first_header = '\n'.join(lines[0:first_header_line]).strip()
+            if content_before_first_header:
                 sections.append({
-                    'content': content,
+                    'content': content_before_first_header,
+                    'start_line': 0,
+                    'end_line': first_header_line - 1
+                })
+
+        # 2. 遍历所有标题，创建后续的 section
+        for i, header in enumerate(headers):
+            start_line = header['line']
+            # 结束行是下一个标题的行号，或者是文档末尾
+            end_line = headers[i + 1]['line'] if i + 1 < len(headers) else len(lines)
+
+            # 内容从标题行开始，到下一个标题行之前
+            section_content = '\n'.join(lines[start_line:end_line]).strip()
+
+            if section_content:
+                sections.append({
+                    'content': section_content,
                     'start_line': start_line,
                     'end_line': end_line - 1
                 })

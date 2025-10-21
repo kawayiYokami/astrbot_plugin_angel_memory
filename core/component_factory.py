@@ -224,7 +224,7 @@ class ComponentFactory:
         from ..core.file_monitor import FileMonitorService
 
         # 使用PluginContext中保存的base_data_dir（从main.py传入）
-        data_directory = str(self.plugin_context.get_index_dir())
+        data_directory = self.plugin_context.base_data_dir
 
         self.logger.info(f"📁 使用数据目录: {data_directory}")
         self.logger.info(f"📁 当前工作目录: {Path.cwd()}")
