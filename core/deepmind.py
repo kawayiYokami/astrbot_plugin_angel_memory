@@ -586,13 +586,20 @@ class DeepMind:
 
                 # 构建笔记上下文
                 if selected_notes:
-                    # 使用现有方法构建笔记上下文
+                    # 使用新的方法构建笔记上下文，避免模型误解标签为引用
                     note_context_parts = []
                     for note in selected_notes:
                         content = note.get('content', '').strip()
                         tags = note.get('tags', [])
-                        tags_str = f"[标签: {', '.join(tags)}]" if tags else ""
-                        note_context_parts.append(f"{tags_str}\n{content}")
+
+                        if tags:
+                            # 如果有标签，构建新的引言格式
+                            tags_str = ', '.join(tags)
+                            intro_str = f"关于({tags_str})的笔记："
+                            note_context_parts.append(f"{intro_str}\n{content}")
+                        else:
+                            # 如果没有标签，直接添加内容
+                            note_context_parts.append(content)
                     note_context = '\n\n---\n\n'.join(note_context_parts)
                     self.logger.debug(f"构建了包含 {len(selected_notes)} 条笔记的上下文，共 {current_tokens} tokens")
 
