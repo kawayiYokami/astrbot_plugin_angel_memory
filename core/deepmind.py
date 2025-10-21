@@ -18,7 +18,7 @@ from .utils.memory_id_resolver import MemoryIDResolver
 from ..llm_memory import CognitiveService
 from ..llm_memory.utils.json_parser import JsonParser
 from .session_memory import SessionMemoryManager
-from .utils import SmallModelPromptBuilder, MemoryInjector, MemoryIDResolver
+from .utils import SmallModelPromptBuilder, MemoryInjector
 from .utils.feedback_queue import get_feedback_queue
 from .utils.query_processor import get_query_processor
 from .config import MemoryConstants
@@ -855,7 +855,6 @@ class DeepMind:
                 return
 
             query = context_data['query']
-            user_list = context_data.get('user_list', [])
 
             # 获取原始记忆和笔记数据
             raw_memories_data = context_data.get('raw_memories', [])

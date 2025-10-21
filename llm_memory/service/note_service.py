@@ -542,19 +542,11 @@ class NoteService:
                 timings['main_embed'] = upsert_timings.get('embed', 0)
                 timings['main_db'] = upsert_timings.get('db_upsert', 0)
 
-            # 可选：批量更新BM25索引
-            if update_bm25 and self.vector_store._is_hybrid_search_enabled():
-                collection_name = self.main_collection.name
-                doc_ids = [note.id for note in notes]
-                contents = [note.content for note in notes]
-
-                success = self.vector_store.bm25_retriever.add_documents(
-                    collection_name, doc_ids, contents
-                )
-                if success:
-                    self.logger.debug(f"📝 BM25索引批量更新完成: {len(notes)} 个文档")
-                else:
-                    self.logger.warning("BM25索引批量更新失败")
+            # BM25 索引不再需要预先建立。
+            # 我们将在查询时动态创建临时的、无状态的 BM25 索引进行精排。
+            # 这彻底解决了大规模数据下的性能崩溃和状态管理问题。
+            if update_bm25:
+                self.logger.debug(f"📝 跳过已弃用的 BM25 索引批量更新: {len(notes)} 个文档")
 
             # === 批量处理副集合 ===
             t_prep_sub = time.time()
