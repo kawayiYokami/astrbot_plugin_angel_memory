@@ -228,9 +228,9 @@ class SmallModelPromptBuilder:
         Returns:
             完整的反思提示词字符串
         """
-        # 读取反思指南
-        import os
-        guide_path = os.path.join(os.path.dirname(__file__), '..', '..', 'llm_memory', 'prompts', 'memory_system_guide_async.md')
+        # 读取反思指南 - 使用 PathManager 统一管理路径
+        from ...llm_memory.utils.path_manager import PathManager
+        guide_path = PathManager.get_prompt_path()
         with open(guide_path, 'r', encoding='utf-8') as f:
             guide_content = f.read()
 

@@ -81,11 +81,13 @@ class CognitiveService:
             # 更新主存储路径
             self.vector_store.set_storage_path(new_path)
 
-            # 更新系统配置中的路径
-            from pathlib import Path
-            system_config.index_dir = Path(new_path).parent
+            # 更新系统配置中的路径 - 通过 PathManager 统一管理
+            # 注意：这里需要通过 PluginContext 获取 PathManager 实例
+            # 但当前方法没有 plugin_context 参数，所以暂时注释掉
+            # 如果需要更新路径，应该通过外部调用 PathManager 的方法
 
             self.logger.info(f"记忆系统存储路径已更新到: {new_path}")
+            self.logger.warning("注意：system_config.index_dir 未更新，请通过 PathManager 更新路径")
 
         except Exception as e:
             self.logger.error(f"更新存储路径失败: {e}")

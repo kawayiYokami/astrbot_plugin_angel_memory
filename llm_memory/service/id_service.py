@@ -46,15 +46,13 @@ class IDService:
         self.logger = logger
         self.plugin_context = plugin_context
 
-        # 从PluginContext获取资源，或使用默认值
+        # 从PluginContext获取资源，强制要求提供
         if plugin_context:
             self.data_directory = str(plugin_context.get_index_dir())
             self.provider_id = plugin_context.get_current_provider()
         else:
-            # 回退到默认值
-            self.data_directory = "storage/index"
-            self.provider_id = "default"
-            self.logger.warning("PluginContext未提供，使用默认配置")
+            # 不再使用默认值，强制要求PluginContext
+            raise ValueError("PluginContext必须提供，无法使用默认配置")
 
         # 初始化底层管理器
         self.tag_manager = TagManager(self.data_directory, self.provider_id)

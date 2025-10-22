@@ -19,7 +19,7 @@ except ImportError:
 class BackgroundInitializer:
     """后台初始化器 - 仅负责初始化逻辑，不拥有实例"""
 
-    def __init__(self, init_manager: InitializationManager, config: dict, plugin_context, data_directory: str = None):
+    def __init__(self, init_manager: InitializationManager, config: dict, plugin_context):
         """
         初始化后台初始化器
 
@@ -27,7 +27,6 @@ class BackgroundInitializer:
             init_manager: 初始化状态管理器（专注于状态管理）
             config: 插件配置（在主线程中获取）
             plugin_context: PluginContext实例（与主线程共享）
-            data_directory: 数据目录路径（由main传入，向后兼容）
         """
         self.init_manager = init_manager
         self.background_thread = None
@@ -35,11 +34,9 @@ class BackgroundInitializer:
         self.logger = logger
         self.config = config
         self.plugin_context = plugin_context
-        self.data_directory = data_directory
 
         self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
-        if self.data_directory:
-            self.logger.info(f"📋 后台初始化器接收数据目录: {self.data_directory}")
+        self.logger.info(f"📋 后台初始化器使用数据目录: {plugin_context.get_index_dir()}")
 
         # 直接使用主线程的PluginContext创建ComponentFactory
         self.component_factory = ComponentFactory(self.plugin_context, init_manager=self.init_manager)

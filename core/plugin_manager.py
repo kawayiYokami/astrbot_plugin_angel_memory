@@ -31,8 +31,7 @@ class PluginManager:
         self.init_manager = InitializationManager(self.context)
 
         # 后台初始化器（共享主线程的PluginContext）
-        data_directory = plugin_context.base_data_dir
-        self.background_initializer = BackgroundInitializer(self.init_manager, self.config, plugin_context, data_directory)
+        self.background_initializer = BackgroundInitializer(self.init_manager, self.config, plugin_context)
 
         # 主线程组件实例（将在初始化完成后由主插件设置）
         self.main_thread_components = {}

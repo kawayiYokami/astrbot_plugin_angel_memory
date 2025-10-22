@@ -112,13 +112,13 @@ class PathManager:
         """获取标签数据库路径"""
         if not self.is_provider_set():
             raise ValueError("供应商未设置，无法获取标签数据库路径")
-        return self.get_index_dir() / f"tag_{self._current_provider}.db"
+        return self.get_index_dir() / f"tag_index_{self._current_provider}.db"
 
     def get_file_db_path(self) -> Path:
         """获取文件数据库路径"""
         if not self.is_provider_set():
             raise ValueError("供应商未设置，无法获取文件数据库路径")
-        return self.get_index_dir() / f"file_{self._current_provider}.db"
+        return self.get_index_dir() / f"file_index_{self._current_provider}.db"
 
     def get_chroma_db_path(self) -> Path:
         """获取Chroma数据库路径"""
@@ -131,6 +131,12 @@ class PathManager:
         if not self.is_provider_set():
             raise ValueError("供应商未设置，无法获取日志目录")
         return self._base_dir / "logs"
+
+    def get_raw_dir(self) -> Path:
+        """获取 raw 目录"""
+        if not self.is_provider_set():
+            raise ValueError("供应商未设置，无法获取 raw 目录")
+        return self._base_dir.parent / "raw"
 
     # === 对外路径方法（仅提示词路径） ===
 
