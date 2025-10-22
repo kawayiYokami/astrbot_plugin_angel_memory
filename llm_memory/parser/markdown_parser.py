@@ -74,8 +74,8 @@ class MarkdownParser:
             # 标题标签
             header_tags = self._find_header_tags(section['start_line'], headers)
 
-            # 内容标签
-            content_tags = self._extract_content_tags(section['content'])
+            # 内容标签（暂时废止）
+            # content_tags = self._extract_content_tags(section['content'])
 
             # 合并所有标签
             section['tags'] = path_tags + header_tags + content_tags

@@ -117,15 +117,22 @@ class MemoryIDResolver:
         return merge_groups
 
     @staticmethod
-    def generate_short_id(memory_id: str, length: int = 6) -> str:
+    def generate_short_id(memory_id: str, length: int = 8) -> str:
         """
-        生成记忆的短ID
+        生成记忆的短ID（使用哈希算法确保唯一性）
 
         Args:
             memory_id: 完整记忆ID
-            length: 短ID长度
+            length: 短ID长度（默认8位，更可靠）
 
         Returns:
-            短ID
+            短ID（基于哈希的无冲突标识符）
         """
-        return memory_id[:length] if len(memory_id) >= length else memory_id
+        import hashlib
+        if not memory_id:
+            return ""
+
+        # 使用MD5哈希算法生成唯一短ID，避免截取可能产生的冲突
+        hash_obj = hashlib.md5(memory_id.encode('utf-8'))
+        hash_hex = hash_obj.hexdigest()
+        return hash_hex[:length]

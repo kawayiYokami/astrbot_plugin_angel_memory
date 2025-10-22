@@ -192,6 +192,10 @@ class AssociationManager:
         - 如需双向关联，需要调用两次（id1→id2 和 id2→id1）
         """
         try:
+            # 基本格式验证：快速过滤无效ID
+            if not id1 or not id2 or id1 == id2 or not isinstance(id1, str) or not isinstance(id2, str):
+                return
+
             # 获取源记忆
             cache = cache or {}
             snapshot = cache.get(id1)
@@ -199,9 +203,19 @@ class AssociationManager:
                 cache = self.preload_memories([id1], cache)
                 snapshot = cache.get(id1)
 
+            # 如果源记忆不存在，静默跳过（不再记录警告）
             if not snapshot:
-                self.logger.warning(f"记忆 {id1} 不存在，无法建立关联")
                 return
+
+            # 验证目标记忆是否存在
+            target_snapshot = cache.get(id2)
+            if not target_snapshot:
+                # 尝试单独加载目标记忆
+                target_cache = self.preload_memories([id2])
+                target_snapshot = target_cache.get(id2)
+                if not target_snapshot:
+                    # 目标记忆不存在，静默跳过
+                    return
 
             memory_obj = snapshot.memory
 
@@ -216,7 +230,8 @@ class AssociationManager:
             cache[id1] = snapshot
 
         except Exception as e:
-            self.logger.error(f"添加/更新关联 {id1} → {id2} 失败: {str(e)}")
+            # 静默处理任何异常，避免影响主流程
+            pass
 
     def get_associations_for_memory(self, memory_id: str, min_strength: int = 1) -> List[BaseMemory]:
         """
