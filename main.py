@@ -17,9 +17,46 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+# 导入版本检查相关模块
+import subprocess
+import sys
+import pkg_resources
+
 # 导入核心模块
 from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
+
+def ensure_chromadb_version():
+    """确保 chromadb 版本不低于 1.2.1"""
+    MINIMUM_CHROMADB_VERSION = "1.2.1"
+    logger.info("开始检查 chromadb 版本...")
+
+    try:
+        # 获取当前安装的 chromadb 版本
+        current_version = pkg_resources.get_distribution("chromadb").version
+        logger.info(f"当前安装的 chromadb 版本: {current_version}")
+
+        if pkg_resources.parse_version(current_version) < pkg_resources.parse_version(MINIMUM_CHROMADB_VERSION):
+            logger.warning(f"chromadb 版本过低 (当前: {current_version}, 最低要求: {MINIMUM_CHROMADB_VERSION})，将升级到最新版本。")
+            _upgrade_chromadb()
+        else:
+            logger.info(f"chromadb 版本检查通过 (版本: {current_version})")
+
+    except pkg_resources.DistributionNotFound:
+        logger.warning(f"chromadb 未安装，将安装最新版本（不低于 {MINIMUM_CHROMADB_VERSION}）。")
+        _upgrade_chromadb()
+    except Exception as e:
+        logger.error(f"检查 chromadb 版本时出错: {e}")
+
+def _upgrade_chromadb():
+    """升级 chromadb 到最新版本"""
+    try:
+        logger.info("正在升级 chromadb 到最新版本...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "chromadb"])
+        logger.info("chromadb 升级成功。强烈建议重启应用程序以加载新版本的库。")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"升级 chromadb 失败: {e}")
+        raise
 
 class AngelMemoryPlugin(Star):
     """天使记忆插件主类
@@ -38,6 +75,9 @@ class AngelMemoryPlugin(Star):
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
+
+        # 确保 chromadb 版本在初始化开始时检查
+        ensure_chromadb_version()
 
         # 使用 astrbot.api 的 logger
         self.logger = logger

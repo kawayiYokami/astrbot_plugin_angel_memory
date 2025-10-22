@@ -213,36 +213,6 @@ class FileMonitorService:
 
         return " | ".join(parts)
 
-    def _rebuild_bm25_index_once(self):
-        """所有文件处理完后，统一重建BM25索引（仅执行一次）"""
-        try:
-            # 检查是否启用混合检索
-            if not self.note_service.vector_store._is_hybrid_search_enabled():
-                self.logger.debug("混合检索未启用，跳过BM25索引重建")
-                return
-
-            self.logger.info("🔄 开始统一重建BM25索引...")
-            collection_name = self.note_service.main_collection.name
-
-            # 强制重新加载BM25索引
-            success = self.note_service.vector_store.force_reload_bm25_index(
-                collection_name,
-                self.note_service.main_collection
-            )
-
-            if success:
-                # 获取文档数量
-                doc_count = self.note_service.vector_store.bm25_retriever.get_document_count(collection_name)
-                self.logger.info(f"✅ BM25索引重建完成! 共索引 {doc_count} 个文档")
-            else:
-                self.logger.warning("⚠️ BM25索引重建失败")
-
-        except Exception as e:
-            self.logger.error(f"重建BM25索引时发生错误: {e}")
-            import traceback
-            self.logger.error(f"错误详情: {traceback.format_exc()}")
-
-
     # ===== 增量同步功能 =====
 
     def _incremental_sync(self):
@@ -314,10 +284,6 @@ class FileMonitorService:
 
             # 6. 计算执行时间
             execution_time = time.time() - start_time
-
-            # 7. 重建BM25索引（如果有变更）
-            if delete_count > 0 or add_count > 0:
-                self._rebuild_bm25_index_once()  # 改成同步
 
             self.logger.info(f"增量同步完成: 耗时 {execution_time:.2f}s, 删除 {delete_count} 个文件, 新增 {add_count} 个文件")
 
@@ -503,7 +469,7 @@ class FileMonitorService:
 
             # 3. 批量删除主集合（基于文件ID）
             self.note_service.main_collection.delete(where=where_clause)
-            self.logger.debug(f"已删除主集合的文档")
+            self.logger.debug(f"已从主集合中删除与 {len(file_ids)} 个文件相关的文档")
 
             # 4. 批量删除SQLite记录
             self._batch_delete_sqlite_records(file_ids)

@@ -430,8 +430,8 @@ class NoteService:
             if document_blocks:
                 t_store_submit = time.time()
 
-                # 直接同步存储（跳过批量队列，不更新BM25）
-                store_timings = self._store_notes_batch(document_blocks, update_bm25=False)
+                # 直接同步存储（跳过批量队列）
+                store_timings = self._store_notes_batch(document_blocks)
 
                 timings['store_total'] = (time.time() - t_store_submit) * 1000
 
@@ -487,7 +487,7 @@ class NoteService:
         extension = path.suffix.lower()
         return self.parser_manager.is_supported_extension(extension)
 
-    def _store_notes_batch(self, notes: List[NoteData], update_bm25: bool = False) -> dict:
+    def _store_notes_batch(self, notes: List[NoteData]) -> dict:
         """
         批量存储笔记到向量数据库（同步方法）
 
@@ -497,7 +497,6 @@ class NoteService:
 
         Args:
             notes: 笔记数据列表
-            update_bm25: 是否立即更新BM25索引（默认False，延迟更新以提升性能）
 
         Returns:
             计时字典
@@ -542,11 +541,6 @@ class NoteService:
                 timings['main_embed'] = upsert_timings.get('embed', 0)
                 timings['main_db'] = upsert_timings.get('db_upsert', 0)
 
-            # BM25 索引不再需要预先建立。
-            # 我们将在查询时动态创建临时的、无状态的 BM25 索引进行精排。
-            # 这彻底解决了大规模数据下的性能崩溃和状态管理问题。
-            if update_bm25:
-                self.logger.debug(f"📝 跳过已弃用的 BM25 索引批量更新: {len(notes)} 个文档")
 
             # === 批量处理副集合 ===
             t_prep_sub = time.time()

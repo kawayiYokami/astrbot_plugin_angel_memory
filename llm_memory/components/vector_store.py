@@ -1,7 +1,7 @@
 """
-向量存储组件。
+向量存储组件.
 
-封装所有与ChromaDB向量数据库的交互，通过依赖注入支持不同的嵌入提供商。
+封装所有与ChromaDB向量数据库的交互,通过依赖注入支持不同的嵌入提供商.
 """
 
 import chromadb
@@ -17,47 +17,52 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory
 from ..models.note_models import NoteData
 from ..config.system_config import system_config
-from .bm25_retriever import BM25Retriever
+from .bm25_retriever import rerank_with_bm25
+
 
 class VectorStore:
     """
-    向量存储类。
+    向量存储类.
 
-    负责记忆的向量化和存储，使用ChromaDB作为后端。
-    通过依赖注入接收嵌入提供商，实现解耦设计。
+    负责记忆的向量化和存储,使用ChromaDB作为后端.
+    通过依赖注入接收嵌入提供商,实现解耦设计.
     """
 
-    # 类级别的集合缓存，防止重复初始化
+    # 类级别的集合缓存,防止重复初始化
     _collection_cache = {}
     _cache_lock = None
 
     def __init__(
         self,
         embedding_provider: Optional[EmbeddingProvider] = None,
-        db_path: Optional[str] = None
+        db_path: Optional[str] = None,
     ):
         """
-        初始化向量存储。
+        初始化向量存储.
 
         Args:
-            embedding_provider: 嵌入提供商实例。如果未提供，则使用默认本地模型。
-            db_path: 数据库存储路径。如果未提供，则从系统配置中获取。
+            embedding_provider: 嵌入提供商实例.如果未提供,则使用默认本地模型.
+            db_path: 数据库存储路径.如果未提供,则从系统配置中获取.
         """
         self.logger = logger
 
-        # 初始化线程锁（仅首次创建时）
+        # 初始化线程锁(仅首次创建时)
         if VectorStore._cache_lock is None:
             import threading
+
             VectorStore._cache_lock = threading.RLock()
 
         # 初始化嵌入提供商
         if embedding_provider is None:
-            self.logger.info("未指定嵌入提供商，使用默认本地模型")
-            self.embedding_provider = LocalEmbeddingProvider(system_config.embedding_model)
+            self.logger.info("未指定嵌入提供商,使用默认本地模型")
+            self.embedding_provider = LocalEmbeddingProvider(
+                system_config.embedding_model
+            )
         else:
             self.embedding_provider = embedding_provider
             provider_info = embedding_provider.get_model_info()
@@ -76,28 +81,24 @@ class VectorStore:
 
         # 创建ChromaDB客户端
         self.client = chromadb.PersistentClient(path=self.db_path)
-        self.logger.info(f"已创建ChromaDB客户端，路径: {self.db_path}")
+        self.logger.info(f"已创建ChromaDB客户端,路径: {self.db_path}")
 
         # 实例变量
         self.collections = {}
 
-        # ChromaDB是线程安全的，不需要额外的线程锁
+        # ChromaDB是线程安全的,不需要额外的线程锁
         # 移除了 self._db_lock = threading.RLock()
 
-        # BM25检索器组件 - 延迟初始化
-        self.bm25_retriever: Optional[BM25Retriever] = None
-        self.hybrid_search_enabled = False  # ← 默认禁用BM25混合检索
-        self.vector_weight = 0.7
-        self.bm25_weight = 0.3
+        # 混合检索配置 - 强制启用
+        self.hybrid_search_enabled = True  # 强制启用混合检索以获得最佳体验
+        self.vector_weight = 0.6
+        self.bm25_weight = 0.4
 
-        # 初始化BM25检索器（仅在首次时）
-        self._lazy_init_bm25_retriever()
-
-        # 懒加载的标签管理器（用于基于 tag_ids 重建标签文本）
+        # 懒加载的标签管理器(用于基于 tag_ids 重建标签文本)
         self._tag_manager: Optional[TagManager] = None
 
     def _get_tag_manager(self) -> Optional[TagManager]:
-        """懒加载 TagManager（基于 PathManager 当前 provider 和索引目录）。"""
+        """懒加载 TagManager(基于 PathManager 当前 provider 和索引目录)."""
         if self._tag_manager is not None:
             return self._tag_manager
         try:
@@ -107,7 +108,7 @@ class VectorStore:
             self._tag_manager = TagManager(index_dir, provider_id)
             return self._tag_manager
         except Exception as e:
-            self.logger.warning(f"初始化 TagManager 失败，无法为BM25重建标签文本: {e}")
+            self.logger.warning(f"初始化 TagManager 失败,无法为BM25重建标签文本: {e}")
             return None
 
     def _post_initialization_verification(self):
@@ -119,7 +120,7 @@ class VectorStore:
                 return
 
             # 验证默认集合
-            if hasattr(self, 'collection') and self.collection:
+            if hasattr(self, "collection") and self.collection:
                 self._verify_collection_dimension(self.collection)
 
             # 验证所有已创建的集合
@@ -145,10 +146,7 @@ class VectorStore:
 
                 # 尝试用期望维度的向量查询
                 dummy_vector = [0.0] * expected_dimension
-                collection.query(
-                    query_embeddings=[dummy_vector],
-                    n_results=1
-                )
+                collection.query(query_embeddings=[dummy_vector], n_results=1)
 
         except Exception as e:
             if "dimension" in str(e).lower():
@@ -159,10 +157,10 @@ class VectorStore:
 
     def set_storage_path(self, new_path: str):
         """
-        设置新的存储路径并重新初始化ChromaDB客户端。
+        设置新的存储路径并重新初始化ChromaDB客户端.
 
-        注意：这将创建一个新的ChromaDB客户端，之前的数据仍在原路径中。
-        如果需要迁移数据，请手动复制数据库文件。
+        注意:这将创建一个新的ChromaDB客户端,之前的数据仍在原路径中.
+        如果需要迁移数据,请手动复制数据库文件.
 
         Args:
             new_path: 新的存储路径
@@ -177,7 +175,9 @@ class VectorStore:
             self.client = new_client
 
             # 重新创建集合
-            self.collection = self.client.get_or_create_collection(name=self.collection.name)
+            self.collection = self.client.get_or_create_collection(
+                name=self.collection.name
+            )
 
             self.logger.info(f"存储路径已成功切换到: {new_path}")
 
@@ -198,152 +198,143 @@ class VectorStore:
             ChromaDB集合对象
         """
         if collection_name not in self.collections:
-            self.collections[collection_name] = self.get_or_create_collection_with_dimension_check(collection_name)
+            self.collections[collection_name] = (
+                self.get_or_create_collection_with_dimension_check(collection_name)
+            )
         return self.collections[collection_name]
-
 
     def remember(self, collection, memory: BaseMemory):
         """
-        记住一条新记忆。
+        记住一条新记忆.
 
         Args:
-            collection: 目标 ChromaDB 集合。
-            memory: 要记住的记忆对象（任何 BaseMemory 的子类）
+            collection: 目标 ChromaDB 集合.
+            memory: 要记住的记忆对象(任何 BaseMemory 的子类)
         """
-        try:
-            # 获取用于向量化的语义核心文本
-            semantic_core = memory.get_semantic_core()
+        # 获取用于向量化的语义核心文本
+        semantic_core = memory.get_semantic_core()
 
-            # 获取记忆的内容文本（用于文档存储）
-            content_text = ""
-            if hasattr(memory, 'content'):
-                content_text = memory.content
-            elif hasattr(memory, 'definition'):
-                content_text = memory.definition
-            elif hasattr(memory, 'procedure'):
-                content_text = memory.procedure
-            else:
-                content_text = semantic_core  # 兜底方案
+        # 获取记忆的内容文本(用于文档存储)
+        content_text = ""
+        if hasattr(memory, "content"):
+            content_text = memory.content
+        elif hasattr(memory, "definition"):
+            content_text = memory.definition
+        elif hasattr(memory, "procedure"):
+            content_text = memory.procedure
+        else:
+            content_text = semantic_core  # 兜底方案
 
-            # 使用高级抽象方法存储记忆
-            self.upsert_documents(
-                collection=collection,
-                ids=memory.id,
-                embedding_texts=semantic_core,  # 用于向量化的语义核心
-                documents=content_text,  # 实际存储的内容
-                metadatas=memory.to_dict()
-            )
+        # 使用高级抽象方法存储记忆
+        self.upsert_documents(
+            collection=collection,
+            ids=memory.id,
+            embedding_texts=semantic_core,  # 用于向量化的语义核心
+            documents=content_text,  # 实际存储的内容
+            metadatas=memory.to_dict(),
+        )
 
-            # 记忆库不使用BM25索引（高频更新场景）
-            # 只有笔记库才在文件扫描完成后统一重建BM25索引
-            # 这样避免了每秒上百个记忆更新时的性能瓶颈
-
-        except Exception:
-            # 异常会被装饰器自动记录
-            raise  # 重新抛出异常
-
-    def recall(self, collection, query: str, limit: int = 10, where_filter: Optional[dict] = None, similarity_threshold: float = 0.6) -> List[BaseMemory]:
+    def recall(
+        self,
+        collection,
+        query: str,
+        limit: int = 10,
+        where_filter: Optional[dict] = None,
+        similarity_threshold: float = 0.6,
+    ) -> List[BaseMemory]:
         """
-        根据查询回忆相关记忆，支持复杂的元数据过滤（同步方法）。
+        根据查询回忆相关记忆,支持复杂的元数据过滤(同步方法).
 
         Args:
-            collection: 目标 ChromaDB 集合。
+            collection: 目标 ChromaDB 集合.
             query: 搜索查询字符串
             limit: 返回结果的最大数量
             where_filter: 可选的元数据过滤器字典 (e.g., {"memory_type": "EventMemory", "is_consolidated": False})
-            similarity_threshold: 相似度阈值（0.0-1.0），低于此阈值的结果将被过滤
+            similarity_threshold: 相似度阈值(0.0-1.0),低于此阈值的结果将被过滤
 
         Returns:
-            相关的记忆对象列表（BaseMemory 的子类）
+            相关的记忆对象列表(BaseMemory 的子类)
         """
-        try:
-            # 显式生成查询向量（同步调用）
-            query_embedding = self.embed_single_document(query)
+        # 显式生成查询向量(同步调用)
+        query_embedding = self.embed_single_document(query)
 
-            # 构建查询参数 - 获取更多候选结果用于阈值过滤
-            query_params = {
-                "query_embeddings": [query_embedding],
-                "n_results": limit * 3  # 获取3倍候选结果进行过滤
-            }
+        # 构建查询参数 - 获取更多候选结果用于阈值过滤
+        query_params = {
+            "query_embeddings": [query_embedding],
+            "n_results": limit * 3,  # 获取3倍候选结果进行过滤
+        }
 
-            # 如果提供了过滤器，则添加到查询参数
-            if where_filter:
-                if len(where_filter) == 1:
-                    query_params["where"] = where_filter
-                else:
-                    query_params["where"] = {"$and": [{k: v} for k, v in where_filter.items()]}
-
-            # 在ChromaDB中进行向量相似度搜索（数据库内部处理并发）
-            results = collection.query(**query_params)
-
-            # 将结果转换为记忆对象，并计算相似度分数进行过滤
-            vector_results = []
-            if results and results['metadatas'] and len(results['metadatas']) > 0:
-                distances = results.get('distances', [[]])[0]
-                metadatas = results['metadatas'][0]
-
-                for idx, meta in enumerate(metadatas):
-                    if meta and idx < len(distances):
-                        # 计算相似度分数
-                        distance = distances[idx]
-                        similarity = max(0.0, 1.0 - (distance / 2.0))
-
-                        # 应用相似度阈值过滤
-                        if similarity >= similarity_threshold:
-                            memory = BaseMemory.from_dict(meta)
-                            memory.similarity = similarity  # 设置相似度属性
-                            vector_results.append(memory)
-
-                            # 只记录前3个结果的调试信息
-                            if len(vector_results) <= 3:
-                                self.logger.debug(f"记忆{len(vector_results)-1}: distance={distance:.4f}, similarity={similarity:.4f}")
-
-                        # 达到所需数量时停止
-                        if len(vector_results) >= limit:
-                            break
-
-            # 混合检索（仅笔记系统）
-            collection_name = collection.name
-            is_note_collection = collection_name.startswith('notes_')
-
-            if is_note_collection and self._is_hybrid_search_enabled():
-                # 如果集合还没有同步到BM25，先同步
-                if self.bm25_retriever.get_document_count(collection_name) == 0:
-                    self._sync_collection_to_bm25(collection_name, collection)
-
-                # BM25检索
-                bm25_results = self.bm25_retriever.search(collection_name, query, limit)
-
-                # 融合结果
-                final_results = self._merge_results(vector_results, bm25_results, collection)
+        # 如果提供了过滤器,则添加到查询参数
+        if where_filter:
+            if len(where_filter) == 1:
+                query_params["where"] = where_filter
             else:
-                final_results = vector_results
+                query_params["where"] = {
+                    "$and": [{k: v} for k, v in where_filter.items()]
+                }
 
-            return final_results
+        # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
+        results = collection.query(**query_params)
 
-        except Exception:
-            raise
+        # 将结果转换为记忆对象,并计算相似度分数进行过滤
+        vector_results = []
+        if results and results["metadatas"] and len(results["metadatas"]) > 0:
+            distances = results.get("distances", [[]])[0]
+            metadatas = results["metadatas"][0]
+
+            for idx, meta in enumerate(metadatas):
+                if meta and idx < len(distances):
+                    # 计算相似度分数
+                    distance = distances[idx]
+                    similarity = max(0.0, 1.0 - (distance / 2.0))
+
+                    # 应用相似度阈值过滤
+                    if similarity >= similarity_threshold:
+                        memory = BaseMemory.from_dict(meta)
+                        memory.similarity = similarity  # 设置相似度属性
+                        vector_results.append(memory)
+
+                        # 只记录前3个结果的调试信息
+                        if len(vector_results) <= 3:
+                            self.logger.debug(
+                                f"记忆{len(vector_results)-1}: distance={distance:.4f}, similarity={similarity:.4f}"
+                            )
+
+                    # 达到所需数量时停止
+                    if len(vector_results) >= limit:
+                        break
+
+        # 混合检索:为记忆系统提供BM25精排(强制启用)
+        final_results = self._rerank_with_bm25(
+            query, vector_results, collection, limit
+        )
+
+        return final_results
 
     def update_memory(self, collection, memory_id: str, updates: dict):
         """
-        更新记忆的元数据。
+        更新记忆的元数据.
 
         Args:
-            collection: 目标 ChromaDB 集合。
+            collection: 目标 ChromaDB 集合.
             memory_id: 要更新的记忆ID
             updates: 要更新的字段字典 (e.g., {"is_consolidated": True, "strength": 5})
         """
         try:
             # 获取当前记忆的完整信息
             current_data = collection.get(ids=[memory_id])
-            if not current_data or not current_data['metadatas']:
+            if not current_data or not current_data["metadatas"]:
                 raise ValueError(f"Memory with id {memory_id} not found")
 
-            current_meta = current_data['metadatas'][0]
-            current_document = current_data['documents'][0] if current_data['documents'] else ""
+            current_meta = current_data["metadatas"][0]
+            current_document = (
+                current_data["documents"][0] if current_data["documents"] else ""
+            )
 
             # 从元数据中重新构造语义核心用于向量化
-            semantic_core = current_meta.get('judgment', '') + ' ' + current_meta.get('tags', '')
+            semantic_core = (
+                current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
+            )
 
             # 应用更新
             current_meta.update(updates)
@@ -354,19 +345,21 @@ class VectorStore:
                 ids=memory_id,
                 embedding_texts=semantic_core,
                 documents=current_document,
-                metadatas=current_meta
+                metadatas=current_meta,
             )
 
         except Exception as e:
             self.logger.error(f"更新记忆 {memory_id} 失败: {str(e)}")
             raise
 
-    def delete_memories(self, collection, where_filter: dict, exclude_associations: bool = False):
+    def delete_memories(
+        self, collection, where_filter: dict, exclude_associations: bool = False
+    ):
         """
-        根据条件删除记忆。
+        根据条件删除记忆.
 
         Args:
-            collection: 目标 ChromaDB 集合。
+            collection: 目标 ChromaDB 集合.
             where_filter: 删除条件 (e.g., {"strength": {"$lt": 2}})
             exclude_associations: 是否排除关联记忆不删除
         """
@@ -378,30 +371,35 @@ class VectorStore:
             else:
                 base_filter = where_filter
 
-            # 如果需要排除关联，添加额外的条件
+            # 如果需要排除关联,添加额外的条件
             if exclude_associations:
                 if "$and" in base_filter:
                     base_filter["$and"].append({"memory_type": {"$ne": "Association"}})
                 else:
-                    base_filter = {"$and": [base_filter, {"memory_type": {"$ne": "Association"}}]}
+                    base_filter = {
+                        "$and": [base_filter, {"memory_type": {"$ne": "Association"}}]
+                    }
 
             # 获取符合条件的记忆ID
             results = collection.get(where=base_filter)
-            ids_to_delete = results['ids']
+            ids_to_delete = results["ids"]
 
             if ids_to_delete:
                 collection.delete(ids=ids_to_delete)
-                self.logger.info(f"Deleted {len(ids_to_delete)} memories with filter: {where_filter}")
+                self.logger.info(
+                    f"Deleted {len(ids_to_delete)} memories with filter: {where_filter}"
+                )
 
         except Exception as e:
             self.logger.error(f"Failed to delete memories: {str(e)}")
             raise
+
     def clear_collection(self, collection):
-        """清空指定集合。"""
+        """清空指定集合."""
         try:
             collection_name = collection.name
             self.client.delete_collection(collection_name)
-            # 重新创建集合，确保 embedding_function 等元数据被保留
+            # 重新创建集合,确保 embedding_function 等元数据被保留
             self.get_or_create_collection_with_dimension_check(name=collection_name)
         except Exception as e:
             self.logger.error(f"清空所有记忆失败: {e}")
@@ -415,76 +413,83 @@ class VectorStore:
         embedding_texts,
         documents=None,
         metadatas=None,
-        _return_timings=False
+        _return_timings=False,
     ):
         """
-        高级 upsert 方法（同步接口）：从文本生成向量并存储到向量数据库。
+        高级 upsert 方法(同步接口):从文本生成向量并存储到向量数据库.
 
-        这是向量数据库的通用方法，支持不同的使用场景：
-        - 记忆系统：documents 参数可选，所有数据可存储在 metadatas 中
-        - 笔记系统：documents 参数可选，正文可存储在 metadatas['content'] 中
-        - 其他系统：可灵活选择使用 documents 字段
+        这是向量数据库的通用方法,支持不同的使用场景:
+        - 记忆系统:documents 参数可选,所有数据可存储在 metadatas 中
+        - 笔记系统:documents 参数可选,正文可存储在 metadatas['content'] 中
+        - 其他系统:可灵活选择使用 documents 字段
 
         Args:
             collection: 目标 ChromaDB 集合
             ids: 文档ID或ID列表
             embedding_texts: 用于生成向量的文本或文本列表
-            documents: 可选的文档内容或列表（默认 None）
+            documents: 可选的文档内容或列表(默认 None)
             metadatas: 与文档关联的元数据或元数据列表
-            _return_timings: 内部参数，是否返回计时信息
+            _return_timings: 内部参数,是否返回计时信息
         """
         import time
+
         timings = {} if _return_timings else None
 
         # 统一处理输入为列表
         ids_list = [ids] if isinstance(ids, str) else ids
-        embedding_texts_list = [embedding_texts] if isinstance(embedding_texts, str) else embedding_texts
-        documents_list = [documents] if isinstance(documents, str) else documents if documents is not None else None
+        embedding_texts_list = (
+            [embedding_texts] if isinstance(embedding_texts, str) else embedding_texts
+        )
+        documents_list = (
+            [documents]
+            if isinstance(documents, str)
+            else documents if documents is not None else None
+        )
         metadatas_list = [metadatas] if isinstance(metadatas, dict) else metadatas
 
         if not ids_list:
             return timings if _return_timings else None
 
-        # 1. 使用嵌入提供商从源文本生成 embeddings（同步调用）
+        # 1. 使用嵌入提供商从源文本生成 embeddings(同步调用)
         t_embed = time.time()
         embeddings = self.embed_documents(embedding_texts_list)
         if _return_timings:
-            timings['embed'] = (time.time() - t_embed) * 1000
+            timings["embed"] = (time.time() - t_embed) * 1000
 
         # 2. 调用底层的 upsert
         upsert_params = {
-            'ids': ids_list,
-            'embeddings': embeddings,
+            "ids": ids_list,
+            "embeddings": embeddings,
         }
 
         # 只在 documents 不为 None 时才添加到 upsert 参数中
         if documents_list is not None:
-            upsert_params['documents'] = documents_list
+            upsert_params["documents"] = documents_list
 
         if metadatas_list is not None:
-            upsert_params['metadatas'] = metadatas_list
+            upsert_params["metadatas"] = metadatas_list
 
-        # 直接upsert（数据库内部处理并发）
+        # 直接upsert(数据库内部处理并发)
         t_db = time.time()
         collection.upsert(**upsert_params)
         if _return_timings:
-            timings['db_upsert'] = (time.time() - t_db) * 1000
+            timings["db_upsert"] = (time.time() - t_db) * 1000
 
         return timings if _return_timings else None
 
     def embed_documents(self, documents: List[str]) -> List[List[float]]:
         """
-        使用嵌入提供商为文档列表生成向量嵌入（同步方法，支持429错误重试）。
+        使用嵌入提供商为文档列表生成向量嵌入(同步方法,支持429错误重试).
 
         Args:
-            documents: 需要进行向量化的文档字符串列表。
+            documents: 需要进行向量化的文档字符串列表.
 
         Returns:
-            一个由向量（浮点数列表）组成的列表。
+            一个由向量(浮点数列表)组成的列表.
 
         Raises:
             RateLimitExceededError: 当重试3次后仍然遇到429错误时抛出
-            Exception: 其他错误直接抛出，不重试
+            Exception: 其他错误直接抛出,不重试
         """
         if not documents:
             return []
@@ -492,67 +497,72 @@ class VectorStore:
         # 导入自定义异常
         from ..exceptions import RateLimitExceededError
 
-        # 重试配置（仅针对429错误）
+        # 重试配置(仅针对429错误)
         max_retries = 3
-        base_wait_time = 60  # 基础等待时间（秒）
+        base_wait_time = 60  # 基础等待时间(秒)
 
         for attempt in range(max_retries):
             try:
-                # 使用嵌入提供商生成向量（同步调用）
+                # 使用嵌入提供商生成向量(同步调用)
                 embeddings = self.embedding_provider.embed_documents_sync(documents)
                 return embeddings
 
             except Exception as e:
                 error_msg = str(e)
 
-                # 只对429错误进行重试，其他错误直接抛出
-                is_rate_limit = "429" in error_msg or "rate limit" in error_msg.lower() or "TPM limit" in error_msg
+                # 只对429错误进行重试,其他错误直接抛出
+                is_rate_limit = (
+                    "429" in error_msg
+                    or "rate limit" in error_msg.lower()
+                    or "TPM limit" in error_msg
+                )
 
                 if not is_rate_limit:
-                    # 非429错误，直接抛出，不重试
+                    # 非429错误,直接抛出,不重试
                     self.logger.error(f"❌ 向量化失败: {error_msg}")
                     raise
 
                 # 429错误的重试逻辑
                 if attempt < max_retries - 1:
-                    # 指数退避：60s, 120s, 240s
-                    wait_time = base_wait_time * (2 ** attempt)
+                    # 指数退避:60s, 120s, 240s
+                    wait_time = base_wait_time * (2**attempt)
 
-                    # 添加随机抖动（±10%）避免同时重试
+                    # 添加随机抖动(±10%)避免同时重试
                     import random
                     import time
+
                     jitter = random.uniform(-0.1, 0.1) * wait_time
                     final_wait = int(wait_time + jitter)
 
                     self.logger.warning(
-                        f"⏱️  遇到速率限制 (429错误)，"
+                        f"⏱️  遇到速率限制 (429错误),"
                         f"等待 {final_wait} 秒后重试 "
                         f"(第 {attempt + 1}/{max_retries} 次)"
                     )
 
                     time.sleep(final_wait)
                 else:
-                    # 达到最大重试次数，抛出自定义异常
+                    # 达到最大重试次数,抛出自定义异常
                     self.logger.error(
-                        f"❌ 向量化失败：达到最大重试次数 ({max_retries})，"
+                        f"❌ 向量化失败:达到最大重试次数 ({max_retries}),"
                         f"速率限制错误: {error_msg}"
                     )
                     raise RateLimitExceededError(
                         f"速率限制重试失败 (尝试了{max_retries}次): {error_msg}",
-                        attempts=max_retries
+                        attempts=max_retries,
                     ) from e
 
         # 理论上不会到这里
-        raise Exception("向量化失败：未知错误")
+        raise Exception("向量化失败:未知错误")
 
     def embed_single_document(self, document: str) -> List[float]:
         """
-        为单个文档生成向量嵌入（同步方法）。
+        为单个文档生成向量嵌入(同步方法).
         """
         return self.embed_documents([document])[0]
 
     def clear_all(self):
-        """清空所有记忆。"""
+        """清空所有记忆."""
         try:
             collection_name = self.collection.name
             self.client.delete_collection(collection_name)
@@ -561,11 +571,10 @@ class VectorStore:
             self.logger.error(f"清空所有记忆失败: {e}")
             raise
 
-
     def get_or_create_collection_with_dimension_check(self, name: str):
         """
-        获取或创建集合，并检查维度是否匹配
-        完善的集合缓存机制，防止重复初始化
+        获取或创建集合,并检查维度是否匹配
+        完善的集合缓存机制,防止重复初始化
 
         Args:
             name: 集合名称
@@ -573,9 +582,9 @@ class VectorStore:
         Returns:
             ChromaDB集合对象
         """
-        # 构建更精确的缓存键，包含路径、模型、提供商信息
+        # 构建更精确的缓存键,包含路径、模型、提供商信息
         provider_info = self.embedding_provider.get_model_info()
-        model_name = provider_info.get('model_name', 'default')
+        model_name = provider_info.get("model_name", "default")
         provider_type = self.embedding_provider.get_provider_type()
 
         # 使用绝对路径确保唯一性
@@ -592,8 +601,8 @@ class VectorStore:
                     self.logger.debug(f"✅ 从缓存获取集合: {name}")
                     return cached_collection
                 except Exception as e:
-                    # 缓存集合无效，删除缓存项
-                    self.logger.warning(f"⚠️ 缓存集合无效，重新创建: {name}, 错误: {e}")
+                    # 缓存集合无效,删除缓存项
+                    self.logger.warning(f"⚠️ 缓存集合无效,重新创建: {name}, 错误: {e}")
                     del VectorStore._collection_cache[cache_key]
 
         # 获取集合前先记录详细信息
@@ -604,8 +613,10 @@ class VectorStore:
         # 根据嵌入提供商类型创建不同的嵌入函数
         if self.embedding_provider.get_provider_type() == "local":
             # 本地模型使用SentenceTransformerEmbeddingFunction
-            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=self.embedding_provider.model_name
+            embedding_function = (
+                embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=self.embedding_provider.model_name
+                )
             )
         else:
             # API提供商使用自定义的嵌入函数
@@ -614,38 +625,39 @@ class VectorStore:
                     self.provider = provider
 
                 def __call__(self, input_texts):
-                    # 这里不能直接使用await，需要在异步环境中调用
+                    # 这里不能直接使用await,需要在异步环境中调用
                     # 实际使用时会通过其他方式处理
                     raise NotImplementedError("API提供商需要通过异步方式调用")
 
             embedding_function = None  # API提供商暂时不设置嵌入函数
 
         collection = self.client.get_or_create_collection(
-            name=name,
-            embedding_function=embedding_function
+            name=name, embedding_function=embedding_function
         )
 
-        # 检查集合维度（仅对本地模型）
+        # 检查集合维度(仅对本地模型)
         if self.embedding_provider.get_provider_type() == "local":
             self._verify_collection_dimension(collection)
 
         # 缓存集合
         with VectorStore._cache_lock:
             VectorStore._collection_cache[cache_key] = collection
-            self.logger.debug(f"✅ 集合已缓存: {name}, 缓存大小: {len(VectorStore._collection_cache)}")
+            self.logger.debug(
+                f"✅ 集合已缓存: {name}, 缓存大小: {len(VectorStore._collection_cache)}"
+            )
 
         return collection
 
     @classmethod
     def clear_collection_cache(cls):
         """
-        清空集合缓存（用于测试或强制重建）
+        清空集合缓存(用于测试或强制重建)
         """
         with cls._cache_lock:
             cache_size = len(cls._collection_cache)
             cls._collection_cache.clear()
-            if hasattr(cls, 'logger'):
-                cls.logger.info(f"✅ 集合缓存已清空，清理了 {cache_size} 个缓存项")
+            if hasattr(cls, "logger"):
+                cls.logger.info(f"✅ 集合缓存已清空,清理了 {cache_size} 个缓存项")
 
     @classmethod
     def get_cache_statistics(cls):
@@ -665,18 +677,18 @@ class VectorStore:
             models = set()
 
             for key in cache_keys:
-                parts = key.split(':')
+                parts = key.split(":")
                 if len(parts) >= 4:
                     db_paths.add(parts[0])
                     collections.add(parts[1])
                     models.add(parts[2])
 
             return {
-                'cache_size': cache_size,
-                'unique_databases': len(db_paths),
-                'unique_collections': len(collections),
-                'unique_models': len(models),
-                'cache_keys': cache_keys
+                "cache_size": cache_size,
+                "unique_databases": len(db_paths),
+                "unique_collections": len(collections),
+                "unique_models": len(models),
+                "cache_keys": cache_keys,
             }
 
     @classmethod
@@ -685,63 +697,121 @@ class VectorStore:
         根据模式失效缓存项
 
         Args:
-            pattern: 模式字符串，支持部分匹配
+            pattern: 模式字符串,支持部分匹配
         """
         with cls._cache_lock:
-            keys_to_remove = [key for key in cls._collection_cache.keys() if pattern in key]
+            keys_to_remove = [
+                key for key in cls._collection_cache.keys() if pattern in key
+            ]
 
             for key in keys_to_remove:
                 del cls._collection_cache[key]
 
-            if hasattr(cls, 'logger'):
-                cls.logger.info(f"✅ 失效了 {len(keys_to_remove)} 个匹配模式 '{pattern}' 的缓存项")
+            if hasattr(cls, "logger"):
+                cls.logger.info(
+                    f"✅ 失效了 {len(keys_to_remove)} 个匹配模式 '{pattern}' 的缓存项"
+                )
 
     # ===== BM25混合检索集成方法 =====
 
-    def _lazy_init_bm25_retriever(self) -> bool:
-        """延迟初始化BM25检索器（仅在首次需要时）"""
-        if self.bm25_retriever is not None:
-            return True  # 已初始化
+    def _rerank_with_bm25(
+        self, query: str, vector_results: List[BaseMemory], collection, limit: int
+    ) -> List[BaseMemory]:
+        """
+        使用无状态BM25对向量检索结果进行精排.
+
+        Args:
+            query: 查询文本
+            vector_results: 向量检索结果
+            collection: ChromaDB集合
+            limit: 返回结果数量限制
+
+        Returns:
+            精排后的记忆列表
+        """
+        if not vector_results:
+            return []
 
         try:
-            self.bm25_retriever = BM25Retriever(k1=1.2, b=0.75)
-            if self.bm25_retriever.is_available():
-                self.logger.info("BM25检索器初始化成功，混合检索已启用")
-                return True
-            else:
-                self.logger.warning("rank_bm25库未安装，将仅使用向量检索")
-                self.hybrid_search_enabled = False
-                self.bm25_retriever = None
-                return False
+            # 准备候选文档数据
+            candidates = []
+            for memory in vector_results:
+                # 获取记忆的语义核心文本用于BM25精排
+                content = memory.get_semantic_core()
+                if content:
+                    candidates.append({"id": memory.id, "content": content})
+
+            if not candidates:
+                return vector_results
+
+            # 使用无状态BM25函数精排
+            bm25_results = rerank_with_bm25(query, candidates, limit)
+
+            # 融合结果
+            return self._merge_results(vector_results, bm25_results, collection)
+
         except Exception as e:
-            self.logger.error(f"BM25检索器初始化失败: {e}")
-            self.bm25_retriever = None
-            return False
+            self.logger.error(f"BM25精排失败: {e}")
+            return vector_results
 
-    def _init_bm25_retriever(self) -> bool:
-        """保持向后兼容性的BM25检索器初始化方法"""
-        return self._lazy_init_bm25_retriever()
+    def _rerank_notes_with_bm25(
+        self, query: str, vector_results: List[NoteData], collection, limit: int
+    ) -> List[NoteData]:
+        """
+        使用无状态BM25对笔记向量检索结果进行精排.
 
-    def _is_hybrid_search_enabled(self) -> bool:
-        """检查是否启用混合检索"""
-        # 确保BM25检索器已初始化
-        self._lazy_init_bm25_retriever()
-        return (self.hybrid_search_enabled and
-                self.bm25_retriever is not None and
-                self.bm25_retriever.is_available() and
-                (self.vector_weight > 0 and self.bm25_weight > 0))
+        Args:
+            query: 查询文本
+            vector_results: 向量检索的笔记结果
+            collection: ChromaDB集合
+            limit: 返回结果数量限制
 
-    def _merge_results(self, vector_results: List[BaseMemory], bm25_results: List[Tuple[str, float]], collection) -> List[BaseMemory]:
+        Returns:
+            精排后的笔记列表
+        """
+        if not vector_results:
+            return []
+
+        try:
+            # 准备候选文档数据
+            candidates = []
+            for note in vector_results:
+                # 获取笔记的embedding文本用于BM25精排
+                # 注意:NoteData.get_embedding_text()需要tag_names,但这里我们使用content作为fallback
+                content = note.content
+                if content:
+                    candidates.append({"id": note.id, "content": content})
+
+            if not candidates:
+                return vector_results
+
+            # 使用无状态BM25函数精排
+            bm25_results = rerank_with_bm25(query, candidates, limit)
+
+            # 融合结果
+            return self._merge_note_results(vector_results, bm25_results, collection)
+
+        except Exception as e:
+            self.logger.error(f"笔记BM25精排失败: {e}")
+            return vector_results
+
+    def _merge_results(
+        self,
+        vector_results: List[BaseMemory],
+        bm25_results: List[Tuple[str, float]],
+        collection,
+    ) -> List[BaseMemory]:
         """融合向量检索和BM25检索结果"""
         if not vector_results and not bm25_results:
             return []
 
-        if not bm25_results or not self._is_hybrid_search_enabled():
-            return vector_results
+        # 强制启用混合检索,直接进行结果融合
 
         if not vector_results:
-            # 只有BM25结果，需要根据doc_id查找BaseMemory对象
-            return self._get_memories_by_ids(collection, [doc_id for doc_id, _ in bm25_results])
+            # 只有BM25结果,需要根据doc_id查找BaseMemory对象
+            return self._get_memories_by_ids(
+                collection, [doc_id for doc_id, _ in bm25_results]
+            )
 
         # 创建文档ID到BaseMemory对象的映射
         vector_memories_map = {}
@@ -751,7 +821,7 @@ class VectorStore:
         # 标准化分数到[0,1]区间
         vector_scores = {}
         if vector_results:
-            # 向量检索结果按相似度排序，分配递减分数
+            # 向量检索结果按相似度排序,分配递减分数
             for i, memory in enumerate(vector_results):
                 vector_scores[memory.id] = 1.0 - (i * 0.1)  # 简单线性递减
 
@@ -770,7 +840,9 @@ class VectorStore:
             combined_scores[doc_id] = self.vector_weight * score
 
         for doc_id, score in bm25_scores.items():
-            combined_scores[doc_id] = combined_scores.get(doc_id, 0) + self.bm25_weight * score
+            combined_scores[doc_id] = (
+                combined_scores.get(doc_id, 0) + self.bm25_weight * score
+            )
 
         # 添加纯向量检索中存在但BM25中没有的结果
         for doc_id in vector_memories_map:
@@ -778,16 +850,26 @@ class VectorStore:
                 combined_scores[doc_id] = self.vector_weight
 
         # 按合并分数排序
-        sorted_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
+        sorted_results = sorted(
+            combined_scores.items(), key=lambda x: x[1], reverse=True
+        )
 
         # 返回排序后的BaseMemory对象
         final_memories = []
-        memory_ids_to_get = [doc_id for doc_id, _ in sorted_results[:len(vector_results)]]
+        memory_ids_to_get = [
+            doc_id for doc_id, _ in sorted_results[: len(vector_results)]
+        ]
 
-        # 需要从数据库完整获取这些记忆（因为BM25结果中没有完整的记忆对象）
+        # 需要从数据库完整获取这些记忆(因为BM25结果中没有完整的记忆对象)
         if len(memory_ids_to_get) > len(vector_memories_map):
-            additional_memories = self._get_memories_by_ids(collection,
-                [doc_id for doc_id in memory_ids_to_get if doc_id not in vector_memories_map])
+            additional_memories = self._get_memories_by_ids(
+                collection,
+                [
+                    doc_id
+                    for doc_id in memory_ids_to_get
+                    if doc_id not in vector_memories_map
+                ],
+            )
             # 合并结果
             all_memories_map = vector_memories_map.copy()
             for memory in additional_memories:
@@ -795,7 +877,7 @@ class VectorStore:
         else:
             all_memories_map = vector_memories_map
 
-        for doc_id, _ in sorted_results[:len(vector_results)]:
+        for doc_id, _ in sorted_results[: len(vector_results)]:
             if doc_id in all_memories_map:
                 final_memories.append(all_memories_map[doc_id])
 
@@ -809,11 +891,11 @@ class VectorStore:
 
             # 使用ChromaDB的get方法获取指定ID的文档
             retrieved_docs = collection.get(ids=doc_ids)
-            if not retrieved_docs or not retrieved_docs['metadatas']:
+            if not retrieved_docs or not retrieved_docs["metadatas"]:
                 return []
 
             memories = []
-            for meta in retrieved_docs['metadatas']:
+            for meta in retrieved_docs["metadatas"]:
                 if meta:
                     memories.append(BaseMemory.from_dict(meta))
 
@@ -823,208 +905,19 @@ class VectorStore:
             self.logger.error(f"根据ID获取记忆失败: {e}")
             return []
 
-    def _sync_collection_to_bm25(self, collection_name: str, collection) -> bool:
-        """同步ChromaDB集合数据到BM25索引（副集合按需用 tag_ids 重建标签文本）。"""
-        if not self._is_hybrid_search_enabled():
-            return True
-
-        try:
-            # 获取集合中的所有数据
-            all_data = collection.get()
-            if not all_data:
-                return True
-
-            # 数据拆解
-            doc_ids = all_data.get('ids') or []
-            documents = all_data.get('documents') or []  # 兼容旧数据，尽量不依赖
-            metadatas = all_data.get('metadatas') or []
-
-            pairs = []  # (id, text)
-            is_sub = (collection_name == system_config.notes_sub_collection_name)
-
-            if not is_sub:
-                # 主集合：直接使用 metadata['content']；如缺失再回退 documents（兼容旧数据）
-                for idx, doc_id in enumerate(doc_ids):
-                    text = None
-                    if idx < len(metadatas) and metadatas[idx]:
-                        text = (metadatas[idx] or {}).get('content')
-                    if not text and idx < len(documents) and documents[idx]:
-                        text = documents[idx]
-                    if text:
-                        pairs.append((doc_id, text))
-            else:
-                # 副集合：忽略 documents；优先 metadata.tags_text；否则根据主集合的 tag_ids 重建
-                import json
-                # 获取主集合实例（用于查 tag_ids）
-                try:
-                    main_collection = self.get_or_create_collection_with_dimension_check(system_config.notes_main_collection_name)
-                except Exception:
-                    main_collection = None
-
-                tm = self._get_tag_manager()
-
-                for idx, doc_id in enumerate(doc_ids):
-                    text = None
-                    meta = (metadatas[idx] or {}) if idx < len(metadatas) else {}
-                    # 优先使用已存在的 tags_text（兼容旧数据）
-                    text = meta.get('tags_text') if isinstance(meta, dict) else None
-
-                    if not text and main_collection is not None:
-                        try:
-                            main_data = main_collection.get(ids=[doc_id])
-                            main_meta = (main_data.get('metadatas') or [None])[0] if main_data else None
-                            tag_ids_val = (main_meta or {}).get('tag_ids')
-                            if tag_ids_val is not None and tm is not None:
-                                if isinstance(tag_ids_val, str):
-                                    try:
-                                        tag_ids = json.loads(tag_ids_val)
-                                    except Exception:
-                                        tag_ids = []
-                                else:
-                                    tag_ids = tag_ids_val or []
-                                tag_names = tm.get_tag_names(tag_ids) if tag_ids else []
-                                if tag_names:
-                                    text = " ".join(tag_names)
-                        except Exception:
-                            text = None
-
-                    if text:
-                        pairs.append((doc_id, text))
-
-            if not pairs:
-                return True
-
-            valid_ids, valid_texts = zip(*pairs)
-            return self.bm25_retriever.add_documents(collection_name, list(valid_ids), list(valid_texts))
-
-        except Exception as e:
-            self.logger.error(f"同步集合到BM25失败 {collection_name}: {e}")
-            return False
-
     # ===== 混合检索配置方法 =====
-
-    def enable_hybrid_search(self, vector_weight: float = 0.7, bm25_weight: float = 0.3) -> bool:
-        """
-        启用混合检索功能。
-
-        Args:
-            vector_weight: 向量检索权重 (0.0-1.0)
-            bm25_weight: BM25检索权重 (0.0-1.0)
-
-        Returns:
-            是否成功启用
-        """
-        if not (0.0 <= vector_weight <= 1.0 and 0.0 <= bm25_weight <= 1.0):
-            self.logger.error("权重参数必须在0.0到1.0之间")
-            return False
-
-        # 确保BM25检索器已初始化
-        if not self._lazy_init_bm25_retriever():
-            self.logger.warning("BM25组件不可用，无法启用混合检索")
-            return False
-
-        # 归一化权重
-        total_weight = vector_weight + bm25_weight
-        if total_weight > 0:
-            self.vector_weight = vector_weight / total_weight
-            self.bm25_weight = bm25_weight / total_weight
-
-        self.hybrid_search_enabled = True
-        self.logger.info(f"混合检索已启用 - 向量权重: {self.vector_weight:.2f}, BM25权重: {self.bm25_weight:.2f}")
-        return True
-
-    def disable_hybrid_search(self):
-        """禁用混合检索，仅使用向量检索。"""
-        self.hybrid_search_enabled = False
-        self.logger.info("混合检索已禁用，将仅使用向量检索")
-
-    def set_hybrid_weights(self, vector_weight: float, bm25_weight: float) -> bool:
-        """
-        设置混合检索权重。
-
-        Args:
-            vector_weight: 向量检索权重
-            bm25_weight: BM25检索权重
-
-        Returns:
-            是否成功设置
-        """
-        if not (0.0 <= vector_weight <= 1.0 and 0.0 <= bm25_weight <= 1.0):
-            self.logger.error("权重参数必须在0.0到1.0之间")
-            return False
-
-        # 归一化权重
-        total_weight = vector_weight + bm25_weight
-        if total_weight > 0:
-            self.vector_weight = vector_weight / total_weight
-            self.bm25_weight = bm25_weight / total_weight
-        else:
-            self.logger.error("权重总和不能为0")
-            return False
-
-        self.logger.info(f"混合检索权重已更新 - 向量权重: {self.vector_weight:.2f}, BM25权重: {self.bm25_weight:.2f}")
-        return True
-
-    def get_hybrid_search_status(self) -> dict:
-        """
-        获取混合检索状态信息。
-
-        Returns:
-            状态信息字典
-        """
-        # 确保BM25检索器已初始化
-        self._lazy_init_bm25_retriever()
-        return {
-            'hybrid_search_enabled': self.hybrid_search_enabled,
-            'bm25_available': self.bm25_retriever is not None and self.bm25_retriever.is_available(),
-            'vector_weight': self.vector_weight,
-            'bm25_weight': self.bm25_weight,
-            'bm25_collections': len(self.bm25_retriever.get_collection_names()) if self.bm25_retriever else 0
-        }
-
-    def force_reload_bm25_index(self, collection_name: str, collection = None) -> bool:
-        """
-        强制重新加载指定集合的BM25索引。
-
-        Args:
-            collection_name: 集合名称
-            collection: ChromaDB集合对象（可选）
-
-        Returns:
-            是否成功重新加载
-        """
-        # 确保BM25检索器已初始化
-        if not self._lazy_init_bm25_retriever():
-            self.logger.warning("混合检索未启用，跳过BM25索引重新加载")
-            return False
-
-        try:
-            if collection is None:
-                collection = self.collections.get(collection_name)
-                if collection is None:
-                    collection = self.get_or_create_collection_with_dimension_check(collection_name)
-
-            # 清空现有BM25索引
-            self.bm25_retriever.clear_collection(collection_name)
-
-            # 重新同步
-            return self._sync_collection_to_bm25(collection_name, collection)
-
-        except Exception as e:
-            self.logger.error(f"强制重新加载BM25索引失败 {collection_name}: {e}")
-            return False
 
     @classmethod
     def get_cache_info(cls):
-        """获取缓存信息（用于调试）"""
+        """获取缓存信息(用于调试)"""
         with cls._cache_lock:
             return {
-                'cache_size': len(cls._collection_cache),
-                'cached_collections': list(cls._collection_cache.keys())
+                "cache_size": len(cls._collection_cache),
+                "cached_collections": list(cls._collection_cache.keys()),
             }
 
     def shutdown(self):
-        """关闭向量存储，释放资源"""
+        """关闭向量存储,释放资源"""
         self.logger.info("正在关闭向量存储...")
 
         # 关闭嵌入提供商
@@ -1036,36 +929,35 @@ class VectorStore:
 
         self.logger.info("向量存储已成功关闭")
 
-
     # ===== 笔记专用检索方法 =====
 
     def store_note(self, collection, note: NoteData):
         """
-        存储笔记到向量数据库。
+        存储笔记到向量数据库.
 
         Args:
             collection: 目标 ChromaDB 集合
             note: NoteData 对象
         """
-        try:
-            # 使用高级抽象方法存储笔记（笔记数据全部存储在 metadata 中）
-            self.upsert_documents(
-                collection=collection,
-                ids=note.id,
-                embedding_texts=note.get_embedding_text(),  # 用于向量化的文本
-                metadatas=note.to_dict()  # 笔记的所有数据都存储在 metadata 中
-            )
+        # 使用高级抽象方法存储笔记(笔记数据全部存储在 metadata 中)
+        self.upsert_documents(
+            collection=collection,
+            ids=note.id,
+            embedding_texts=note.get_embedding_text(),  # 用于向量化的文本
+            metadatas=note.to_dict(),  # 笔记的所有数据都存储在 metadata 中
+        )
 
-            # 笔记的BM25索引在文件扫描完成后统一重建，不在这里立即更新
-            # 避免每个笔记都触发全量重建，提升批量导入性能
+        # 笔记使用无状态BM25精排,不需要预先建立索引
 
-        except Exception:
-            raise
-
-    def search_notes(self, collection, query: str, limit: int = 10,
-                    where_filter: Optional[dict] = None) -> List[NoteData]:
+    def search_notes(
+        self,
+        collection,
+        query: str,
+        limit: int = 10,
+        where_filter: Optional[dict] = None,
+    ) -> List[NoteData]:
         """
-        搜索笔记，返回 NoteData 对象列表。
+        搜索笔记,返回 NoteData 对象列表.
 
         Args:
             collection: 目标 ChromaDB 集合
@@ -1074,78 +966,69 @@ class VectorStore:
             where_filter: 可选的元数据过滤器
 
         Returns:
-            相关的笔记对象列表（NoteData）
+            相关的笔记对象列表(NoteData)
         """
-        try:
-            # 显式生成查询向量（同步调用）
-            query_embedding = self.embed_single_document(query)
+        # 显式生成查询向量(同步调用)
+        query_embedding = self.embed_single_document(query)
 
-            # 构建查询参数
-            query_params = {
-                "query_embeddings": [query_embedding],
-                "n_results": limit
-            }
+        # 构建查询参数
+        query_params = {"query_embeddings": [query_embedding], "n_results": limit}
 
-            # 如果提供了过滤器，则添加到查询参数
-            if where_filter:
-                if len(where_filter) == 1:
-                    query_params["where"] = where_filter
-                else:
-                    query_params["where"] = {"$and": [{k: v} for k, v in where_filter.items()]}
-
-            # 在ChromaDB中进行向量相似度搜索（数据库内部处理并发）
-            results = collection.query(**query_params)
-
-            # 将结果转换为笔记对象，并保留相似度分数
-            vector_results = []
-            if results and results['metadatas'] and len(results['metadatas']) > 0:
-                distances = results.get('distances', [[]])[0]
-                metadatas = results['metadatas'][0]
-
-                for idx, meta in enumerate(metadatas):
-                    if meta:
-                        try:
-                            note = NoteData.from_dict(meta)
-                            # 将距离转换为相似度分数
-                            if idx < len(distances):
-                                distance = distances[idx]
-                                similarity = max(0.0, 1.0 - (distance / 2.0))
-                                if idx < 3:
-                                    self.logger.debug(f"笔记{idx}: distance={distance:.4f}, similarity={similarity:.4f}")
-                                note.similarity = similarity
-                            else:
-                                note.similarity = 0.0
-                            vector_results.append(note)
-                        except Exception as e:
-                            self.logger.warning(f"无法创建笔记对象，跳过: {e}")
-                            self.logger.error(f"导致创建失败的原始 metadata: {meta}")
-                            continue
-
-            # 混合检索：结合BM25结果
-            if self._is_hybrid_search_enabled():
-                collection_name = collection.name
-                if self.bm25_retriever.get_document_count(collection_name) == 0:
-                    self._sync_collection_to_bm25(collection_name, collection)
-
-                bm25_results = self.bm25_retriever.search(collection_name, query, limit)
-                final_results = self._merge_note_results(vector_results, bm25_results, collection)
+        # 如果提供了过滤器,则添加到查询参数
+        if where_filter:
+            if len(where_filter) == 1:
+                query_params["where"] = where_filter
             else:
-                final_results = vector_results
+                query_params["where"] = {
+                    "$and": [{k: v} for k, v in where_filter.items()]
+                }
 
-            return final_results
+        # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
+        results = collection.query(**query_params)
 
-        except Exception:
-            raise
+        # 将结果转换为笔记对象,并保留相似度分数
+        vector_results = []
+        if results and results["metadatas"] and len(results["metadatas"]) > 0:
+            distances = results.get("distances", [[]])[0]
+            metadatas = results["metadatas"][0]
+
+            for idx, meta in enumerate(metadatas):
+                if meta:
+                    try:
+                        note = NoteData.from_dict(meta)
+                        # 将距离转换为相似度分数
+                        if idx < len(distances):
+                            distance = distances[idx]
+                            similarity = max(0.0, 1.0 - (distance / 2.0))
+                            if idx < 3:
+                                self.logger.debug(
+                                    f"笔记{idx}: distance={distance:.4f}, similarity={similarity:.4f}"
+                                )
+                            note.similarity = similarity
+                        else:
+                            note.similarity = 0.0
+                        vector_results.append(note)
+                    except Exception as e:
+                        self.logger.warning(f"无法创建笔记对象,跳过: {e}")
+                        self.logger.error(f"导致创建失败的原始 metadata: {meta}")
+                        continue
+
+        # 混合检索:结合BM25结果(强制启用)
+        final_results = self._rerank_notes_with_bm25(
+            query, vector_results, collection, limit
+        )
+
+        return final_results
 
     def _search_vector_scores(self, collection, query: str, limit: int = 100) -> dict:
         """
-        执行向量搜索，只返回 ID 和相似度分数的映射。
+        执行向量搜索,只返回 ID 和相似度分数的映射.
 
-        专为副集合设计（该集合不存储 metadata）。
-        避免了 NoteData 对象构造，性能更高，逻辑更清晰。
+        专为副集合设计(该集合不存储 metadata).
+        避免了 NoteData 对象构造,性能更高,逻辑更清晰.
 
         Args:
-            collection: 目标 ChromaDB 集合（通常是副集合）
+            collection: 目标 ChromaDB 集合(通常是副集合)
             query: 搜索查询字符串
             limit: 返回结果的最大数量
 
@@ -1153,25 +1036,24 @@ class VectorStore:
             {'note_id': similarity_score, ...} 的字典
         """
         try:
-            # 显式生成查询向量（同步调用）
+            # 显式生成查询向量(同步调用)
             query_embedding = self.embed_single_document(query)
 
             # 执行向量搜索
             results = collection.query(
-                query_embeddings=[query_embedding],
-                n_results=limit
+                query_embeddings=[query_embedding], n_results=limit
             )
 
-            # 提取 ID 和距离，转换为相似度分数
+            # 提取 ID 和距离,转换为相似度分数
             scores = {}
-            if results and results['ids'] and len(results['ids']) > 0:
-                doc_ids = results['ids'][0]
-                distances = results.get('distances', [[]])[0]
+            if results and results["ids"] and len(results["ids"]) > 0:
+                doc_ids = results["ids"][0]
+                distances = results.get("distances", [[]])[0]
 
                 for idx, doc_id in enumerate(doc_ids):
                     if idx < len(distances):
                         distance = distances[idx]
-                        # 将距离转换为相似度分数（0到1之间）
+                        # 将距离转换为相似度分数(0到1之间)
                         similarity = max(0.0, 1.0 - (distance / 2.0))
                         scores[doc_id] = similarity
 
@@ -1183,7 +1065,7 @@ class VectorStore:
 
     def get_notes_by_ids(self, collection, note_ids: List[str]) -> List[NoteData]:
         """
-        根据笔记ID列表获取笔记对象。
+        根据笔记ID列表获取笔记对象.
 
         Args:
             collection: 目标 ChromaDB 集合
@@ -1198,17 +1080,17 @@ class VectorStore:
 
             # 使用ChromaDB的get方法获取指定ID的文档
             retrieved_docs = collection.get(ids=note_ids)
-            if not retrieved_docs or not retrieved_docs['metadatas']:
+            if not retrieved_docs or not retrieved_docs["metadatas"]:
                 return []
 
             notes = []
-            for meta in retrieved_docs['metadatas']:
-                if meta:  # 笔记集合只包含笔记，不需要检查note_type
+            for meta in retrieved_docs["metadatas"]:
+                if meta:  # 笔记集合只包含笔记,不需要检查note_type
                     try:
                         note = NoteData.from_dict(meta)
                         notes.append(note)
                     except Exception as e:
-                        self.logger.warning(f"无法创建笔记对象，跳过: {e}")
+                        self.logger.warning(f"无法创建笔记对象,跳过: {e}")
                         self.logger.error(f"导致创建失败的原始 metadata: {meta}")
                         continue
 
@@ -1218,11 +1100,14 @@ class VectorStore:
             self.logger.error(f"根据ID获取笔记失败: {e}")
             return []
 
-    def _merge_note_results(self, vector_results: List[NoteData],
-                          bm25_results: List[Tuple[str, float]],
-                          collection) -> List[NoteData]:
+    def _merge_note_results(
+        self,
+        vector_results: List[NoteData],
+        bm25_results: List[Tuple[str, float]],
+        collection,
+    ) -> List[NoteData]:
         """
-        融合笔记的向量检索和BM25检索结果。
+        融合笔记的向量检索和BM25检索结果.
 
         Args:
             vector_results: 向量检索结果
@@ -1235,12 +1120,13 @@ class VectorStore:
         if not vector_results and not bm25_results:
             return []
 
-        if not bm25_results or not self._is_hybrid_search_enabled():
-            return vector_results
+        # 强制启用混合检索,直接进行结果融合
 
         if not vector_results:
-            # 只有BM25结果，需要根据note_id查找NoteData对象
-            return self.get_notes_by_ids(collection, [note_id for note_id, _ in bm25_results])
+            # 只有BM25结果,需要根据note_id查找NoteData对象
+            return self.get_notes_by_ids(
+                collection, [note_id for note_id, _ in bm25_results]
+            )
 
         # 创建笔记ID到NoteData对象的映射
         vector_notes_map = {}
@@ -1250,7 +1136,7 @@ class VectorStore:
         # 标准化分数到[0,1]区间
         vector_scores = {}
         if vector_results:
-            # 向量检索结果按相似度排序，分配递减分数
+            # 向量检索结果按相似度排序,分配递减分数
             for i, note in enumerate(vector_results):
                 vector_scores[note.id] = 1.0 - (i * 0.1)  # 简单线性递减
 
@@ -1269,7 +1155,9 @@ class VectorStore:
             combined_scores[note_id] = self.vector_weight * score
 
         for note_id, score in bm25_scores.items():
-            combined_scores[note_id] = combined_scores.get(note_id, 0) + self.bm25_weight * score
+            combined_scores[note_id] = (
+                combined_scores.get(note_id, 0) + self.bm25_weight * score
+            )
 
         # 添加纯向量检索中存在但BM25中没有的结果
         for note_id in vector_notes_map:
@@ -1277,16 +1165,26 @@ class VectorStore:
                 combined_scores[note_id] = self.vector_weight
 
         # 按合并分数排序
-        sorted_results = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
+        sorted_results = sorted(
+            combined_scores.items(), key=lambda x: x[1], reverse=True
+        )
 
         # 返回排序后的NoteData对象
         final_notes = []
-        note_ids_to_get = [note_id for note_id, _ in sorted_results[:len(vector_results)]]
+        note_ids_to_get = [
+            note_id for note_id, _ in sorted_results[: len(vector_results)]
+        ]
 
-        # 需要从数据库完整获取这些笔记（因为BM25结果中没有完整的笔记对象）
+        # 需要从数据库完整获取这些笔记(因为BM25结果中没有完整的笔记对象)
         if len(note_ids_to_get) > len(vector_notes_map):
-            additional_notes = self.get_notes_by_ids(collection,
-                [note_id for note_id in note_ids_to_get if note_id not in vector_notes_map])
+            additional_notes = self.get_notes_by_ids(
+                collection,
+                [
+                    note_id
+                    for note_id in note_ids_to_get
+                    if note_id not in vector_notes_map
+                ],
+            )
             # 合并结果
             all_notes_map = vector_notes_map.copy()
             for note in additional_notes:
@@ -1294,7 +1192,7 @@ class VectorStore:
         else:
             all_notes_map = vector_notes_map
 
-        for note_id, _ in sorted_results[:len(vector_results)]:
+        for note_id, _ in sorted_results[: len(vector_results)]:
             if note_id in all_notes_map:
                 final_notes.append(all_notes_map[note_id])
 

@@ -72,7 +72,7 @@ class FileIndexManager(SQLiteDatabaseManager):
 
     def get_or_create_file_id(self, relative_path: str, timestamp: int = 0) -> int:
         """
-        获取或创建文件ID（优先使用内存缓存）
+        获取或创建文件ID（先查后插策略，确保幂等性）
 
         Args:
             relative_path: 相对文件路径
@@ -104,58 +104,51 @@ class FileIndexManager(SQLiteDatabaseManager):
 
                 return file_id
 
-            # 第二步：缓存中没有，直接插入（不查询，省掉一次SELECT）
+        # 第二步：缓存中没有，先查询数据库（稳妥策略）
         table_name = self._get_table_name()
 
         try:
-            # 直接尝试插入新记录
-            try:
-                cursor = self._execute_single(
-                    f'INSERT INTO {table_name} (relative_path, file_timestamp) VALUES (?, ?)',
-                    (relative_path, timestamp),
-                    caller="小弟insert_file_id"
-                )
-                file_id = cursor.lastrowid
+            # 先查询数据库，确认记录是否存在
+            cursor = self._execute_query(
+                f'SELECT id, file_timestamp FROM {table_name} WHERE relative_path = ?',
+                (relative_path,),
+                caller="先查后插策略"
+            )
+            result = cursor.fetchone()
+
+            if result:
+                file_id, current_timestamp = result
+
+                # 更新时间戳（如果需要）
+                if timestamp > 0 and timestamp > current_timestamp:
+                    self._execute_single(
+                        f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ?',
+                        (timestamp, file_id),
+                        caller="更新时间戳"
+                    )
+                    current_timestamp = timestamp
 
                 # 加载到内存缓存
                 with self._cache_lock:
-                    self._path_cache[relative_path] = (file_id, timestamp)
+                    self._path_cache[relative_path] = (file_id, current_timestamp)
                     self._id_cache[file_id] = relative_path
 
                 return file_id
 
-            except Exception as insert_error:
-                # 插入失败（UNIQUE冲突），说明其他地方已创建，查询获取
-                if "UNIQUE constraint failed" in str(insert_error):
-                    cursor = self._execute_query(
-                        f'SELECT id, file_timestamp FROM {table_name} WHERE relative_path = ?',
-                        (relative_path,),
-                        caller="get_or_create_file_id->查询冲突"
-                    )
-                    result = cursor.fetchone()
+            # 第三步：确认不存在，才插入新记录
+            cursor = self._execute_single(
+                f'INSERT INTO {table_name} (relative_path, file_timestamp) VALUES (?, ?)',
+                (relative_path, timestamp),
+                caller="插入新文件记录"
+            )
+            file_id = cursor.lastrowid
 
-                    if result:
-                        file_id, current_timestamp = result
+            # 加载到内存缓存
+            with self._cache_lock:
+                self._path_cache[relative_path] = (file_id, timestamp)
+                self._id_cache[file_id] = relative_path
 
-                        # 加载到内存缓存
-                        with self._cache_lock:
-                            self._path_cache[relative_path] = (file_id, current_timestamp)
-                            self._id_cache[file_id] = relative_path
-
-                        # 检查是否需要更新时间戳
-                        if timestamp > 0 and timestamp > current_timestamp:
-                            self._execute_single(
-                                f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ?',
-                                (timestamp, file_id),
-                                caller="get_or_create_file_id->update_timestamp"
-                            )
-                            with self._cache_lock:
-                                self._path_cache[relative_path] = (file_id, timestamp)
-
-                        return file_id
-                else:
-                    # 其他错误，重新抛出
-                    raise
+            return file_id
 
         except Exception as e:
             self.logger.error(f"获取或创建文件ID失败: {relative_path}, 错误: {e}")
@@ -181,17 +174,17 @@ class FileIndexManager(SQLiteDatabaseManager):
 
         try:
             cursor = self._execute_query(
-                f'SELECT relative_path FROM {table_name} WHERE id = ?',
+                f'SELECT relative_path, file_timestamp FROM {table_name} WHERE id = ?',
                 (file_id,)
             )
             result = cursor.fetchone()
 
             if result:
-                relative_path = result[0]
+                relative_path, file_timestamp = result
                 # 加载到内存缓存
                 with self._cache_lock:
                     self._id_cache[file_id] = relative_path
-                    self._path_cache[relative_path] = (file_id, 0)  # 时间戳暂时为0
+                    self._path_cache[relative_path] = (file_id, file_timestamp)
                 return relative_path
             else:
                 return None
@@ -359,13 +352,13 @@ class FileIndexManager(SQLiteDatabaseManager):
             if any(ts > 0 for ts in timestamps):
                 table_name = self._get_table_name()
                 update_params = [
-                    (ts, file_id)
+                    (ts, file_id, ts)
                     for ts, file_id in zip(timestamps, file_ids)
                     if ts > 0
                 ]
 
                 if update_params:
-                    self._batch_execute(f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ?', update_params)
+                    self._batch_execute(f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ? AND file_timestamp < ?', update_params)
 
             return file_ids
 

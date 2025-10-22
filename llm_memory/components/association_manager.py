@@ -230,8 +230,8 @@ class AssociationManager:
             cache[id1] = snapshot
 
         except Exception as e:
-            # 静默处理任何异常，避免影响主流程
-            pass
+            # 记录警告日志而不是静默忽略异常
+            self.logger.warning(f"Failed to update association strength: {e}")
 
     def get_associations_for_memory(self, memory_id: str, min_strength: int = 1) -> List[BaseMemory]:
         """
