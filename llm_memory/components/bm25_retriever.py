@@ -89,8 +89,11 @@ def rerank_with_bm25(
         bm25_index = bm25s.BM25()
         bm25_index.index(tokenized_corpus, show_progress=False)
 
-        # 4. 检索
-        results, scores = bm25_index.retrieve([tokenized_query], k=limit)
+        # 4. 动态调整检索数量，确保不超过语料库大小
+        actual_limit = min(limit, len(final_corpus))
+
+        # 5. 检索
+        results, scores = bm25_index.retrieve([tokenized_query], k=actual_limit)
 
         # 5. 结果映射
         ranked_results = []
