@@ -78,15 +78,15 @@ class SmallModelPromptBuilder:
             role = msg.get("role")
 
             if role == "user":
-                sender_name = msg.get('sender_name', '成员')
-                sender_id = msg.get('sender_id', 'Unknown')
+                sender_name = msg.get("sender_name", "成员")
+                sender_id = msg.get("sender_id", "Unknown")
 
                 # 构建参与者清单
-                if sender_id != 'Unknown' and sender_id not in participants:
+                if sender_id != "Unknown" and sender_id not in participants:
                     participants[sender_id] = {"id": sender_id, "name": sender_name}
 
                 # 格式化对话文本
-                timestamp = msg.get('timestamp', 0)
+                timestamp = msg.get("timestamp", 0)
                 time_str = SmallModelPromptBuilder.format_relative_time(timestamp)
                 header = f"[群友: {sender_name}/{sender_id}]（{time_str}）: "
                 content = msg.get("content", [])
@@ -116,7 +116,9 @@ class SmallModelPromptBuilder:
             格式化后的查询文本字符串（纯文本内容拼接）
         """
         # 过滤出未处理的记录
-        unprocessed_records = [msg for msg in chat_records if not msg.get("is_processed", True)]
+        unprocessed_records = [
+            msg for msg in chat_records if not msg.get("is_processed", True)
+        ]
 
         # 如果没有未处理的记录，返回空字符串
         if not unprocessed_records:
@@ -128,7 +130,16 @@ class SmallModelPromptBuilder:
         ).strip()
 
     @staticmethod
-    def build_memory_prompt(formatted_query: str, memories: List[MemoryItem], user_list: List[Dict], candidate_notes: List[Dict] = None, secretary_decision: Dict = None, core_topic: str = None, system_prompt: str = None, memory_config=None) -> str:
+    def build_memory_prompt(
+        formatted_query: str,
+        memories: List[MemoryItem],
+        user_list: List[Dict],
+        candidate_notes: List[Dict] = None,
+        secretary_decision: Dict = None,
+        core_topic: str = None,
+        system_prompt: str = None,
+        memory_config=None,
+    ) -> str:
         """
         构建用于小模型的记忆整理提示词
 
@@ -150,12 +161,16 @@ class SmallModelPromptBuilder:
         if system_prompt is None:
             # 延迟导入以避免循环依赖
             from ...llm_memory import CognitiveService
+
             system_prompt = CognitiveService.get_prompt(memory_config)
 
         # 1. 构建参与者信息（使用列表推导式）
         participants_section = "# 对话参与者\n" + (
-            "\n".join(f"- {p.get('name', '未知')}: {p.get('id', '未知')}" for p in user_list)
-            if user_list else "暂无详细信息\n"
+            "\n".join(
+                f"- {p.get('name', '未知')}: {p.get('id', '未知')}" for p in user_list
+            )
+            if user_list
+            else "暂无详细信息\n"
         )
 
         # 2. 构建新的规则
@@ -167,15 +182,17 @@ class SmallModelPromptBuilder:
         # 3. 构建AI身份信息
         ai_identity_section = ""
         if secretary_decision:
-            persona_name = secretary_decision.get('persona_name', '')
-            alias = secretary_decision.get('alias', '')
+            persona_name = secretary_decision.get("persona_name", "")
+            alias = secretary_decision.get("alias", "")
             if persona_name or alias:
                 ai_info_parts = []
                 if persona_name:
                     ai_info_parts.append(f"助理的名字是：{persona_name}")
                 if alias:
                     ai_info_parts.append(f"昵称有：{alias}")
-                ai_identity_section = "\n# AI身份信息\n" + "\n".join(ai_info_parts) + "\n"
+                ai_identity_section = (
+                    "\n# AI身份信息\n" + "\n".join(ai_info_parts) + "\n"
+                )
 
         # 4. 构建核心话题信息
         topic_section = ""
@@ -185,7 +202,9 @@ class SmallModelPromptBuilder:
         # 5. 构建候选笔记清单
         notes_section = ""
         if candidate_notes:
-            notes_section = NoteContextBuilder.build_candidate_list_for_prompt(candidate_notes)
+            notes_section = NoteContextBuilder.build_candidate_list_for_prompt(
+                candidate_notes
+            )
             if topic_section:
                 # 添加话题上下文说明，帮助LLM理解候选笔记的来源
                 notes_section = f"\n# 基于上述核心话题检索到的相关笔记{notes_section}"
@@ -198,7 +217,9 @@ class SmallModelPromptBuilder:
         if formatted_query:
             parts.append(f"\n\n对话历史：\n{formatted_query}")
         if memories:
-            parts.append(f"\n\n你回忆起了：\n{MemoryFormatter.format_memories_for_display(memories)}")
+            parts.append(
+                f"\n\n你回忆起了：\n{MemoryFormatter.format_memories_for_display(memories)}"
+            )
         parts.append("\n\n请按照任务进行处理")
 
         return "".join(parts)
@@ -212,7 +233,7 @@ class SmallModelPromptBuilder:
         core_topic: str = "",
         memory_id_mapping: Dict[str, str] = None,
         note_id_mapping: Dict[str, str] = None,
-        config=None
+        config=None,
     ) -> str:
         """
         构建用于事后反思的提示词
@@ -230,8 +251,9 @@ class SmallModelPromptBuilder:
         """
         # 读取反思指南 - 使用 PathManager 统一管理路径
         from ...llm_memory.utils.path_manager import PathManager
+
         guide_path = PathManager.get_prompt_path()
-        with open(guide_path, 'r', encoding='utf-8') as f:
+        with open(guide_path, "r", encoding="utf-8") as f:
             guide_content = f.read()
 
         # 构建反思上下文
@@ -256,10 +278,14 @@ class SmallModelPromptBuilder:
         if raw_memories:
             for i, memory in enumerate(raw_memories):
                 # 使用短ID显示（如果有映射表）
-                short_id = memory_id_mapping.get(memory.id, memory.id) if memory_id_mapping else memory.id
+                short_id = (
+                    memory_id_mapping.get(memory.id, memory.id)
+                    if memory_id_mapping
+                    else memory.id
+                )
                 reflection_context += f"""
 - **id**: `{short_id}`
-- **type**: `{memory.memory_type.value if hasattr(memory.memory_type, 'value') else memory.memory_type}`
+- **type**: `{memory.memory_type.value if hasattr(memory.memory_type, "value") else memory.memory_type}`
 - **judgment**: `{memory.judgment}`
 """
         else:
@@ -271,11 +297,15 @@ class SmallModelPromptBuilder:
         if raw_notes:
             for i, note in enumerate(raw_notes):
                 # 使用短ID显示（如果有映射表）
-                note_id = note.get('id', 'N/A')
-                short_id = note_id_mapping.get(note_id, note_id) if note_id_mapping else note_id
+                note_id = note.get("id", "N/A")
+                short_id = (
+                    note_id_mapping.get(note_id, note_id)
+                    if note_id_mapping
+                    else note_id
+                )
                 reflection_context += f"""
 - **id**: `{short_id}`
-- **content**: `{note.get('content', '')[:200]}...`
+- **content**: `{note.get("content", "")[:200]}...`
 """
         else:
             reflection_context += "\n无相关笔记\n"

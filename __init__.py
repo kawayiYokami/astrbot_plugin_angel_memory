@@ -11,7 +11,4 @@ __version__ = "1.0.0"
 __author__ = "Angel Memory Team"
 
 # 导出的主要接口
-__all__ = [
-    "AngelMemoryPlugin",
-    "__version__"
-]
+__all__ = ["AngelMemoryPlugin", "__version__"]

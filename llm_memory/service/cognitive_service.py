@@ -12,6 +12,7 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory
 from ..components.vector_store import VectorStore
@@ -19,6 +20,7 @@ from ..components.association_manager import AssociationManager
 from ..config.system_config import system_config
 from .memory_handlers import MemoryHandlerFactory
 from .memory_manager import MemoryManager
+
 
 class CognitiveService:
     """
@@ -49,19 +51,31 @@ class CognitiveService:
         self.vector_store = vector_store
 
         # 为认知服务获取主集合
-        self.main_collection = self.vector_store.get_or_create_collection_with_dimension_check(system_config.collection_name)
+        self.main_collection = (
+            self.vector_store.get_or_create_collection_with_dimension_check(
+                system_config.collection_name
+            )
+        )
 
         # 创建关联管理器
-        self.association_manager = AssociationManager(self.main_collection, self.vector_store)
+        self.association_manager = AssociationManager(
+            self.main_collection, self.vector_store
+        )
 
         # 创建记忆处理器工厂
-        self.memory_handler_factory = MemoryHandlerFactory(self.main_collection, self.vector_store)
+        self.memory_handler_factory = MemoryHandlerFactory(
+            self.main_collection, self.vector_store
+        )
 
         # 创建记忆管理器，并传入具体的 collection 对象
-        self.memory_manager = MemoryManager(self.main_collection, self.vector_store, self.association_manager)
+        self.memory_manager = MemoryManager(
+            self.main_collection, self.vector_store, self.association_manager
+        )
 
         # 记录初始化状态以验证VectorStore
-        self.logger.info(f"认知服务初始化完成。向量存储客户端: {self.vector_store.client}")
+        self.logger.info(
+            f"认知服务初始化完成。向量存储客户端: {self.vector_store.client}"
+        )
 
     # ===== 存储管理接口 =====
 
@@ -87,7 +101,9 @@ class CognitiveService:
             # 如果需要更新路径，应该通过外部调用 PathManager 的方法
 
             self.logger.info(f"记忆系统存储路径已更新到: {new_path}")
-            self.logger.warning("注意：system_config.index_dir 未更新，请通过 PathManager 更新路径")
+            self.logger.warning(
+                "注意：system_config.index_dir 未更新，请通过 PathManager 更新路径"
+            )
 
         except Exception as e:
             self.logger.error(f"更新存储路径失败: {e}")
@@ -95,7 +111,9 @@ class CognitiveService:
 
     # ===== 记忆接口 =====
 
-    def remember(self, memory_type: str, judgment: str, reasoning: str, tags: List[str]) -> str:
+    def remember(
+        self, memory_type: str, judgment: str, reasoning: str, tags: List[str]
+    ) -> str:
         """
         记住一条记忆。
 
@@ -111,7 +129,13 @@ class CognitiveService:
         handler = self.memory_handler_factory.get_handler(memory_type)
         return handler.remember(judgment, reasoning, tags)
 
-    def recall(self, memory_type: str, query: str, limit: int = 10, include_consolidated: bool = True) -> List[BaseMemory]:
+    def recall(
+        self,
+        memory_type: str,
+        query: str,
+        limit: int = 10,
+        include_consolidated: bool = True,
+    ) -> List[BaseMemory]:
         """
         回忆记忆。
 
@@ -129,29 +153,38 @@ class CognitiveService:
 
     # ===== 高级记忆功能 =====
 
-    def comprehensive_recall(self, query: str, fresh_limit: int = None, consolidated_limit: int = None) -> List[BaseMemory]:
+    def comprehensive_recall(
+        self, query: str, fresh_limit: int = None, consolidated_limit: int = None
+    ) -> List[BaseMemory]:
         """实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容"""
-        return self.memory_manager.comprehensive_recall(query, fresh_limit, consolidated_limit)
+        return self.memory_manager.comprehensive_recall(
+            query, fresh_limit, consolidated_limit
+        )
 
     def consolidate_memories(self):
         """执行记忆巩固过程（睡眠模式）"""
         return self.memory_manager.consolidate_memories()
 
-    def chained_recall(self, query: str, per_type_limit: int = 7, final_limit: int = 7) -> List[BaseMemory]:
+    def chained_recall(
+        self, query: str, per_type_limit: int = 7, final_limit: int = 7
+    ) -> List[BaseMemory]:
         """链式多通道回忆 - 基于关联网络的多轮回忆"""
         memory_handlers = self.memory_handler_factory.handlers
-        return self.memory_manager.chained_recall(query, per_type_limit, final_limit, memory_handlers)
+        return self.memory_manager.chained_recall(
+            query, per_type_limit, final_limit, memory_handlers
+        )
 
     def feedback(
         self,
         useful_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
-        merge_groups: List[List[str]] = None
+        merge_groups: List[List[str]] = None,
     ) -> List[BaseMemory]:
         """统一反馈接口 - 处理回忆后的反馈（核心工作流）"""
         memory_handlers = self.memory_handler_factory.handlers
-        return self.memory_manager.process_feedback(useful_memory_ids, new_memories, merge_groups, memory_handlers)
-
+        return self.memory_manager.process_feedback(
+            useful_memory_ids, new_memories, merge_groups, memory_handlers
+        )
 
     # ===== 管理功能 =====
 
@@ -184,7 +217,7 @@ class CognitiveService:
         prompt_path = PathManager.get_prompt_path()
 
         try:
-            with open(prompt_path, 'r', encoding='utf-8') as f:
+            with open(prompt_path, "r", encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
             return "记忆系统提示词文件未找到，请检查文件是否存在。"

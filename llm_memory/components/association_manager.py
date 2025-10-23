@@ -26,6 +26,7 @@ class MemorySnapshot:
     document: str
     embedding: Optional[List[float]]
 
+
 class AssociationManager:
     """
     记忆关联管理器。
@@ -48,7 +49,9 @@ class AssociationManager:
         # 设置日志记录器
         self.logger = logger
 
-    def preload_memories(self, memory_ids: List[str], cache: Optional[Dict[str, MemorySnapshot]] = None) -> Dict[str, MemorySnapshot]:
+    def preload_memories(
+        self, memory_ids: List[str], cache: Optional[Dict[str, MemorySnapshot]] = None
+    ) -> Dict[str, MemorySnapshot]:
         """批量加载记忆快照，减少重复的数据库访问。"""
         cache = cache or {}
         if not memory_ids:
@@ -60,19 +63,18 @@ class AssociationManager:
 
         try:
             results = self.collection.get(
-                ids=missing_ids,
-                include=["metadatas", "documents", "embeddings"]
+                ids=missing_ids, include=["metadatas", "documents", "embeddings"]
             )
         except Exception as e:
             self.logger.error(f"批量加载记忆失败: {str(e)}")
             return cache
 
-        metadatas = results.get('metadatas') or []
-        documents = results.get('documents') or []
-        embeddings = results.get('embeddings')
+        metadatas = results.get("metadatas") or []
+        documents = results.get("documents") or []
+        embeddings = results.get("embeddings")
         if embeddings is None:
             embeddings = []
-        ids = results.get('ids') or []
+        ids = results.get("ids") or []
 
         for idx, memory_id in enumerate(ids):
             if not metadatas or idx >= len(metadatas) or not metadatas[idx]:
@@ -91,7 +93,7 @@ class AssociationManager:
                 memory=memory_obj,
                 metadata=metadata,
                 document=document,
-                embedding=embedding
+                embedding=embedding,
             )
 
         return cache
@@ -104,22 +106,31 @@ class AssociationManager:
 
             # 更新关联字段
             import json
-            metadata['associations'] = json.dumps(snapshot.memory.associations) if snapshot.memory.associations else "{}"
+
+            metadata["associations"] = (
+                json.dumps(snapshot.memory.associations)
+                if snapshot.memory.associations
+                else "{}"
+            )
 
             embedding = snapshot.embedding
             if embedding is None:
                 semantic_core = snapshot.memory.get_semantic_core()
                 # 使用同步方法生成embedding
-                embedding = self.vector_store.embedding_provider.embed_documents_sync([semantic_core])[0]
+                embedding = self.vector_store.embedding_provider.embed_documents_sync(
+                    [semantic_core]
+                )[0]
                 snapshot.embedding = embedding
                 embedding_regenerated = True
-                self.logger.debug(f"[assoc] regenerated embedding for {snapshot.memory.id}")
+                self.logger.debug(
+                    f"[assoc] regenerated embedding for {snapshot.memory.id}"
+                )
 
             self.collection.upsert(
                 ids=[snapshot.memory.id],
                 embeddings=[embedding],
                 metadatas=[metadata],
-                documents=[snapshot.document]
+                documents=[snapshot.document],
             )
             return embedding_regenerated
 
@@ -175,7 +186,7 @@ class AssociationManager:
         id1: str,
         id2: str,
         strength_increase: int = 1,
-        cache: Optional[Dict[str, MemorySnapshot]] = None
+        cache: Optional[Dict[str, MemorySnapshot]] = None,
     ):
         """
         【内部方法】在两个记忆之间添加或更新关联（单向）。
@@ -193,7 +204,13 @@ class AssociationManager:
         """
         try:
             # 基本格式验证：快速过滤无效ID
-            if not id1 or not id2 or id1 == id2 or not isinstance(id1, str) or not isinstance(id2, str):
+            if (
+                not id1
+                or not id2
+                or id1 == id2
+                or not isinstance(id1, str)
+                or not isinstance(id2, str)
+            ):
                 return
 
             # 获取源记忆
@@ -233,7 +250,9 @@ class AssociationManager:
             # 记录警告日志而不是静默忽略异常
             self.logger.warning(f"Failed to update association strength: {e}")
 
-    def get_associations_for_memory(self, memory_id: str, min_strength: int = 1) -> List[BaseMemory]:
+    def get_associations_for_memory(
+        self, memory_id: str, min_strength: int = 1
+    ) -> List[BaseMemory]:
         """
         获取与指定记忆相关的所有关联记忆。
 
@@ -247,24 +266,33 @@ class AssociationManager:
         try:
             # 获取指定记忆的关联信息
             memory_results = self.collection.get(ids=[memory_id])
-            if not memory_results or not memory_results['metadatas']:
+            if not memory_results or not memory_results["metadatas"]:
                 return []
 
-            memory_data = memory_results['metadatas'][0]
+            memory_data = memory_results["metadatas"][0]
             # 解析associations（可能是JSON字符串或字典）
             from ..models.data_models import BaseMemory
-            associations = BaseMemory._parse_associations(memory_data.get('associations', {}))
+
+            associations = BaseMemory._parse_associations(
+                memory_data.get("associations", {})
+            )
 
             # 过滤出强度大于阈值的关联
-            strong_associations = {assoc_id: strength for assoc_id, strength in associations.items() if strength >= min_strength}
+            strong_associations = {
+                assoc_id: strength
+                for assoc_id, strength in associations.items()
+                if strength >= min_strength
+            }
 
             # 获取关联的记忆对象
             associated_memories = []
             for assoc_id in strong_associations.keys():
                 try:
                     assoc_results = self.collection.get(ids=[assoc_id])
-                    if assoc_results and assoc_results['metadatas']:
-                        assoc_memory = BaseMemory.from_dict(assoc_results['metadatas'][0])
+                    if assoc_results and assoc_results["metadatas"]:
+                        assoc_memory = BaseMemory.from_dict(
+                            assoc_results["metadatas"][0]
+                        )
                         associated_memories.append(assoc_memory)
                 except Exception as e:
                     self.logger.error(f"获取关联记忆 {assoc_id} 失败: {str(e)}")
@@ -290,13 +318,16 @@ class AssociationManager:
         try:
             # 获取第一个记忆的关联信息
             memory_results = self.collection.get(ids=[id1])
-            if not memory_results or not memory_results['metadatas']:
+            if not memory_results or not memory_results["metadatas"]:
                 return None
 
-            memory_data = memory_results['metadatas'][0]
+            memory_data = memory_results["metadatas"][0]
             # 解析associations（可能是JSON字符串或字典）
             from ..models.data_models import BaseMemory
-            associations = BaseMemory._parse_associations(memory_data.get('associations', {}))
+
+            associations = BaseMemory._parse_associations(
+                memory_data.get("associations", {})
+            )
 
             return associations.get(id2)
 
@@ -314,46 +345,74 @@ class AssociationManager:
         try:
             # 获取所有记忆
             all_results = self.collection.get()
-            if not all_results or not all_results['metadatas']:
+            if not all_results or not all_results["metadatas"]:
                 return
 
             cleaned_count = 0
-            for i, metadata in enumerate(all_results['metadatas']):
-                memory_id = all_results['ids'][i]
+            for i, metadata in enumerate(all_results["metadatas"]):
+                memory_id = all_results["ids"][i]
                 # 解析associations（可能是JSON字符串或字典）
                 from ..models.data_models import BaseMemory
-                associations = BaseMemory._parse_associations(metadata.get('associations', {}))
+
+                associations = BaseMemory._parse_associations(
+                    metadata.get("associations", {})
+                )
 
                 # 过滤出强度大于等于阈值的关联
-                filtered_associations = {assoc_id: strength for assoc_id, strength in associations.items() if strength >= strength_threshold}
+                filtered_associations = {
+                    assoc_id: strength
+                    for assoc_id, strength in associations.items()
+                    if strength >= strength_threshold
+                }
 
                 # 如果有关联被清理，更新存储
                 if len(filtered_associations) < len(associations):
                     cleaned_count += len(associations) - len(filtered_associations)
                     # 序列化为JSON字符串
                     import json
-                    metadata['associations'] = json.dumps(filtered_associations) if filtered_associations else "{}"
+
+                    metadata["associations"] = (
+                        json.dumps(filtered_associations)
+                        if filtered_associations
+                        else "{}"
+                    )
 
                     # 获取当前嵌入和文档
-                    current_embedding = all_results['embeddings'][i] if all_results['embeddings'] and i < len(all_results['embeddings']) else None
-                    current_document = all_results['documents'][i] if all_results['documents'] and i < len(all_results['documents']) else ""
+                    current_embedding = (
+                        all_results["embeddings"][i]
+                        if all_results["embeddings"]
+                        and i < len(all_results["embeddings"])
+                        else None
+                    )
+                    current_document = (
+                        all_results["documents"][i]
+                        if all_results["documents"]
+                        and i < len(all_results["documents"])
+                        else ""
+                    )
 
                     # 如果没有嵌入，需要重新生成
                     if current_embedding is None:
                         memory_obj = BaseMemory.from_dict(metadata)
                         semantic_core = memory_obj.get_semantic_core()
                         # 使用同步方法生成embedding
-                        current_embedding = self.vector_store.embedding_provider.embed_documents_sync([semantic_core])[0]
+                        current_embedding = (
+                            self.vector_store.embedding_provider.embed_documents_sync(
+                                [semantic_core]
+                            )[0]
+                        )
 
                     # 更新存储
                     self.collection.upsert(
                         ids=[memory_id],
                         embeddings=[current_embedding],
                         metadatas=[metadata],
-                        documents=[current_document]
+                        documents=[current_document],
                     )
 
-            self.logger.info(f"已清理 {cleaned_count} 个强度低于 {strength_threshold} 的关联")
+            self.logger.info(
+                f"已清理 {cleaned_count} 个强度低于 {strength_threshold} 的关联"
+            )
 
         except Exception as e:
             self.logger.error(f"清理弱关联失败: {str(e)}")

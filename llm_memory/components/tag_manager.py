@@ -24,7 +24,7 @@ class TagManager(SQLiteDatabaseManager):
 
         # 内存缓存（双向）
         self._tag_cache = {}  # {tag_name: tag_id}
-        self._id_cache = {}   # {tag_id: tag_name} 反向缓存，避免查数据库
+        self._id_cache = {}  # {tag_id: tag_name} 反向缓存，避免查数据库
         self._cache_lock = threading.Lock()
 
         # 启动时加载所有标签到内存
@@ -37,12 +37,12 @@ class TagManager(SQLiteDatabaseManager):
     def _init_database(self) -> None:
         """初始化标签数据库表"""
         table_name = self._get_table_name()
-        query = f'''
+        query = f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL
             )
-        '''
+        """
         self._execute_single(query, caller="初始化标签表")
         self.logger.debug(f"标签表初始化完成: {table_name}")
 
@@ -52,7 +52,9 @@ class TagManager(SQLiteDatabaseManager):
         """
         try:
             table_name = self._get_table_name()
-            cursor = self._execute_query(f'SELECT id, name FROM {table_name}', caller="启动时加载标签")
+            cursor = self._execute_query(
+                f"SELECT id, name FROM {table_name}", caller="启动时加载标签"
+            )
 
             tag_count = 0
             for row in cursor.fetchall():
@@ -86,9 +88,9 @@ class TagManager(SQLiteDatabaseManager):
             try:
                 table_name = self._get_table_name()
                 cursor = self._execute_single(
-                    f'INSERT INTO {table_name} (name) VALUES (?)',
+                    f"INSERT INTO {table_name} (name) VALUES (?)",
                     (tag_name,),
-                    caller="get_or_create_tag_id->insert"
+                    caller="get_or_create_tag_id->insert",
                 )
                 tag_id = cursor.lastrowid
 
@@ -103,8 +105,8 @@ class TagManager(SQLiteDatabaseManager):
                 # 如果创建失败，尝试重新查询一次（可能是其他线程已经创建）
                 try:
                     cursor = self._execute_query(
-                        f'SELECT id FROM {self._get_table_name()} WHERE name = ?',
-                        (tag_name,)
+                        f"SELECT id FROM {self._get_table_name()} WHERE name = ?",
+                        (tag_name,),
                     )
                     result = cursor.fetchone()
                     if result:
@@ -112,7 +114,9 @@ class TagManager(SQLiteDatabaseManager):
                         self._tag_cache[tag_name] = tag_id
                         return tag_id
                 except Exception as retry_error:
-                    self.logger.error(f"重新查询标签失败: {tag_name}, 错误: {retry_error}")
+                    self.logger.error(
+                        f"重新查询标签失败: {tag_name}, 错误: {retry_error}"
+                    )
                 raise
 
     def get_tag_name(self, tag_id: int) -> Optional[str]:
@@ -126,7 +130,7 @@ class TagManager(SQLiteDatabaseManager):
             标签名称，如果不存在返回None
         """
         try:
-            tag_names = self._batch_get_names_by_ids([tag_id], 'name')
+            tag_names = self._batch_get_names_by_ids([tag_id], "name")
             return tag_names[0] if tag_names else None
         except Exception as e:
             self.logger.error(f"获取标签名称失败 (ID: {tag_id}): {e}")
@@ -169,19 +173,26 @@ class TagManager(SQLiteDatabaseManager):
                         cursor = conn.cursor()
 
                         # 使用INSERT OR IGNORE批量插入，忽略重复标签
-                        insert_query = f'INSERT OR IGNORE INTO {table_name} (name) VALUES (?)'
+                        insert_query = (
+                            f"INSERT OR IGNORE INTO {table_name} (name) VALUES (?)"
+                        )
                         params_list = [(tag_name,) for tag_name in new_tag_names]
                         cursor.executemany(insert_query, params_list)
                         conn.commit()
 
                         # 重新查询所有新标签的ID（包括已存在的和新插入的）
-                        placeholders = ','.join(['?' for _ in new_tag_names])
-                        cursor.execute(f'SELECT id, name FROM {table_name} WHERE name IN ({placeholders})', new_tag_names)
+                        placeholders = ",".join(["?" for _ in new_tag_names])
+                        cursor.execute(
+                            f"SELECT id, name FROM {table_name} WHERE name IN ({placeholders})",
+                            new_tag_names,
+                        )
                         results = cursor.fetchall()
                         return results
 
                     # 执行整个事务
-                    results = self._execute_with_connection(batch_create_and_query, caller="小弟批量创建和查询tags")
+                    results = self._execute_with_connection(
+                        batch_create_and_query, caller="小弟批量创建和查询tags"
+                    )
 
                     # 构建名称到ID的映射
                     tag_id_map = {row[1]: row[0] for row in results}
@@ -232,13 +243,19 @@ class TagManager(SQLiteDatabaseManager):
 
         # 如果有缺失的，去数据库查询
         if missing_ids:
-            db_names = self._batch_get_names_by_ids(missing_ids, 'name', caller="get_tag_names->查询缺失")
+            db_names = self._batch_get_names_by_ids(
+                missing_ids, "name", caller="get_tag_names->查询缺失"
+            )
             # 填充结果并更新缓存
             missing_idx = 0
             with self._cache_lock:
                 for i, tag_id in enumerate(tag_ids):
                     if result[i] is None:
-                        tag_name = db_names[missing_idx] if missing_idx < len(db_names) else None
+                        tag_name = (
+                            db_names[missing_idx]
+                            if missing_idx < len(db_names)
+                            else None
+                        )
                         result[i] = tag_name
                         if tag_name:
                             self._id_cache[tag_id] = tag_name
@@ -314,21 +331,25 @@ class TagManager(SQLiteDatabaseManager):
                 table_name = self._get_table_name()
 
                 # 获取所有标签ID
-                cursor = self._execute_query(f'SELECT id FROM {table_name}')
+                cursor = self._execute_query(f"SELECT id FROM {table_name}")
                 all_tag_ids = [row[0] for row in cursor.fetchall()]
 
                 # 找出未使用的标签ID
-                unused_tag_ids = [tag_id for tag_id in all_tag_ids if tag_id not in used_tag_ids]
+                unused_tag_ids = [
+                    tag_id for tag_id in all_tag_ids if tag_id not in used_tag_ids
+                ]
 
                 if not unused_tag_ids:
                     self.logger.info("没有发现未使用的标签")
                     return 0
 
                 # 批量删除未使用的标签
-                placeholders = ','.join(['?' for _ in unused_tag_ids])
-                delete_query = f'DELETE FROM {table_name} WHERE id IN ({placeholders})'
+                placeholders = ",".join(["?" for _ in unused_tag_ids])
+                delete_query = f"DELETE FROM {table_name} WHERE id IN ({placeholders})"
 
-                cursor = self._execute_single(delete_query, tuple(unused_tag_ids), caller="cleanup_unused_tags")
+                cursor = self._execute_single(
+                    delete_query, tuple(unused_tag_ids), caller="cleanup_unused_tags"
+                )
 
                 deleted_count = cursor.rowcount
 
@@ -341,7 +362,9 @@ class TagManager(SQLiteDatabaseManager):
                 for tag_name in tags_to_remove:
                     del self._tag_cache[tag_name]
 
-                self.logger.info(f"清理了 {deleted_count} 个未使用的标签（从缓存中删除 {len(tags_to_remove)} 个）")
+                self.logger.info(
+                    f"清理了 {deleted_count} 个未使用的标签（从缓存中删除 {len(tags_to_remove)} 个）"
+                )
                 return deleted_count
 
         except Exception as e:
@@ -357,16 +380,13 @@ class TagManager(SQLiteDatabaseManager):
         """
         try:
             table_name = self._get_table_name()
-            cursor = self._execute_query(f'SELECT COUNT(*) FROM {table_name}')
+            cursor = self._execute_query(f"SELECT COUNT(*) FROM {table_name}")
             total_count = cursor.fetchone()[0]
 
-            return {
-                'total_tags': total_count,
-                'table_name': table_name
-            }
+            return {"total_tags": total_count, "table_name": table_name}
         except Exception as e:
             self.logger.error(f"获取标签统计失败: {e}")
-            return {'total_tags': 0, 'table_name': self._get_table_name()}
+            return {"total_tags": 0, "table_name": self._get_table_name()}
 
     def search_tags_by_prefix(self, prefix: str, limit: int = 10) -> List[Dict]:
         """
@@ -382,13 +402,13 @@ class TagManager(SQLiteDatabaseManager):
         try:
             table_name = self._get_table_name()
             cursor = self._execute_query(
-                f'SELECT id, name FROM {table_name} WHERE name LIKE ? ORDER BY name LIMIT ?',
-                (f'{prefix}%', limit)
+                f"SELECT id, name FROM {table_name} WHERE name LIKE ? ORDER BY name LIMIT ?",
+                (f"{prefix}%", limit),
             )
 
             results = []
             for row in cursor.fetchall():
-                results.append({'id': row[0], 'name': row[1]})
+                results.append({"id": row[0], "name": row[1]})
 
             return results
         except Exception as e:

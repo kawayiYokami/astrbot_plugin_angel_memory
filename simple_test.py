@@ -12,7 +12,9 @@ from pathlib import Path
 def setup_environment():
     """设置测试环境"""
     # 路径配置
-    plugin_root = Path("E:/github/ai-qq/astrbot/data/plugins/astrbot_plugin_angel_memory")
+    plugin_root = Path(
+        "E:/github/ai-qq/astrbot/data/plugins/astrbot_plugin_angel_memory"
+    )
     upstream_root = Path("E:/github/ai-qq/astrbot/astrbot")
     base_dir = Path("E:/github/ai-qq/astrbot")
     plugins_base = Path("E:/github/ai-qq/astrbot/data/plugins")
@@ -66,6 +68,7 @@ def test_package_imports():
     except Exception as e:
         print(f"❌ 包导入测试失败: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

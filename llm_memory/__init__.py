@@ -7,17 +7,32 @@ LLM Memory System - 统一的三元组记忆体系
 
 from .service.cognitive_service import CognitiveService
 from .models.data_models import (
-    BaseMemory, MemoryType,
-    MemoryError, VectorizationError, StorageError, ValidationError
+    BaseMemory,
+    MemoryType,
+    MemoryError,
+    VectorizationError,
+    StorageError,
+    ValidationError,
 )
-from .config.system_config import system_config, MemorySystemConfig, KNOWLEDGE_CORE_SEPARATOR
+from .config.system_config import (
+    system_config,
+    MemorySystemConfig,
+    KNOWLEDGE_CORE_SEPARATOR,
+)
 
 __version__ = "6.0.0"
 __all__ = [
     # 核心接口
-    "CognitiveService", "BaseMemory", "MemoryType",
+    "CognitiveService",
+    "BaseMemory",
+    "MemoryType",
     # 异常
-    "MemoryError", "VectorizationError", "StorageError", "ValidationError",
+    "MemoryError",
+    "VectorizationError",
+    "StorageError",
+    "ValidationError",
     # 配置
-    "system_config", "MemorySystemConfig", "KNOWLEDGE_CORE_SEPARATOR"
+    "system_config",
+    "MemorySystemConfig",
+    "KNOWLEDGE_CORE_SEPARATOR",
 ]

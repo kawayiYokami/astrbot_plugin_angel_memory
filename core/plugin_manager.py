@@ -6,11 +6,14 @@ PluginManager - 插件管理器
 
 from .initialization_manager import InitializationManager
 from .background_initializer import BackgroundInitializer
+
 try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
+
 
 class PluginManager:
     """插件管理器"""
@@ -31,7 +34,9 @@ class PluginManager:
         self.init_manager = InitializationManager(self.context)
 
         # 后台初始化器（共享主线程的PluginContext）
-        self.background_initializer = BackgroundInitializer(self.init_manager, self.config, plugin_context)
+        self.background_initializer = BackgroundInitializer(
+            self.init_manager, self.config, plugin_context
+        )
 
         # 主线程组件实例（将在初始化完成后由主插件设置）
         self.main_thread_components = {}
@@ -43,7 +48,10 @@ class PluginManager:
         self.logger.info(f"   当前提供商: {plugin_context.get_current_provider()}")
         self.logger.info(f"   数据目录: {plugin_context.get_index_dir()}")
         self.logger.info(f"   有可用提供商: {plugin_context.has_providers()}")
-        self.logger.info("   初始化架构: PluginContext + InitializationManager 协作模式")
+        self.logger.info(
+            "   初始化架构: PluginContext + InitializationManager 协作模式"
+        )
+
     async def handle_llm_request(self, event, request, event_plugin_context=None):
         """
         处理LLM请求
@@ -60,10 +68,7 @@ class PluginManager:
         # 等待系统准备就绪
         if not self.init_manager.wait_until_ready(timeout=30):
             self.logger.info("⏳ 系统正在初始化中，LLM请求将跳过")
-            return {
-                "status": "waiting",
-                "message": "系统正在初始化中，请稍候..."
-            }
+            return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
         # 系统准备就绪，正常处理业务
         return await self._process_llm_request(event, request, event_plugin_context)
@@ -84,10 +89,7 @@ class PluginManager:
         # 等待系统准备就绪
         if not self.init_manager.wait_until_ready(timeout=30):
             self.logger.info("⏳ 系统正在初始化中，LLM响应将跳过")
-            return {
-                "status": "waiting",
-                "message": "系统正在初始化中，请稍候..."
-            }
+            return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
         # 系统准备就绪，正常处理业务
         return await self._process_llm_response(event, response, event_plugin_context)
@@ -100,6 +102,7 @@ class PluginManager:
             components: 主线程创建的组件字典
         """
         self.main_thread_components = components
+
     async def _process_llm_request(self, event, request, event_plugin_context=None):
         """
         处理LLM请求的具体逻辑
@@ -122,7 +125,9 @@ class PluginManager:
                 deepmind = components.get("deepmind")
 
             if deepmind:
-                self.logger.debug("找到 DeepMind 组件，开始执行 organize_and_inject_memories")
+                self.logger.debug(
+                    "找到 DeepMind 组件，开始执行 organize_and_inject_memories"
+                )
                 # 直接使用 await 处理异步任务
                 await deepmind.organize_and_inject_memories(event, request)
                 self.logger.debug("organize_and_inject_memories 执行完成")
@@ -130,21 +135,15 @@ class PluginManager:
                 return {
                     "status": "success",
                     "message": "LLM请求处理完成",
-                    "request_type": "llm"
+                    "request_type": "llm",
                 }
             else:
                 self.logger.warning("DeepMind组件尚未初始化完成")
-                return {
-                    "status": "waiting",
-                    "message": "DeepMind组件尚未初始化完成"
-                }
+                return {"status": "waiting", "message": "DeepMind组件尚未初始化完成"}
 
         except Exception as e:
             self.logger.error(f"LLM请求处理失败: {e}")
-            return {
-                "status": "error",
-                "message": f"LLM请求处理失败: {str(e)}"
-            }
+            return {"status": "error", "message": f"LLM请求处理失败: {str(e)}"}
 
     async def _process_llm_response(self, event, response, event_plugin_context=None):
         """
@@ -168,7 +167,9 @@ class PluginManager:
                 deepmind = components.get("deepmind")
 
             if deepmind:
-                self.logger.debug("找到 DeepMind 组件，开始执行 async_analyze_and_update_memory")
+                self.logger.debug(
+                    "找到 DeepMind 组件，开始执行 async_analyze_and_update_memory"
+                )
                 # 调用异步分析方法
                 await deepmind.async_analyze_and_update_memory(event, response)
                 self.logger.debug("async_analyze_and_update_memory 执行完成")
@@ -176,21 +177,15 @@ class PluginManager:
                 return {
                     "status": "success",
                     "message": "LLM响应处理完成",
-                    "response_type": "llm"
+                    "response_type": "llm",
                 }
             else:
                 self.logger.warning("DeepMind组件尚未初始化完成")
-                return {
-                    "status": "waiting",
-                    "message": "DeepMind组件尚未初始化完成"
-                }
+                return {"status": "waiting", "message": "DeepMind组件尚未初始化完成"}
 
         except Exception as e:
             self.logger.error(f"LLM响应处理失败: {e}")
-            return {
-                "status": "error",
-                "message": f"LLM响应处理失败: {str(e)}"
-            }
+            return {"status": "error", "message": f"LLM响应处理失败: {str(e)}"}
 
     def get_initialized_components(self):
         """
@@ -217,7 +212,7 @@ class PluginManager:
                 "state": self.init_manager.get_current_state().value,
                 "ready": self.init_manager.is_ready(),
                 "has_providers": has_providers,
-                "provider_count": provider_count
+                "provider_count": provider_count,
             }
 
             self.logger.debug(f"📊 插件状态查询: {status}")
@@ -230,7 +225,7 @@ class PluginManager:
                 "ready": False,
                 "has_providers": False,
                 "provider_count": 0,
-                "error": str(e)
+                "error": str(e),
             }
 
     def is_ready(self):

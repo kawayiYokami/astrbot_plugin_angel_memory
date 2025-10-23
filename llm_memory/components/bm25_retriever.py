@@ -15,6 +15,7 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -32,10 +33,10 @@ def _tokenize_text(text: str) -> List[str]:
     import re
 
     # 提取英文单词（连续字母）
-    english_words = re.findall(r'[a-zA-Z]+', text)
+    english_words = re.findall(r"[a-zA-Z]+", text)
 
     # 处理中文部分
-    chinese_text = re.sub(r'[a-zA-Z]+', ' ', text)
+    chinese_text = re.sub(r"[a-zA-Z]+", " ", text)
     chinese_words = list(jieba.cut(chinese_text.strip()))
 
     # 合并并过滤空词
@@ -44,9 +45,7 @@ def _tokenize_text(text: str) -> List[str]:
 
 
 def rerank_with_bm25(
-    query: str,
-    candidates: List[Dict[str, str]],
-    limit: int = 10
+    query: str, candidates: List[Dict[str, str]], limit: int = 10
 ) -> List[Tuple[str, float]]:
     """
     对给定的候选文档列表进行 BM25 精排。
@@ -70,7 +69,9 @@ def rerank_with_bm25(
         corpus = [c["content"] for c in candidates]
 
         # 过滤掉空的文档
-        valid_pairs = [(doc_id, text) for doc_id, text in zip(doc_ids, corpus) if doc_id and text]
+        valid_pairs = [
+            (doc_id, text) for doc_id, text in zip(doc_ids, corpus) if doc_id and text
+        ]
         if not valid_pairs:
             logger.warning("所有候选文档的 content 均为空，无法进行 BM25 精排。")
             return []
@@ -119,6 +120,7 @@ class BM25Retriever:
     已弃用：BM25Retriever 类已被无状态的 rerank_with_bm25 函数取代。
     为了向后兼容而保留，但不应再使用。
     """
+
     def __init__(self, *args, **kwargs):
         logger.warning("BM25Retriever 类已弃用，请使用 rerank_with_bm25 函数。")
 

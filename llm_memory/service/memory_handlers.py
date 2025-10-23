@@ -12,8 +12,10 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory, MemoryType
+
 
 class MemoryHandler:
     """
@@ -52,12 +54,18 @@ class MemoryHandler:
             memory_type=self.memory_type,
             judgment=judgment,
             reasoning=reasoning,
-            tags=tags
+            tags=tags,
         )
         self.store.remember(self.collection, memory)
         return memory
 
-    def recall(self, query: str, limit: int = 10, include_consolidated: bool = True, similarity_threshold: float = 0.6) -> List[BaseMemory]:
+    def recall(
+        self,
+        query: str,
+        limit: int = 10,
+        include_consolidated: bool = True,
+        similarity_threshold: float = 0.6,
+    ) -> List[BaseMemory]:
         """
         回忆相关记忆。
 
@@ -73,7 +81,13 @@ class MemoryHandler:
         where_filter = {"memory_type": self.memory_type.value}
         if not include_consolidated:
             where_filter["is_consolidated"] = False
-        return self.store.recall(self.collection, query, limit, where_filter=where_filter, similarity_threshold=similarity_threshold)
+        return self.store.recall(
+            self.collection,
+            query,
+            limit,
+            where_filter=where_filter,
+            similarity_threshold=similarity_threshold,
+        )
 
 
 class MemoryHandlerFactory:
@@ -94,10 +108,14 @@ class MemoryHandlerFactory:
         # 创建各种记忆处理器
         self.handlers = {
             "event": MemoryHandler(MemoryType.EVENT, self.collection, self.store),
-            "knowledge": MemoryHandler(MemoryType.KNOWLEDGE, self.collection, self.store),
+            "knowledge": MemoryHandler(
+                MemoryType.KNOWLEDGE, self.collection, self.store
+            ),
             "skill": MemoryHandler(MemoryType.SKILL, self.collection, self.store),
-            "emotional": MemoryHandler(MemoryType.EMOTIONAL, self.collection, self.store),
-            "task": MemoryHandler(MemoryType.TASK, self.collection, self.store)
+            "emotional": MemoryHandler(
+                MemoryType.EMOTIONAL, self.collection, self.store
+            ),
+            "task": MemoryHandler(MemoryType.TASK, self.collection, self.store),
         }
 
     def get_handler(self, memory_type: str) -> MemoryHandler:

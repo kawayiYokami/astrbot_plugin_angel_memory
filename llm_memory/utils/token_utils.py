@@ -6,6 +6,7 @@ Token 工具模块
 
 try:
     import tiktoken
+
     _TIKTOKEN_AVAILABLE = True
 except ImportError:
     _TIKTOKEN_AVAILABLE = False
@@ -21,24 +22,24 @@ _encoder_cache = {}
 def get_tokenizer(encoding_name: str = _DEFAULT_ENCODING):
     """
     获取 tokenizer 实例
-    
+
     Args:
         encoding_name: 编码器名称，默认为 cl100k_base
-        
+
     Returns:
         tiktoken 编码器实例
     """
     global _encoder_cache
-    
+
     if not _TIKTOKEN_AVAILABLE:
         raise ImportError(
             "tiktoken library is not installed. "
             "Please install it with: pip install tiktoken"
         )
-    
+
     if encoding_name not in _encoder_cache:
         _encoder_cache[encoding_name] = tiktoken.get_encoding(encoding_name)
-    
+
     return _encoder_cache[encoding_name]
 
 
@@ -68,7 +69,9 @@ def count_tokens(text: str, encoding_name: str = _DEFAULT_ENCODING) -> int:
         raise RuntimeError(f"Token counting failed: {e}") from e
 
 
-def truncate_by_tokens(text: str, max_tokens: int, encoding_name: str = _DEFAULT_ENCODING) -> str:
+def truncate_by_tokens(
+    text: str, max_tokens: int, encoding_name: str = _DEFAULT_ENCODING
+) -> str:
     """
     按 token 数量截断文本
 
@@ -95,7 +98,7 @@ def truncate_by_tokens(text: str, max_tokens: int, encoding_name: str = _DEFAULT
     except (ValueError, RuntimeError):
         # 编码器相关错误：不支持的编码或运行时错误
         # 回退到简单的字符截断
-        return text[:max_tokens * 4]  # 粗略估计
+        return text[: max_tokens * 4]  # 粗略估计
     except Exception as e:
         # 其他预期外的错误，重新抛出以保持追踪
         raise RuntimeError(f"Token truncation failed: {e}") from e

@@ -11,10 +11,12 @@ from astrbot.api.star import Context, Star
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.star.star_tools import StarTools
+
 try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 # 导入版本检查相关模块
@@ -26,6 +28,7 @@ import pkg_resources
 from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
 
+
 def ensure_chromadb_version():
     """确保 chromadb 版本不低于 1.2.1"""
     MINIMUM_CHROMADB_VERSION = "1.2.1"
@@ -36,27 +39,37 @@ def ensure_chromadb_version():
         current_version = pkg_resources.get_distribution("chromadb").version
         logger.info(f"当前安装的 chromadb 版本: {current_version}")
 
-        if pkg_resources.parse_version(current_version) < pkg_resources.parse_version(MINIMUM_CHROMADB_VERSION):
-            logger.warning(f"chromadb 版本过低 (当前: {current_version}, 最低要求: {MINIMUM_CHROMADB_VERSION})，将升级到最新版本。")
+        if pkg_resources.parse_version(current_version) < pkg_resources.parse_version(
+            MINIMUM_CHROMADB_VERSION
+        ):
+            logger.warning(
+                f"chromadb 版本过低 (当前: {current_version}, 最低要求: {MINIMUM_CHROMADB_VERSION})，将升级到最新版本。"
+            )
             _upgrade_chromadb()
         else:
             logger.info(f"chromadb 版本检查通过 (版本: {current_version})")
 
     except pkg_resources.DistributionNotFound:
-        logger.warning(f"chromadb 未安装，将安装最新版本（不低于 {MINIMUM_CHROMADB_VERSION}）。")
+        logger.warning(
+            f"chromadb 未安装，将安装最新版本（不低于 {MINIMUM_CHROMADB_VERSION}）。"
+        )
         _upgrade_chromadb()
     except Exception as e:
         logger.error(f"检查 chromadb 版本时出错: {e}")
+
 
 def _upgrade_chromadb():
     """升级 chromadb 到最新版本"""
     try:
         logger.info("正在升级 chromadb 到最新版本...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "chromadb"])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "chromadb"]
+        )
         logger.info("chromadb 升级成功。强烈建议重启应用程序以加载新版本的库。")
     except subprocess.CalledProcessError as e:
         logger.error(f"升级 chromadb 失败: {e}")
         raise
+
 
 class AngelMemoryPlugin(Star):
     """天使记忆插件主类
@@ -87,7 +100,9 @@ class AngelMemoryPlugin(Star):
         self.logger.info(f"获取到插件数据目录: {data_dir}")
 
         # 2. 创建统一的PluginContext，包含所有必要资源
-        self.plugin_context = PluginContextFactory.create_from_initialization(context, config or {}, data_dir)
+        self.plugin_context = PluginContextFactory.create_from_initialization(
+            context, config or {}, data_dir
+        )
 
         # 2. 核心实例占位符（将在后台初始化完成后通过ComponentFactory创建）
         self.vector_store = None
@@ -103,8 +118,12 @@ class AngelMemoryPlugin(Star):
         self.plugin_manager = PluginManager(self.plugin_context)
 
         # 记录数据路径以验证配置
-        self.logger.info(f"天使记忆数据路径设置为: {self.plugin_context.get_index_dir().resolve()}")
-        self.logger.info(f"Angel Memory Plugin 实例创建完成 (提供商: {self.plugin_context.get_current_provider()}), 后台初始化已启动")
+        self.logger.info(
+            f"天使记忆数据路径设置为: {self.plugin_context.get_index_dir().resolve()}"
+        )
+        self.logger.info(
+            f"Angel Memory Plugin 实例创建完成 (提供商: {self.plugin_context.get_current_provider()}), 后台初始化已启动"
+        )
 
     def _load_complete_config(self):
         """在主线程检查配置项"""
@@ -117,13 +136,17 @@ class AngelMemoryPlugin(Star):
             if embedding_provider_id:
                 self.logger.info(f"✅ 检测到嵌入提供商配置: {embedding_provider_id}")
             else:
-                self.logger.info("ℹ️ 未配置嵌入提供商ID (astrbot_embedding_provider_id)，将使用本地模型")
+                self.logger.info(
+                    "ℹ️ 未配置嵌入提供商ID (astrbot_embedding_provider_id)，将使用本地模型"
+                )
 
             llm_provider_id = self.plugin_context.get_llm_provider_id()
             if llm_provider_id:
                 self.logger.info(f"✅ 检测到LLM提供商配置: {llm_provider_id}")
             else:
-                self.logger.info("ℹ️ 未配置LLM提供商ID (provider_id)，将使用基础记忆功能")
+                self.logger.info(
+                    "ℹ️ 未配置LLM提供商ID (provider_id)，将使用基础记忆功能"
+                )
 
             # 检查提供商可用性
             if self.plugin_context.has_providers():
@@ -138,7 +161,9 @@ class AngelMemoryPlugin(Star):
         """更新组件引用（在初始化完成后调用）"""
         if self.plugin_manager:
             # 从后台初始化器获取组件工厂
-            component_factory = self.plugin_manager.background_initializer.get_component_factory()
+            component_factory = (
+                self.plugin_manager.background_initializer.get_component_factory()
+            )
 
             # 获取所有组件
             components = component_factory.get_components()
@@ -156,9 +181,10 @@ class AngelMemoryPlugin(Star):
                 "cognitive_service": self.cognitive_service,
                 "deepmind": self.deepmind,
                 "note_service": self.note_service,
-                "file_monitor": self.file_monitor
+                "file_monitor": self.file_monitor,
             }
             self.plugin_manager.set_main_thread_components(main_components)
+
     @filter.on_llm_request(priority=-51)
     async def on_llm_request(self, event: AstrMessageEvent, request: ProviderRequest):
         """
@@ -175,7 +201,9 @@ class AngelMemoryPlugin(Star):
             self.logger.debug("组件引用已更新")
 
             # 使用共享的PluginContext处理请求
-            result = await self.plugin_manager.handle_llm_request(event, request, self.plugin_context)
+            result = await self.plugin_manager.handle_llm_request(
+                event, request, self.plugin_context
+            )
             self.logger.debug(f"handle_llm_request 返回结果: {result}")
 
             if result["status"] == "waiting":
@@ -184,7 +212,9 @@ class AngelMemoryPlugin(Star):
             elif result["status"] == "success":
                 self.logger.debug("LLM请求处理完成")
             else:
-                self.logger.error(f"LLM请求处理失败: {result.get('message', '未知错误')}")
+                self.logger.error(
+                    f"LLM请求处理失败: {result.get('message', '未知错误')}"
+                )
 
         except Exception as e:
             self.logger.error(f"LLM_REQUEST failed: {e}")
@@ -205,7 +235,9 @@ class AngelMemoryPlugin(Star):
             self.logger.debug("组件引用已更新")
 
             # 使用共享的PluginContext处理响应
-            result = await self.plugin_manager.handle_llm_response(event, response, self.plugin_context)
+            result = await self.plugin_manager.handle_llm_response(
+                event, response, self.plugin_context
+            )
             self.logger.debug(f"handle_llm_response 返回结果: {result}")
 
             if result["status"] == "waiting":
@@ -214,7 +246,9 @@ class AngelMemoryPlugin(Star):
             elif result["status"] == "success":
                 self.logger.debug("LLM响应处理完成")
             else:
-                self.logger.error(f"LLM响应处理失败: {result.get('message', '未知错误')}")
+                self.logger.error(
+                    f"LLM响应处理失败: {result.get('message', '未知错误')}"
+                )
 
         except Exception as e:
             self.logger.error(f"LLM_RESPONSE failed: {e}")
@@ -229,12 +263,17 @@ class AngelMemoryPlugin(Star):
                 self.plugin_manager.shutdown()
 
             # 获取最终状态
-            status = self.plugin_manager.get_status() if self.plugin_manager else {"state": "unknown"}
-            self.logger.info(f"Angel Memory Plugin 已关闭，最终状态: {status.get('state', 'unknown')}")
+            status = (
+                self.plugin_manager.get_status()
+                if self.plugin_manager
+                else {"state": "unknown"}
+            )
+            self.logger.info(
+                f"Angel Memory Plugin 已关闭，最终状态: {status.get('state', 'unknown')}"
+            )
 
         except Exception as e:
             self.logger.error(f"Angel Memory Plugin: 插件卸载清理失败: {e}")
-
 
     def get_plugin_status(self):
         """
@@ -248,15 +287,17 @@ class AngelMemoryPlugin(Star):
 
         status = self.plugin_manager.get_status()
         # 添加PluginContext信息
-        status.update({
-            "plugin_context": {
-                "current_provider": self.plugin_context.get_current_provider(),
-                "has_providers": self.plugin_context.has_providers(),
-                "index_dir": str(self.plugin_context.get_index_dir()),
-                "embedding_provider_id": self.plugin_context.get_embedding_provider_id(),
-                "llm_provider_id": self.plugin_context.get_llm_provider_id()
+        status.update(
+            {
+                "plugin_context": {
+                    "current_provider": self.plugin_context.get_current_provider(),
+                    "has_providers": self.plugin_context.has_providers(),
+                    "index_dir": str(self.plugin_context.get_index_dir()),
+                    "embedding_provider_id": self.plugin_context.get_embedding_provider_id(),
+                    "llm_provider_id": self.plugin_context.get_llm_provider_id(),
+                }
             }
-        })
+        )
         return status
 
     def get_plugin_context(self):

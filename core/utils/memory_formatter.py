@@ -55,13 +55,17 @@ class MemoryFormatter:
             # 处理 MemoryItem 对象的 memory_type 属性
             type_value = memory.memory_type
             type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
-            grouped_memories.setdefault(type_name, []).append(MemoryFormatter.format_single_memory(memory))
+            grouped_memories.setdefault(type_name, []).append(
+                MemoryFormatter.format_single_memory(memory)
+            )
         return grouped_memories
 
     @staticmethod
-    def format_memories_for_prompt(memories: List[MemoryItem],
-                                  useful_memory_ids: Optional[List[str]] = None,
-                                  new_memories: Optional[List[Dict[str, Any]]] = None) -> str:
+    def format_memories_for_prompt(
+        memories: List[MemoryItem],
+        useful_memory_ids: Optional[List[str]] = None,
+        new_memories: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """
         格式化记忆用于提示词
 
@@ -82,19 +86,22 @@ class MemoryFormatter:
 
         # 添加有用的历史记忆（使用列表推导式）
         if useful_memory_ids:
-            memories_to_format.extend(memory_map[mid] for mid in useful_memory_ids if mid in memory_map)
+            memories_to_format.extend(
+                memory_map[mid] for mid in useful_memory_ids if mid in memory_map
+            )
 
         # 添加新记忆（使用列表推导式）
         if new_memories:
             memories_to_format.extend(
                 MemoryItem(
-                    id=nm.get('id', 'new'),
-                    memory_type=nm.get('type', 'knowledge'),
-                    judgment=nm.get('judgment', ''),
-                    reasoning=nm.get('reasoning', ''),
-                    tags=nm.get('tags', []),
-                    strength=nm.get('strength', 0.5)
-                ) for nm in new_memories
+                    id=nm.get("id", "new"),
+                    memory_type=nm.get("type", "knowledge"),
+                    judgment=nm.get("judgment", ""),
+                    reasoning=nm.get("reasoning", ""),
+                    tags=nm.get("tags", []),
+                    strength=nm.get("strength", 0.5),
+                )
+                for nm in new_memories
             )
 
         if not memories_to_format:
@@ -107,7 +114,9 @@ class MemoryFormatter:
         formatted_lines = ["[相关记忆]"]
         for memory_type, formatted_memories in grouped_memories.items():
             formatted_lines.append(f"\n[{memory_type}]")
-            formatted_lines.extend(f"\n{memory_text}" for memory_text in formatted_memories)
+            formatted_lines.extend(
+                f"\n{memory_text}" for memory_text in formatted_memories
+            )
 
         return "".join(formatted_lines)
 
@@ -132,7 +141,9 @@ class MemoryFormatter:
         formatted_lines = ["[相关记忆]"]
         for memory_type, formatted_memories in grouped_memories.items():
             formatted_lines.append(f"\n[{memory_type}]")
-            formatted_lines.extend(f"\n{memory_text}" for memory_text in formatted_memories)
+            formatted_lines.extend(
+                f"\n{memory_text}" for memory_text in formatted_memories
+            )
 
         return "".join(formatted_lines)
 
@@ -152,6 +163,7 @@ class MemoryFormatter:
 
         # 按类型分组（保留原始对象）
         from .memory_id_resolver import MemoryIDResolver
+
         grouped = {}
         for memory in memories:
             # 处理 MemoryItem 对象的 memory_type 属性
@@ -166,7 +178,11 @@ class MemoryFormatter:
                 # 生成短ID并格式化记忆
                 short_id = MemoryIDResolver.generate_short_id(memory.id)
                 judgment = memory.judgment.strip()
-                reasoning = f"\n   ——因为{memory.reasoning.strip()}" if memory.reasoning and memory.reasoning.strip() else ""
+                reasoning = (
+                    f"\n   ——因为{memory.reasoning.strip()}"
+                    if memory.reasoning and memory.reasoning.strip()
+                    else ""
+                )
                 display_lines.append(f"\n{i}. [id:{short_id}]{judgment}{reasoning}")
 
         return "".join(display_lines)

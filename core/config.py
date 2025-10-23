@@ -11,6 +11,7 @@ from dataclasses import dataclass
 @dataclass
 class MemoryCapacityConfig:
     """记忆容量配置类"""
+
     knowledge: int = 14
     emotional: int = 1
     skill: int = 7
@@ -20,11 +21,12 @@ class MemoryCapacityConfig:
 
 class MemoryConstants:
     """记忆系统常量定义"""
+
     MIN_MESSAGE_LENGTH = 5
     SHORT_TERM_MEMORY_CAPACITY = 1.0
     SLEEP_INTERVAL = 3600  # 默认睡眠间隔（秒）
     DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
-    SMALL_MODEL_NOTE_BUDGET = 8000   # 默认小模型笔记Token预算
+    SMALL_MODEL_NOTE_BUDGET = 8000  # 默认小模型笔记Token预算
     LARGE_MODEL_NOTE_BUDGET = 12000  # 默认大模型笔记Token预算
 
     # 时间常量（秒）
@@ -35,21 +37,21 @@ class MemoryConstants:
 
     # 记忆类型映射
     MEMORY_TYPE_NAMES = {
-        'knowledge': '知识',
-        'event': '事件',
-        'skill': '技能',
-        'emotional': '情感',
-        'task': '任务',
-        'meta': '元记忆'
+        "knowledge": "知识",
+        "event": "事件",
+        "skill": "技能",
+        "emotional": "情感",
+        "task": "任务",
+        "meta": "元记忆",
     }
 
     MEMORY_TYPE_MAPPING = {
-        '知识记忆': 'knowledge',
-        '事件记忆': 'event',
-        '技能记忆': 'skill',
-        '任务记忆': 'task',
-        '情感记忆': 'emotional',
-        '元记忆': 'meta'
+        "知识记忆": "knowledge",
+        "事件记忆": "event",
+        "技能记忆": "skill",
+        "任务记忆": "task",
+        "情感记忆": "emotional",
+        "元记忆": "meta",
     }
 
 
@@ -63,7 +65,11 @@ class MemoryConfig:
     配置验证确保用户输入的参数在合理范围内，防止异常配置导致系统不稳定。
     """
 
-    def __init__(self, config: Dict[str, Any] | None = None, data_dir: str = MemoryConstants.DEFAULT_DATA_DIR):
+    def __init__(
+        self,
+        config: Dict[str, Any] | None = None,
+        data_dir: str = MemoryConstants.DEFAULT_DATA_DIR,
+    ):
         """
         初始化配置
 
@@ -76,13 +82,25 @@ class MemoryConfig:
 
         # 预计算常用配置值（使用更紧凑的表达）
         config_get = self.config.get
-        self._min_message_length = self._validate_min_message_length(config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH))
-        self._short_term_memory_capacity = self._validate_short_term_memory_capacity(config_get("short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY))
-        self._sleep_interval = self._validate_sleep_interval(config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL))
+        self._min_message_length = self._validate_min_message_length(
+            config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH)
+        )
+        self._short_term_memory_capacity = self._validate_short_term_memory_capacity(
+            config_get(
+                "short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY
+            )
+        )
+        self._sleep_interval = self._validate_sleep_interval(
+            config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL)
+        )
         self._data_directory = config_get("data_directory", self.data_dir)
         self._provider_id = config_get("provider_id", "")
-        self._small_model_note_budget = self._validate_token_budget(config_get("small_model_note_budget", 8000), "small_model_note_budget")
-        self._large_model_note_budget = self._validate_token_budget(config_get("large_model_note_budget", 12000), "large_model_note_budget")
+        self._small_model_note_budget = self._validate_token_budget(
+            config_get("small_model_note_budget", 8000), "small_model_note_budget"
+        )
+        self._large_model_note_budget = self._validate_token_budget(
+            config_get("large_model_note_budget", 12000), "large_model_note_budget"
+        )
 
     @property
     def min_message_length(self) -> int:
@@ -119,7 +137,6 @@ class MemoryConfig:
         """获取大模型笔记Token预算"""
         return self._large_model_note_budget
 
-
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """
         获取配置值
@@ -142,7 +159,7 @@ class MemoryConfig:
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "small_model_note_budget": self.small_model_note_budget,
-            "large_model_note_budget": self.large_model_note_budget
+            "large_model_note_budget": self.large_model_note_budget,
         }
 
     def get_capacity_config(self) -> MemoryCapacityConfig:
@@ -152,7 +169,9 @@ class MemoryConfig:
     def _validate_min_message_length(self, value: Any) -> int:
         """验证最小消息长度"""
         if not isinstance(value, int) or value < 1:
-            raise ValueError(f"min_message_length must be a positive integer, got: {value}")
+            raise ValueError(
+                f"min_message_length must be a positive integer, got: {value}"
+            )
         if value > 500:
             raise ValueError(f"min_message_length too large (max 500), got: {value}")
         return value
@@ -160,23 +179,33 @@ class MemoryConfig:
     def _validate_short_term_memory_capacity(self, value: Any) -> float:
         """验证短期记忆容量倍数"""
         if not isinstance(value, (int, float)) or value <= 0:
-            raise ValueError(f"short_term_memory_capacity must be a positive number, got: {value}")
+            raise ValueError(
+                f"short_term_memory_capacity must be a positive number, got: {value}"
+            )
         if value > 10.0:
-            raise ValueError(f"short_term_memory_capacity too large (max 10.0), got: {value}")
+            raise ValueError(
+                f"short_term_memory_capacity too large (max 10.0), got: {value}"
+            )
         return float(value)
 
     def _validate_sleep_interval(self, value: Any) -> int:
         """验证睡眠间隔"""
         if not isinstance(value, int) or value < 0:
-            raise ValueError(f"sleep_interval must be a non-negative integer, got: {value}")
+            raise ValueError(
+                f"sleep_interval must be a non-negative integer, got: {value}"
+            )
         if value > 24 * 60 * 60:  # 超过24小时被视为不合理
-            raise ValueError(f"sleep_interval too large (max 86400 seconds), got: {value}")
+            raise ValueError(
+                f"sleep_interval too large (max 86400 seconds), got: {value}"
+            )
         return value
 
     def _validate_token_budget(self, value: Any, field_name: str) -> int:
         """验证Token预算"""
         if not isinstance(value, int) or value < 0:
-            raise ValueError(f"{field_name} must be a non-negative integer, got: {value}")
+            raise ValueError(
+                f"{field_name} must be a non-negative integer, got: {value}"
+            )
         if value > 64000:
             raise ValueError(f"{field_name} too large (max 64000), got: {value}")
         return value
@@ -184,5 +213,7 @@ class MemoryConfig:
     def _validate_bool(self, value: Any, field_name: str) -> bool:
         """验证布尔值"""
         if not isinstance(value, bool):
-            raise ValueError(f"{field_name} must be a boolean, got: {type(value).__name__}")
+            raise ValueError(
+                f"{field_name} must be a boolean, got: {type(value).__name__}"
+            )
         return value

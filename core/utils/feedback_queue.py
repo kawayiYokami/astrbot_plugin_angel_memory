@@ -13,6 +13,7 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -22,7 +23,12 @@ FeedbackTask = Union[Dict[str, Any], None]
 class FeedbackQueue:
     """后台任务队列，支持按 session 聚合反馈以减少频繁写入。"""
 
-    def __init__(self, worker_name: str = "MemoryFeedbackWorker", flush_interval: float = 0.2, batch_threshold: int = 50):
+    def __init__(
+        self,
+        worker_name: str = "MemoryFeedbackWorker",
+        flush_interval: float = 0.2,
+        batch_threshold: int = 50,
+    ):
         self._queue: "queue.Queue[FeedbackTask]" = queue.Queue()
         self._stop_event = threading.Event()
 
@@ -33,7 +39,9 @@ class FeedbackQueue:
         self._buffers: Dict[str, Dict[str, Any]] = {}
         self._scheduled: Dict[str, threading.Timer] = {}
 
-        self._thread = threading.Thread(target=self._worker_loop, name=worker_name, daemon=True)
+        self._thread = threading.Thread(
+            target=self._worker_loop, name=worker_name, daemon=True
+        )
         self._thread.start()
         logger.info("反馈队列线程已启动: %s", worker_name)
 
@@ -50,11 +58,13 @@ class FeedbackQueue:
         # --- 开始新增的逻辑 ---
         # 通过检查任务的 payload 是否包含 'event_data' 来识别新型异步分析任务
         payload = task.get("payload", {})
-        is_analysis_task = 'event_data' in payload
+        is_analysis_task = "event_data" in payload
 
         if is_analysis_task:
             session_id = task.get("session_id", "unknown")
-            logger.info(f"[反馈队列] 收到[异步分析]任务，直接入队 - 会话ID: {session_id}")
+            logger.info(
+                f"[反馈队列] 收到[异步分析]任务，直接入队 - 会话ID: {session_id}"
+            )
             # 对于新任务，绕过缓冲，直接放入执行队列
             self._queue.put(task)
             return
@@ -66,7 +76,9 @@ class FeedbackQueue:
         merge_groups: List[List[str]] = task.get("merge_groups", [])
 
         logger.info(f"[反馈队列] 收到[记忆反馈]任务，进入缓冲 - 会话ID: {session_id}")
-        logger.debug(f"[反馈队列] 收到任务提交，会话ID: {session_id}，有用记忆数: {len(useful_ids)}，新记忆数: {len(new_memories)}，合并组数: {len(merge_groups)}")
+        logger.debug(
+            f"[反馈队列] 收到任务提交，会话ID: {session_id}，有用记忆数: {len(useful_ids)}，新记忆数: {len(new_memories)}，合并组数: {len(merge_groups)}"
+        )
 
         # 添加更多调试信息
         if payload:
@@ -74,12 +86,15 @@ class FeedbackQueue:
             logger.debug(f"  负载键: {list(payload.keys())}")
 
         with self._buffer_lock:
-            buffer = self._buffers.setdefault(session_id, {
-                "feedback_fn": task.get("feedback_fn"),
-                "useful_ids": set(),
-                "new_memories": [],
-                "merge_groups": []
-            })
+            buffer = self._buffers.setdefault(
+                session_id,
+                {
+                    "feedback_fn": task.get("feedback_fn"),
+                    "useful_ids": set(),
+                    "new_memories": [],
+                    "merge_groups": [],
+                },
+            )
 
             if buffer.get("feedback_fn") is None:
                 buffer["feedback_fn"] = task.get("feedback_fn")
@@ -92,19 +107,25 @@ class FeedbackQueue:
                 buffer["merge_groups"].extend(merge_groups)
 
             should_flush = (
-                len(buffer["useful_ids"]) >= self.batch_threshold or
-                len(buffer["new_memories"]) >= self.batch_threshold or
-                len(buffer["merge_groups"]) >= self.batch_threshold
+                len(buffer["useful_ids"]) >= self.batch_threshold
+                or len(buffer["new_memories"]) >= self.batch_threshold
+                or len(buffer["merge_groups"]) >= self.batch_threshold
             )
 
-            logger.debug(f"[反馈队列] 会话 {session_id} 缓冲区状态 - 有用记忆: {len(buffer['useful_ids'])}, 新记忆: {len(buffer['new_memories'])}, 合并组: {len(buffer['merge_groups'])}")
+            logger.debug(
+                f"[反馈队列] 会话 {session_id} 缓冲区状态 - 有用记忆: {len(buffer['useful_ids'])}, 新记忆: {len(buffer['new_memories'])}, 合并组: {len(buffer['merge_groups'])}"
+            )
 
             if should_flush:
                 logger.debug(f"[反馈队列] 会话 {session_id} 达到批处理阈值，立即刷新")
                 self._enqueue_buffer_locked(session_id)
             elif session_id not in self._scheduled:
-                logger.debug(f"[反馈队列] 会话 {session_id} 设置定时刷新，间隔: {self.flush_interval}秒")
-                timer = threading.Timer(self.flush_interval, self._flush_session, args=[session_id])
+                logger.debug(
+                    f"[反馈队列] 会话 {session_id} 设置定时刷新，间隔: {self.flush_interval}秒"
+                )
+                timer = threading.Timer(
+                    self.flush_interval, self._flush_session, args=[session_id]
+                )
                 timer.daemon = True
                 self._scheduled[session_id] = timer
                 timer.start()
@@ -151,13 +172,20 @@ class FeedbackQueue:
         session_id: str = task.get("session_id", "unknown")
         payload = task.get("payload", {})
 
-        logger.info(f"[后台工人] 开始处理任务 - 会话ID: {session_id}, 任务类型: {feedback_fn.__name__}")
+        logger.info(
+            f"[后台工人] 开始处理任务 - 会话ID: {session_id}, 任务类型: {feedback_fn.__name__}"
+        )
 
         try:
             feedback_fn(**payload)
             logger.debug("[feedback_queue] session=%s 完成", session_id)
         except Exception as exc:  # noqa: BLE001
-            logger.error("[feedback_queue] session=%s 执行失败: %s", session_id, exc, exc_info=True)
+            logger.error(
+                "[feedback_queue] session=%s 执行失败: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
 
     def _flush_session(self, session_id: str) -> None:
         with self._buffer_lock:
@@ -188,20 +216,23 @@ class FeedbackQueue:
                 "useful_memory_ids": useful_ids,
                 "new_memories": new_memories,
                 "merge_groups": merge_groups,
-                "session_id": session_id
-            }
+                "session_id": session_id,
+            },
         }
         self._queue.put(aggregated_task)
-        logger.debug(f"[反馈队列] 会话 {session_id} 任务已加入队列，有用记忆: {len(useful_ids)}, 新记忆: {len(new_memories)}, 合并组: {len(merge_groups)}")
+        logger.debug(
+            f"[反馈队列] 会话 {session_id} 任务已加入队列，有用记忆: {len(useful_ids)}, 新记忆: {len(new_memories)}, 合并组: {len(merge_groups)}"
+        )
 
         # 添加更多调试信息
         if new_memories:
             logger.debug(f"[反馈队列] 会话 {session_id} 新记忆类型统计:")
             type_count = {}
             for memory in new_memories:
-                mem_type = memory.get('type', 'unknown')
+                mem_type = memory.get("type", "unknown")
                 type_count[mem_type] = type_count.get(mem_type, 0) + 1
             logger.debug(f"  {type_count}")
+
 
 _queue_instance: Optional[FeedbackQueue] = None
 _instance_lock = threading.Lock()

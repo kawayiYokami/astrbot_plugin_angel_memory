@@ -8,18 +8,23 @@ InitializationManager - 初始化状态管理器
 from enum import Enum
 from threading import RLock, Event
 import time
+
 try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
+
 
 class InitializationState(Enum):
     """初始化状态枚举"""
+
     NOT_STARTED = "not_started"
     WAITING_FOR_PROVIDERS = "waiting_for_providers"
     INITIALIZING = "initializing"
     READY = "ready"
+
 
 class InitializationManager:
     """初始化状态管理器"""
@@ -36,7 +41,9 @@ class InitializationManager:
         self.state_lock = RLock()
         self.ready_event = Event()
         self.logger = logger
-        self.logger.debug("InitializationManager初始化完成 - 专注于状态管理和提供商检测")
+        self.logger.debug(
+            "InitializationManager初始化完成 - 专注于状态管理和提供商检测"
+        )
 
     def wait_for_providers_and_initialize(self, check_interval=10):
         """
@@ -58,11 +65,17 @@ class InitializationManager:
                 llm_provider_count = len(llm_providers)
 
                 # 获取嵌入式模型提供商
-                embedding_providers = self.context.get_all_embedding_providers() if hasattr(self.context, 'get_all_embedding_providers') else []
+                embedding_providers = (
+                    self.context.get_all_embedding_providers()
+                    if hasattr(self.context, "get_all_embedding_providers")
+                    else []
+                )
                 embedding_provider_count = len(embedding_providers)
 
                 total_providers = llm_provider_count + embedding_provider_count
-                self.logger.info(f"📊 检查提供商状态: 发现 {llm_provider_count} 个LLM提供商, {embedding_provider_count} 个嵌入提供商")
+                self.logger.info(
+                    f"📊 检查提供商状态: 发现 {llm_provider_count} 个LLM提供商, {embedding_provider_count} 个嵌入提供商"
+                )
 
                 if total_providers > 0:
                     # 收集所有提供商信息
@@ -78,7 +91,9 @@ class InitializationManager:
                         embedding_ids = [p.meta().id for p in embedding_providers]
                         provider_info.append(f"嵌入: {', '.join(embedding_ids)}")
 
-                    self.logger.info(f"✅ 检测到提供商: {' | '.join(provider_info)}，开始初始化")
+                    self.logger.info(
+                        f"✅ 检测到提供商: {' | '.join(provider_info)}，开始初始化"
+                    )
                     self.transition_to(InitializationState.INITIALIZING)
                     return True
                 else:

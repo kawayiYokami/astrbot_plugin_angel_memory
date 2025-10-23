@@ -18,10 +18,13 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging as logger_module
+
     logger = logger_module.getLogger(__name__)
     if not logger.handlers:
         handler = logger_module.StreamHandler()
-        formatter = logger_module.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        formatter = logger_module.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         logger.setLevel(logger_module.INFO)
@@ -74,39 +77,41 @@ class EmbeddingCache:
     def _is_expired(self, cache_item: Dict[str, Any]) -> bool:
         """
         检查缓存项是否过期
-        
+
         Args:
             cache_item: 缓存项字典
-            
+
         Returns:
             是否过期
         """
         import time
-        return time.time() - cache_item['timestamp'] > self._ttl_seconds
+
+        return time.time() - cache_item["timestamp"] > self._ttl_seconds
 
     def _cleanup_expired(self, force: bool = False):
         """
         惰性清理过期缓存项
-        
+
         Args:
             force: 是否强制清理所有过期项
         """
         import time
+
         if not force and self._hit_count % self._cleanup_threshold != 0:
             return
-            
+
         expired_keys = []
         current_time = time.time()
-        
+
         for key, cache_item in self._cache.items():
-            if current_time - cache_item['timestamp'] > self._ttl_seconds:
+            if current_time - cache_item["timestamp"] > self._ttl_seconds:
                 expired_keys.append(key)
-        
+
         for key in expired_keys:
             cache_item = self._cache.pop(key)
-            old_size = self._estimate_size(key, cache_item['embedding'])
+            old_size = self._estimate_size(key, cache_item["embedding"])
             self._current_memory_bytes -= old_size
-        
+
         if expired_keys:
             logger.debug(f"清理了 {len(expired_keys)} 个过期缓存项")
 
@@ -123,23 +128,23 @@ class EmbeddingCache:
         with self._lock:
             # 惰性清理过期项（每50次访问检查一次）
             self._cleanup_expired()
-            
+
             if text in self._cache:
                 cache_item = self._cache[text]
-                
+
                 # 检查是否过期
                 if self._is_expired(cache_item):
                     # 删除过期项
-                    old_size = self._estimate_size(text, cache_item['embedding'])
+                    old_size = self._estimate_size(text, cache_item["embedding"])
                     del self._cache[text]
                     self._current_memory_bytes -= old_size
                     self._miss_count += 1
                     return None
-                
+
                 self._hit_count += 1
                 # 移到最后（最近使用）
                 self._cache.move_to_end(text)
-                return cache_item['embedding']
+                return cache_item["embedding"]
             else:
                 self._miss_count += 1
                 return None
@@ -153,11 +158,12 @@ class EmbeddingCache:
             embedding: 向量
         """
         import time
+
         with self._lock:
             # 如果已存在，先删除旧的
             if text in self._cache:
                 cache_item = self._cache[text]
-                old_size = self._estimate_size(text, cache_item['embedding'])
+                old_size = self._estimate_size(text, cache_item["embedding"])
                 self._current_memory_bytes -= old_size
                 del self._cache[text]
 
@@ -169,20 +175,22 @@ class EmbeddingCache:
                 return
 
             # 淘汰旧项直到有足够空间
-            while self._current_memory_bytes + new_size > self._max_memory_bytes and self._cache:
+            while (
+                self._current_memory_bytes + new_size > self._max_memory_bytes
+                and self._cache
+            ):
                 # 删除最旧的项（FIFO）
                 oldest_key, oldest_value = self._cache.popitem(last=False)
-                oldest_size = self._estimate_size(oldest_key, oldest_value['embedding'])
+                oldest_size = self._estimate_size(oldest_key, oldest_value["embedding"])
                 self._current_memory_bytes -= oldest_size
 
             # 添加新项（包含时间戳）
-            self._cache[text] = {
-                'embedding': embedding,
-                'timestamp': time.time()
-            }
+            self._cache[text] = {"embedding": embedding, "timestamp": time.time()}
             self._current_memory_bytes += new_size
 
-    def get_batch(self, texts: List[str]) -> tuple[List[Optional[List[float]]], List[int]]:
+    def get_batch(
+        self, texts: List[str]
+    ) -> tuple[List[Optional[List[float]]], List[int]]:
         """
         批量获取向量
 
@@ -202,7 +210,7 @@ class EmbeddingCache:
                 # 为了性能，直接从_cache检查
                 cache_item = self._cache.get(text)
                 if cache_item and not self._is_expired(cache_item):
-                    results.append(cache_item['embedding'])
+                    results.append(cache_item["embedding"])
                     self._hit_count += 1
                     self._cache.move_to_end(text)
                 else:
@@ -210,7 +218,7 @@ class EmbeddingCache:
                     self._miss_count += 1
                     if cache_item and self._is_expired(cache_item):
                         # 清理过期项
-                        old_size = self._estimate_size(text, cache_item['embedding'])
+                        old_size = self._estimate_size(text, cache_item["embedding"])
                         del self._cache[text]
                         self._current_memory_bytes -= old_size
                     missing_indices.append(i)
@@ -249,9 +257,13 @@ class EmbeddingCache:
 
             # 计算过期项数量
         import time
+
         current_time = time.time()
-        expired_count = sum(1 for item in self._cache.values() 
-                          if current_time - item['timestamp'] > self._ttl_seconds)
+        expired_count = sum(
+            1
+            for item in self._cache.values()
+            if current_time - item["timestamp"] > self._ttl_seconds
+        )
 
         return {
             "cache_size": len(self._cache),
@@ -262,7 +274,7 @@ class EmbeddingCache:
             "miss_count": self._miss_count,
             "hit_rate": hit_rate,
             "total_requests": total_requests,
-            "ttl_minutes": self._ttl_seconds / 60
+            "ttl_minutes": self._ttl_seconds / 60,
         }
 
 
@@ -312,7 +324,6 @@ class EmbeddingProvider(ABC):
         """
         pass
 
-
     @abstractmethod
     def shutdown(self):
         """关闭提供商，释放资源"""
@@ -322,7 +333,9 @@ class EmbeddingProvider(ABC):
 class LocalEmbeddingProvider(EmbeddingProvider):
     """本地嵌入模型提供商"""
 
-    def __init__(self, model_name: str = "BAAI/bge-small-zh-v1.5", cache_size_mb: float = 100.0):
+    def __init__(
+        self, model_name: str = "BAAI/bge-small-zh-v1.5", cache_size_mb: float = 100.0
+    ):
         """
         初始化本地嵌入提供商
 
@@ -364,7 +377,9 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
         # 3. 对未命中的文本进行向量化
         missing_texts = [texts[i] for i in missing_indices]
-        self.logger.debug(f"🔄 缓存部分命中，需要向量化: {len(missing_texts)}/{len(texts)}个文本")
+        self.logger.debug(
+            f"🔄 缓存部分命中，需要向量化: {len(missing_texts)}/{len(texts)}个文本"
+        )
 
         # 直接同步调用（本地模型）
         new_embeddings = self._model.encode(missing_texts, convert_to_numpy=True)
@@ -397,7 +412,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
                 "model_name": self.model_name,
                 "provider_type": "local",
                 "status": "unavailable",
-                "dimension": 0
+                "dimension": 0,
             }
 
         return {
@@ -405,7 +420,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             "provider_type": "local",
             "status": "available",
             "dimension": self._model.get_sentence_embedding_dimension(),
-            "max_sequence_length": getattr(self._model, 'max_seq_length', None)
+            "max_sequence_length": getattr(self._model, "max_seq_length", None),
         }
 
     def is_available(self) -> bool:
@@ -424,7 +439,6 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         """清空缓存"""
         self._cache.clear()
         self.logger.info("本地提供商缓存已清空")
-
 
     def shutdown(self):
         """关闭本地提供商"""
@@ -455,20 +469,28 @@ class APIEmbeddingProvider(EmbeddingProvider):
         # 创建共享的线程池和事件循环（只创建一次，避免overhead）
         import concurrent.futures
         import threading
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="embed-api")
+
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=16, thread_name_prefix="embed-api"
+        )
 
         # 创建一个专门的线程运行共享event loop
         self._shared_loop = None
-        self._loop_thread = threading.Thread(target=self._run_event_loop, daemon=True, name="embed-loop")
+        self._loop_thread = threading.Thread(
+            target=self._run_event_loop, daemon=True, name="embed-loop"
+        )
         self._loop_thread.start()
 
         # 等待loop就绪
         import time
+
         while self._shared_loop is None:
             time.sleep(0.001)
 
         # 延迟测试可用性，避免在构造函数中进行异步操作
-        self.logger.info(f"API嵌入提供商已初始化: {self.provider_id}, 批量大小: {self.batch_size}, 共享loop已启动")
+        self.logger.info(
+            f"API嵌入提供商已初始化: {self.provider_id}, 批量大小: {self.batch_size}, 共享loop已启动"
+        )
 
     async def check_availability(self) -> bool:
         """异步检查可用性"""
@@ -507,8 +529,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         # 在共享event loop中运行异步代码
         future = asyncio.run_coroutine_threadsafe(
-            self.embed_documents(texts),
-            self._shared_loop
+            self.embed_documents(texts), self._shared_loop
         )
         return future.result()
 
@@ -531,14 +552,20 @@ class APIEmbeddingProvider(EmbeddingProvider):
         missing_texts = [texts[i] for i in missing_indices]
 
         # 4. 批次内去重
-        unique_texts, original_to_unique, unique_to_original = self._deduplicate_texts(missing_texts)
+        unique_texts, original_to_unique, unique_to_original = self._deduplicate_texts(
+            missing_texts
+        )
         len(missing_texts) - len(unique_texts)
 
         # 5. 使用当前批量大小处理去重后的文本
-        unique_embeddings = await self._get_embeddings_with_batch(unique_texts, self.batch_size)
+        unique_embeddings = await self._get_embeddings_with_batch(
+            unique_texts, self.batch_size
+        )
 
         # 6. 将去重后的向量回填到原始位置
-        full_missing_embeddings = self._map_embeddings_back(unique_embeddings, unique_to_original, len(missing_texts))
+        full_missing_embeddings = self._map_embeddings_back(
+            unique_embeddings, unique_to_original, len(missing_texts)
+        )
 
         # 7. 将去重后的向量存入缓存
         self._cache.put_batch(unique_texts, unique_embeddings)
@@ -586,9 +613,12 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         return unique_texts, original_to_unique, unique_to_original
 
-    def _map_embeddings_back(self, unique_embeddings: List[List[float]],
-                             unique_to_original: List[List[int]],
-                             original_count: int) -> List[List[float]]:
+    def _map_embeddings_back(
+        self,
+        unique_embeddings: List[List[float]],
+        unique_to_original: List[List[int]],
+        original_count: int,
+    ) -> List[List[float]]:
         """
         将去重后的向量回填到原始位置
 
@@ -609,7 +639,9 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         return full_embeddings
 
-    async def _get_embeddings_with_batch(self, texts: List[str], batch_size: int) -> List[List[float]]:
+    async def _get_embeddings_with_batch(
+        self, texts: List[str], batch_size: int
+    ) -> List[List[float]]:
         """使用指定批量大小并发获取向量嵌入"""
 
         if batch_size >= len(texts):
@@ -621,7 +653,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
             tasks = []
             batch_info = []
             for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
+                batch = texts[i : i + batch_size]
                 task = self.provider.get_embeddings(batch)
                 tasks.append(task)
                 batch_info.append(len(batch))
@@ -639,12 +671,12 @@ class APIEmbeddingProvider(EmbeddingProvider):
     def get_model_info(self) -> Dict[str, Any]:
         """获取模型信息"""
         if self._model_info is None:
-            meta = self.provider.meta() if hasattr(self.provider, 'meta') else {}
+            meta = self.provider.meta() if hasattr(self.provider, "meta") else {}
             self._model_info = {
                 "provider_id": self.provider_id,
                 "provider_type": "api",
                 "status": "available" if self._available else "unavailable",
-                "meta": meta
+                "meta": meta,
             }
 
         return self._model_info
@@ -660,7 +692,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
     def get_cache_stats(self) -> Dict[str, Any]:
         """获取缓存统计信息"""
         stats = self._cache.get_stats()
-        stats['current_batch_size'] = self.batch_size  # 添加当前批量大小信息
+        stats["current_batch_size"] = self.batch_size  # 添加当前批量大小信息
         return stats
 
     def clear_cache(self) -> None:
@@ -678,7 +710,9 @@ class APIEmbeddingProvider(EmbeddingProvider):
         if self._loop_thread and self._loop_thread.is_alive():
             self._loop_thread.join(timeout=5)
             if self._loop_thread.is_alive():
-                self.logger.warning(f"事件循环线程未能及时关闭: {self._loop_thread.name}")
+                self.logger.warning(
+                    f"事件循环线程未能及时关闭: {self._loop_thread.name}"
+                )
 
         # 关闭线程池
         if self._executor:
@@ -686,7 +720,6 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         self.clear_cache()
         self.logger.info(f"API嵌入提供商 {self.provider_id} 已成功关闭")
-
 
 
 class EmbeddingProviderFactory:
@@ -705,7 +738,7 @@ class EmbeddingProviderFactory:
     async def create_provider(
         self,
         provider_id: Optional[str] = None,
-        local_model_name: str = "BAAI/bge-small-zh-v1.5"
+        local_model_name: str = "BAAI/bge-small-zh-v1.5",
     ) -> EmbeddingProvider:
         """
         创建嵌入提供商
@@ -734,13 +767,19 @@ class EmbeddingProviderFactory:
                         self.logger.info(f"成功使用API嵌入提供商: {provider_id}")
                         return api_provider
                     else:
-                        self.logger.warning(f"API提供商不可用，降级到本地模型: {provider_id}")
+                        self.logger.warning(
+                            f"API提供商不可用，降级到本地模型: {provider_id}"
+                        )
                         return LocalEmbeddingProvider(local_model_name)
                 else:
-                    self.logger.warning(f"未找到API提供商，降级到本地模型: {provider_id}")
+                    self.logger.warning(
+                        f"未找到API提供商，降级到本地模型: {provider_id}"
+                    )
                     return LocalEmbeddingProvider(local_model_name)
             except Exception as e:
-                self.logger.error(f"API提供商测试失败，降级到本地模型: {provider_id}, 错误: {e}")
+                self.logger.error(
+                    f"API提供商测试失败，降级到本地模型: {provider_id}, 错误: {e}"
+                )
                 return LocalEmbeddingProvider(local_model_name)
         else:
             self.logger.warning("无上下文信息，使用本地嵌入模型")
@@ -760,17 +799,17 @@ class EmbeddingProviderFactory:
         providers.append(local_provider.get_model_info())
 
         # 添加API提供商信息
-        if self.context and hasattr(self.context, 'get_all_embedding_providers'):
+        if self.context and hasattr(self.context, "get_all_embedding_providers"):
             try:
                 api_providers = self.context.get_all_embedding_providers()
                 for provider in api_providers:
                     try:
-                        meta = provider.meta() if hasattr(provider, 'meta') else {}
+                        meta = provider.meta() if hasattr(provider, "meta") else {}
                         provider_info = {
-                            "provider_id": meta.get('id', 'unknown'),
+                            "provider_id": meta.get("id", "unknown"),
                             "provider_type": "api",
                             "status": "available",
-                            "meta": meta
+                            "meta": meta,
                         }
                         providers.append(provider_info)
                     except Exception as e:

@@ -261,7 +261,9 @@ class VectorStore:
 
         # --- 处理向量化失败 ---
         if query_embedding is None:
-            self.logger.warning(f"因向量化失败，查询 '{query[:50]}...' 的回忆流程已中止。")
+            self.logger.warning(
+                f"因向量化失败，查询 '{query[:50]}...' 的回忆流程已中止。"
+            )
             return []  # 立即返回空列表
 
         # 构建查询参数 - 获取更多候选结果用于阈值过滤
@@ -303,7 +305,7 @@ class VectorStore:
                         # 只记录前3个结果的调试信息
                         if len(vector_results) <= 3:
                             self.logger.debug(
-                                f"记忆{len(vector_results)-1}: distance={distance:.4f}, similarity={similarity:.4f}"
+                                f"记忆{len(vector_results) - 1}: distance={distance:.4f}, similarity={similarity:.4f}"
                             )
 
                     # 达到所需数量时停止
@@ -311,9 +313,7 @@ class VectorStore:
                         break
 
         # 混合检索:为记忆系统提供BM25精排(强制启用)
-        final_results = self._rerank_with_bm25(
-            query, vector_results, collection, limit
-        )
+        final_results = self._rerank_with_bm25(query, vector_results, collection, limit)
 
         return final_results
 
@@ -449,7 +449,9 @@ class VectorStore:
         documents_list = (
             [documents]
             if isinstance(documents, str)
-            else documents if documents is not None else None
+            else documents
+            if documents is not None
+            else None
         )
         metadatas_list = [metadatas] if isinstance(metadatas, dict) else metadatas
 
@@ -483,7 +485,9 @@ class VectorStore:
 
         return timings if _return_timings else None
 
-    def embed_documents(self, documents: List[str], is_query: bool = False, timeout: int = 3) -> Optional[List[List[float]]]:
+    def embed_documents(
+        self, documents: List[str], is_query: bool = False, timeout: int = 3
+    ) -> Optional[List[List[float]]]:
         """
         使用嵌入提供商为文档列表生成向量嵌入(同步方法).
 
@@ -507,12 +511,16 @@ class VectorStore:
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     # 提交向量化任务
-                    future = executor.submit(self.embedding_provider.embed_documents_sync, documents)
+                    future = executor.submit(
+                        self.embedding_provider.embed_documents_sync, documents
+                    )
                     # 等待结果，设置超时
                     embeddings = future.result(timeout=timeout)
                     return embeddings
             except concurrent.futures.TimeoutError:
-                self.logger.warning(f"查询向量化超时（超过 {timeout} 秒），操作已中断。")
+                self.logger.warning(
+                    f"查询向量化超时（超过 {timeout} 秒），操作已中断。"
+                )
                 return None
             except Exception as e:
                 self.logger.error(f"查询向量化失败，立即返回。错误: {e}")
@@ -581,7 +589,9 @@ class VectorStore:
             # 理论上不会到这里
             raise Exception("向量化失败:未知错误")
 
-    def embed_single_document(self, document: str, is_query: bool = False, timeout: int = 3) -> Optional[List[float]]:
+    def embed_single_document(
+        self, document: str, is_query: bool = False, timeout: int = 3
+    ) -> Optional[List[float]]:
         """
         为单个文档生成向量嵌入(同步方法).
 
@@ -593,7 +603,9 @@ class VectorStore:
         Returns:
             单个文档的向量, 或在查询失败时返回 None.
         """
-        embeddings = self.embed_documents([document], is_query=is_query, timeout=timeout)
+        embeddings = self.embed_documents(
+            [document], is_query=is_query, timeout=timeout
+        )
         if embeddings:
             return embeddings[0]
         return None
@@ -1010,7 +1022,9 @@ class VectorStore:
 
         # --- 处理向量化失败 ---
         if query_embedding is None:
-            self.logger.warning(f"因向量化失败，笔记查询 '{query[:50]}...' 的流程已中止。")
+            self.logger.warning(
+                f"因向量化失败，笔记查询 '{query[:50]}...' 的流程已中止。"
+            )
             return []  # 立即返回空列表
 
         # 构建查询参数
@@ -1083,7 +1097,9 @@ class VectorStore:
 
             # --- 处理向量化失败 ---
             if query_embedding is None:
-                self.logger.warning(f"因向量化失败，向量搜索 '{query[:50]}...' 已中止。")
+                self.logger.warning(
+                    f"因向量化失败，向量搜索 '{query[:50]}...' 已中止。"
+                )
                 return {}  # 立即返回空字典
 
             # 执行向量搜索

@@ -24,8 +24,8 @@ class FileIndexManager(SQLiteDatabaseManager):
         super().__init__(data_directory, "file_index", provider_id)
 
         # 内存缓存
-        self._path_cache = {}      # {relative_path: (id, timestamp)}
-        self._id_cache = {}        # {id: relative_path}
+        self._path_cache = {}  # {relative_path: (id, timestamp)}
+        self._id_cache = {}  # {id: relative_path}
         self._cache_lock = threading.Lock()
 
         # 启动时加载所有文件索引到内存
@@ -38,13 +38,13 @@ class FileIndexManager(SQLiteDatabaseManager):
     def _init_database(self) -> None:
         """初始化文件索引数据库表结构"""
         table_name = self._get_table_name()
-        query = f'''
+        query = f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 relative_path TEXT UNIQUE NOT NULL,
                 file_timestamp INTEGER NOT NULL
             )
-        '''
+        """
         self._execute_single(query, caller="初始化文件索引表")
         self.logger.debug(f"文件索引表初始化完成: {table_name}")
 
@@ -54,7 +54,10 @@ class FileIndexManager(SQLiteDatabaseManager):
         """
         try:
             table_name = self._get_table_name()
-            cursor = self._execute_query(f'SELECT id, relative_path, file_timestamp FROM {table_name}', caller="启动时加载文件索引")
+            cursor = self._execute_query(
+                f"SELECT id, relative_path, file_timestamp FROM {table_name}",
+                caller="启动时加载文件索引",
+            )
 
             file_count = 0
             for row in cursor.fetchall():
@@ -92,15 +95,19 @@ class FileIndexManager(SQLiteDatabaseManager):
                     try:
                         table_name = self._get_table_name()
                         self._execute_single(
-                            f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ?',
+                            f"UPDATE {table_name} SET file_timestamp = ? WHERE id = ?",
                             (timestamp, file_id),
-                            caller="get_or_create_file_id->update_timestamp"
+                            caller="get_or_create_file_id->update_timestamp",
                         )
                         # 更新内存缓存
                         self._path_cache[relative_path] = (file_id, timestamp)
-                        self.logger.debug(f"文件时间戳已更新: {relative_path} -> {timestamp}")
+                        self.logger.debug(
+                            f"文件时间戳已更新: {relative_path} -> {timestamp}"
+                        )
                     except Exception as e:
-                        self.logger.error(f"更新文件时间戳失败: {relative_path}, 错误: {e}")
+                        self.logger.error(
+                            f"更新文件时间戳失败: {relative_path}, 错误: {e}"
+                        )
 
                 return file_id
 
@@ -110,9 +117,9 @@ class FileIndexManager(SQLiteDatabaseManager):
         try:
             # 先查询数据库，确认记录是否存在
             cursor = self._execute_query(
-                f'SELECT id, file_timestamp FROM {table_name} WHERE relative_path = ?',
+                f"SELECT id, file_timestamp FROM {table_name} WHERE relative_path = ?",
                 (relative_path,),
-                caller="先查后插策略"
+                caller="先查后插策略",
             )
             result = cursor.fetchone()
 
@@ -122,9 +129,9 @@ class FileIndexManager(SQLiteDatabaseManager):
                 # 更新时间戳（如果需要）
                 if timestamp > 0 and timestamp > current_timestamp:
                     self._execute_single(
-                        f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ?',
+                        f"UPDATE {table_name} SET file_timestamp = ? WHERE id = ?",
                         (timestamp, file_id),
-                        caller="更新时间戳"
+                        caller="更新时间戳",
                     )
                     current_timestamp = timestamp
 
@@ -137,9 +144,9 @@ class FileIndexManager(SQLiteDatabaseManager):
 
             # 第三步：确认不存在，才插入新记录
             cursor = self._execute_single(
-                f'INSERT INTO {table_name} (relative_path, file_timestamp) VALUES (?, ?)',
+                f"INSERT INTO {table_name} (relative_path, file_timestamp) VALUES (?, ?)",
                 (relative_path, timestamp),
-                caller="插入新文件记录"
+                caller="插入新文件记录",
             )
             file_id = cursor.lastrowid
 
@@ -174,8 +181,8 @@ class FileIndexManager(SQLiteDatabaseManager):
 
         try:
             cursor = self._execute_query(
-                f'SELECT relative_path, file_timestamp FROM {table_name} WHERE id = ?',
-                (file_id,)
+                f"SELECT relative_path, file_timestamp FROM {table_name} WHERE id = ?",
+                (file_id,),
             )
             result = cursor.fetchone()
 
@@ -208,9 +215,9 @@ class FileIndexManager(SQLiteDatabaseManager):
 
         try:
             self._execute_single(
-                f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ?',
+                f"UPDATE {table_name} SET file_timestamp = ? WHERE id = ?",
                 (timestamp, file_id),
-                caller="update_timestamp"
+                caller="update_timestamp",
             )
             return True
         except Exception as e:
@@ -227,16 +234,14 @@ class FileIndexManager(SQLiteDatabaseManager):
         try:
             table_name = self._get_table_name()
             cursor = self._execute_query(
-                f'SELECT id, relative_path, file_timestamp FROM {table_name} ORDER BY relative_path'
+                f"SELECT id, relative_path, file_timestamp FROM {table_name} ORDER BY relative_path"
             )
 
             results = []
             for row in cursor.fetchall():
-                results.append({
-                    'id': row[0],
-                    'relative_path': row[1],
-                    'file_timestamp': row[2]
-                })
+                results.append(
+                    {"id": row[0], "relative_path": row[1], "file_timestamp": row[2]}
+                )
             return results
         except Exception as e:
             self.logger.error(f"获取所有文件索引失败: {e}")
@@ -262,8 +267,8 @@ class FileIndexManager(SQLiteDatabaseManager):
                     # 缓存中没有，从数据库查询
                     table_name = self._get_table_name()
                     cursor = self._execute_query(
-                        f'SELECT relative_path FROM {table_name} WHERE id = ?',
-                        (file_id,)
+                        f"SELECT relative_path FROM {table_name} WHERE id = ?",
+                        (file_id,),
                     )
                     result = cursor.fetchone()
                     if result:
@@ -277,7 +282,9 @@ class FileIndexManager(SQLiteDatabaseManager):
                 with self._cache_lock:
                     self._id_cache.pop(file_id, None)
                     self._path_cache.pop(relative_path, None)
-                    self.logger.debug(f"已清理缓存: file_id={file_id}, path={relative_path}")
+                    self.logger.debug(
+                        f"已清理缓存: file_id={file_id}, path={relative_path}"
+                    )
 
             return success
 
@@ -285,7 +292,9 @@ class FileIndexManager(SQLiteDatabaseManager):
             self.logger.error(f"删除文件索引失败 (ID: {file_id}): {e}")
             return False
 
-    def get_changed_files(self, current_files: Dict[str, int]) -> Tuple[List[int], List[str]]:
+    def get_changed_files(
+        self, current_files: Dict[str, int]
+    ) -> Tuple[List[int], List[str]]:
         """
         比较当前文件列表与数据库中的文件，找出变更的文件
 
@@ -297,7 +306,9 @@ class FileIndexManager(SQLiteDatabaseManager):
         """
         try:
             table_name = self._get_table_name()
-            cursor = self._execute_query(f'SELECT id, relative_path, file_timestamp FROM {table_name}')
+            cursor = self._execute_query(
+                f"SELECT id, relative_path, file_timestamp FROM {table_name}"
+            )
 
             db_files = {}
             to_delete = []
@@ -306,26 +317,33 @@ class FileIndexManager(SQLiteDatabaseManager):
             # 收集数据库中的文件
             for row in cursor.fetchall():
                 file_id, rel_path, timestamp = row
-                db_files[rel_path] = {'id': file_id, 'timestamp': timestamp}
+                db_files[rel_path] = {"id": file_id, "timestamp": timestamp}
 
             # 找出需要删除的文件（数据库中有但当前没有）
             for rel_path, file_info in db_files.items():
                 if rel_path not in current_files:
-                    to_delete.append(file_info['id'])
+                    to_delete.append(file_info["id"])
 
             # 找出需要更新或新增的文件
             for rel_path, timestamp in current_files.items():
-                if rel_path not in db_files or db_files[rel_path]['timestamp'] < timestamp:
+                if (
+                    rel_path not in db_files
+                    or db_files[rel_path]["timestamp"] < timestamp
+                ):
                     to_update.append(rel_path)
 
-            self.logger.debug(f"变更检测完成: 删除 {len(to_delete)} 个, 更新 {len(to_update)} 个")
+            self.logger.debug(
+                f"变更检测完成: 删除 {len(to_delete)} 个, 更新 {len(to_update)} 个"
+            )
             return to_delete, to_update
 
         except Exception as e:
             self.logger.error(f"获取变更文件失败: {e}")
             return [], []
 
-    def batch_get_or_create_file_ids(self, file_paths: List[str], timestamps: List[int] = None) -> List[int]:
+    def batch_get_or_create_file_ids(
+        self, file_paths: List[str], timestamps: List[int] = None
+    ) -> List[int]:
         """
         批量获取或创建文件ID（领导专用）
 
@@ -346,7 +364,9 @@ class FileIndexManager(SQLiteDatabaseManager):
 
         try:
             # 使用基础类的批量方法
-            file_ids = self._batch_get_or_create_ids(file_paths, 'relative_path', caller="领导批量分配file_id")
+            file_ids = self._batch_get_or_create_ids(
+                file_paths, "relative_path", caller="领导批量分配file_id"
+            )
 
             # 如果有非零时间戳，需要更新
             if any(ts > 0 for ts in timestamps):
@@ -358,7 +378,10 @@ class FileIndexManager(SQLiteDatabaseManager):
                 ]
 
                 if update_params:
-                    self._batch_execute(f'UPDATE {table_name} SET file_timestamp = ? WHERE id = ? AND file_timestamp < ?', update_params)
+                    self._batch_execute(
+                        f"UPDATE {table_name} SET file_timestamp = ? WHERE id = ? AND file_timestamp < ?",
+                        update_params,
+                    )
 
             return file_ids
 
@@ -376,7 +399,7 @@ class FileIndexManager(SQLiteDatabaseManager):
         Returns:
             文件路径列表，顺序与输入ID对应
         """
-        return self._batch_get_names_by_ids(file_ids, 'relative_path')
+        return self._batch_get_names_by_ids(file_ids, "relative_path")
 
     def get_file_statistics(self) -> Dict[str, any]:
         """
@@ -390,18 +413,25 @@ class FileIndexManager(SQLiteDatabaseManager):
                 cached_files = len(self._id_cache)
 
             table_name = self._get_table_name()
-            cursor = self._execute_query(f'SELECT COUNT(*) FROM {table_name}')
+            cursor = self._execute_query(f"SELECT COUNT(*) FROM {table_name}")
             total_count = cursor.fetchone()[0]
 
             return {
-                'total_files': total_count,
-                'cached_files': cached_files,
-                'cache_hit_ratio': cached_files / total_count if total_count > 0 else 0.0,
-                'table_name': table_name
+                "total_files": total_count,
+                "cached_files": cached_files,
+                "cache_hit_ratio": cached_files / total_count
+                if total_count > 0
+                else 0.0,
+                "table_name": table_name,
             }
         except Exception as e:
             self.logger.error(f"获取文件统计失败: {e}")
-            return {'total_files': 0, 'cached_files': 0, 'cache_hit_ratio': 0.0, 'table_name': self._get_table_name()}
+            return {
+                "total_files": 0,
+                "cached_files": 0,
+                "cache_hit_ratio": 0.0,
+                "table_name": self._get_table_name(),
+            }
 
     def _batch_execute(self, query: str, params_list: List[Tuple]) -> None:
         """

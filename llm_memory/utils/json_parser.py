@@ -10,8 +10,8 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
-    logger = logging.getLogger(__name__)
 
+    logger = logging.getLogger(__name__)
 
 
 def _strip_code_fences(text: str) -> str:
@@ -22,12 +22,7 @@ def _strip_code_fences(text: str) -> str:
     if not text:
         return text
     # 仅移除围栏标记，不移除内部内容
-    return (
-        text.replace("```json", "")
-            .replace("```JSON", "")
-            .replace("```", "")
-            .strip()
-    )
+    return text.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
 
 
 def _find_json_candidates(text: str) -> List[str]:
@@ -69,7 +64,7 @@ def _find_json_candidates(text: str) -> List[str]:
             if depth > 0:
                 depth -= 1
                 if depth == 0 and start_idx is not None:
-                    candidates.append(text[start_idx:i + 1])
+                    candidates.append(text[start_idx : i + 1])
                     start_idx = None
 
     return candidates
@@ -117,15 +112,21 @@ class JsonParser:
             if isinstance(feedback_data, str):
                 try:
                     feedback_data = json.loads(feedback_data)
-                    self.logger.debug("JsonParser: feedback_data 是字符串，已重新解析为字典")
+                    self.logger.debug(
+                        "JsonParser: feedback_data 是字符串，已重新解析为字典"
+                    )
                 except json.JSONDecodeError:
-                    self.logger.warning("JsonParser: feedback_data 是字符串但无法解析为 JSON")
+                    self.logger.warning(
+                        "JsonParser: feedback_data 是字符串但无法解析为 JSON"
+                    )
                     return None
 
             return feedback_data
         else:
             # 如果没有 feedback_data 包装，直接返回整个 JSON
-            self.logger.debug("JsonParser: JSON 中未找到 'feedback_data' 字段，返回整个 JSON")
+            self.logger.debug(
+                "JsonParser: JSON 中未找到 'feedback_data' 字段，返回整个 JSON"
+            )
             return json_data
 
     def extract_json(
@@ -133,7 +134,7 @@ class JsonParser:
         text: str,
         separator: str = "---JSON---",
         required_fields: Optional[List[str]] = None,
-        optional_fields: Optional[List[str]] = None
+        optional_fields: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         从可能包含其他文本的字符串中，智能地提取最符合条件的单个JSON对象。
@@ -156,7 +157,9 @@ class JsonParser:
         :return: 最符合条件的JSON对象（字典），如果找不到则返回None。
         """
         if not isinstance(text, str):
-            self.logger.warning(f"JsonParser: 输入不是字符串，而是 {type(text)} 类型，无法解析")
+            self.logger.warning(
+                f"JsonParser: 输入不是字符串，而是 {type(text)} 类型，无法解析"
+            )
             return None
 
         if not text.strip():
@@ -194,7 +197,9 @@ class JsonParser:
                 # 硬性条件：检查必须字段
                 if required_fields:
                     if not all(field in parsed_json for field in required_fields):
-                        self.logger.debug(f"候选JSON缺少必须字段，跳过: {candidate_str[:100]}...")
+                        self.logger.debug(
+                            f"候选JSON缺少必须字段，跳过: {candidate_str[:100]}..."
+                        )
                         continue
 
                 # 计算分数
@@ -206,7 +211,7 @@ class JsonParser:
                 self.logger.debug(f"一个候选JSON合格，得分: {score}")
 
             except json.JSONDecodeError:
-                continue # 解析失败，不是有效的JSON，跳过
+                continue  # 解析失败，不是有效的JSON，跳过
 
         if not qualified_jsons:
             self.logger.warning("JsonParser: 所有候选均不满足要求（或解析失败）。")
@@ -214,8 +219,10 @@ class JsonParser:
 
         # 5) 决策：选择分数最高的，同分则取最后的
         # 先按分数排序（稳定排序），然后取最后一个，这样就能保证在分数相同时，选择原文中位置更靠后的
-        qualified_jsons.sort(key=lambda x: x['score'])
+        qualified_jsons.sort(key=lambda x: x["score"])
         best_json_item = qualified_jsons[-1]
 
-        self.logger.info(f"JsonParser: 提取成功，选择了得分最高的JSON（得分: {best_json_item['score']}）。")
-        return best_json_item['json']
+        self.logger.info(
+            f"JsonParser: 提取成功，选择了得分最高的JSON（得分: {best_json_item['score']}）。"
+        )
+        return best_json_item["json"]

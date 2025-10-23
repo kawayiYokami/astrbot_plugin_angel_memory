@@ -20,8 +20,10 @@ from ..config.system_config import KNOWLEDGE_CORE_SEPARATOR
 
 # ===== 记忆类型枚举 =====
 
+
 class MemoryType(Enum):
     """记忆类型的中文枚举"""
+
     KNOWLEDGE = "知识记忆"
     EVENT = "事件记忆"
     SKILL = "技能记忆"
@@ -31,21 +33,30 @@ class MemoryType(Enum):
 
 # ===== 异常处理层 =====
 
+
 class MemoryError(Exception):
     """记忆系统基础异常类"""
+
     pass
+
 
 class VectorizationError(MemoryError):
     """向量化和嵌入相关异常"""
+
     pass
+
 
 class StorageError(MemoryError):
     """存储和检索相关异常"""
+
     pass
+
 
 class ValidationError(MemoryError):
     """数据验证相关异常"""
+
     pass
+
 
 class BaseMemory:
     """
@@ -53,8 +64,19 @@ class BaseMemory:
 
     所有记忆都使用相同的三元组结构，通过 memory_type 区分类型。
     """
-    def __init__(self, memory_type: MemoryType, judgment: str, reasoning: str, tags: List[str],
-                 id: str = None, strength: int = 1, is_consolidated: bool = False, associations: dict = None, created_at: float = None):
+
+    def __init__(
+        self,
+        memory_type: MemoryType,
+        judgment: str,
+        reasoning: str,
+        tags: List[str],
+        id: str = None,
+        strength: int = 1,
+        is_consolidated: bool = False,
+        associations: dict = None,
+        created_at: float = None,
+    ):
         self.id = id or str(uuid.uuid4())
         self.memory_type = memory_type
         self.judgment = judgment
@@ -74,6 +96,7 @@ class BaseMemory:
     def to_dict(self) -> dict:
         """转换为字典以进行JSON序列化。"""
         import json
+
         # ChromaDB不支持嵌套字典，需要将associations序列化为JSON字符串
         associations_str = json.dumps(self.associations) if self.associations else "{}"
 
@@ -89,13 +112,14 @@ class BaseMemory:
             "strength": self.strength,
             "is_consolidated": self.is_consolidated,
             "associations": associations_str,
-            "created_at": self.created_at
+            "created_at": self.created_at,
         }
 
     @staticmethod
     def _parse_associations(associations_data) -> dict:
         """解析associations字段（可能是JSON字符串或字典）"""
         import json
+
         if isinstance(associations_data, str):
             try:
                 return json.loads(associations_data)
@@ -117,7 +141,7 @@ class BaseMemory:
             return []
 
     @classmethod
-    def from_dict(cls, data: dict) -> Optional['BaseMemory']:
+    def from_dict(cls, data: dict) -> Optional["BaseMemory"]:
         """从字典创建实例（用于JSON反序列化）。"""
         if not isinstance(data, dict):
             raise ValidationError(f"输入必须是字典类型，实际为: {type(data)}")
@@ -140,8 +164,12 @@ class BaseMemory:
         tags = cls._parse_tags(data.get("tags", []))
 
         # 兼容旧字段名
-        judgment = data.get("judgment", data.get("content", data.get("emotion_type", "")))
-        reasoning = data.get("reasoning", data.get("context", data.get("trigger_event", "")))
+        judgment = data.get(
+            "judgment", data.get("content", data.get("emotion_type", ""))
+        )
+        reasoning = data.get(
+            "reasoning", data.get("context", data.get("trigger_event", ""))
+        )
 
         try:
             return cls(
@@ -153,7 +181,7 @@ class BaseMemory:
                 strength=data.get("strength", 1),
                 is_consolidated=data.get("is_consolidated", False),
                 associations=cls._parse_associations(data.get("associations", {})),
-                created_at=data.get("created_at", time.time())
+                created_at=data.get("created_at", time.time()),
             )
         except (KeyError, TypeError, ValueError) as e:
             raise ValidationError(f"从字典创建记忆失败: {str(e)}")

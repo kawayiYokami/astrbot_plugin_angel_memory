@@ -15,16 +15,19 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
 class IDServiceError(Exception):
     """ID服务异常基类"""
+
     pass
 
 
 class IDConversionError(IDServiceError):
     """ID转换失败异常"""
+
     pass
 
 
@@ -58,7 +61,9 @@ class IDService:
         self.tag_manager = TagManager(self.data_directory, self.provider_id)
         self.file_manager = FileIndexManager(self.data_directory, self.provider_id)
 
-        self.logger.info(f"ID服务初始化完成 (提供商: {self.provider_id}, 目录: {self.data_directory})")
+        self.logger.info(
+            f"ID服务初始化完成 (提供商: {self.provider_id}, 目录: {self.data_directory})"
+        )
 
     def ids_to_tags(self, tag_ids: List[int]) -> List[str]:
         """

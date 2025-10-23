@@ -17,11 +17,11 @@ class MarkdownParser:
     """Markdown文档解析器"""
 
     # 支持的文件扩展名
-    SUPPORTED_EXTENSIONS: Set[str] = {'.md', '.txt'}
+    SUPPORTED_EXTENSIONS: Set[str] = {".md", ".txt"}
 
     # 块大小控制（以token为单位）
     MAX_BLOCK_SIZE = 500  # 最大块大小
-    MIN_BLOCK_SIZE = 250   # 最小块大小
+    MIN_BLOCK_SIZE = 250  # 最小块大小
 
     def __init__(self, tag_manager: TagManager = None):
         """
@@ -45,7 +45,9 @@ class MarkdownParser:
         """
         return extension.lower() in cls.SUPPORTED_EXTENSIONS
 
-    def parse(self, markdown_content: str, file_id: int, file_path: str = "") -> List[NoteData]:
+    def parse(
+        self, markdown_content: str, file_id: int, file_path: str = ""
+    ) -> List[NoteData]:
         """
         解析Markdown内容，直接生成NoteData列表
 
@@ -57,7 +59,7 @@ class MarkdownParser:
         Returns:
             NoteData列表
         """
-        lines = markdown_content.split('\n')
+        lines = markdown_content.split("\n")
 
         # 第一步：扫描所有标题位置
         headers = self._scan_headers(lines)
@@ -72,16 +74,16 @@ class MarkdownParser:
             path_tags = self._extract_path_tags(file_path)
 
             # 标题标签
-            header_tags = self._find_header_tags(section['start_line'], headers)
+            header_tags = self._find_header_tags(section["start_line"], headers)
 
             # 内容标签（暂时废止）
             content_tags = []  # 暂时设为空列表
 
             # 合并所有标签
-            section['tags'] = path_tags + header_tags + content_tags
+            section["tags"] = path_tags + header_tags + content_tags
 
             # 收集所有标签到集合中（自动去重）
-            all_tags_in_file.update(section['tags'])
+            all_tags_in_file.update(section["tags"])
 
         # 第四步：拆分（AB两步走，收集所有块）
         all_blocks = []
@@ -94,7 +96,7 @@ class MarkdownParser:
             all_blocks.extend(b_blocks)
 
         # 第五步：按起始行排序（确保全局顺序正确）
-        all_blocks.sort(key=lambda b: b['start_line'])
+        all_blocks.sort(key=lambda b: b["start_line"])
 
         # 第六步：C方法全局贪婪合并（跨section）
         all_blocks = self._merge_short_blocks_global(all_blocks)
@@ -102,11 +104,15 @@ class MarkdownParser:
         # 第七步：批量转换标签为ID（一次性数据库操作）
         tag_to_id_map = {}
         if self.tag_manager and all_tags_in_file:
-            tag_to_id_map = self.tag_manager.get_or_create_tag_ids(list(all_tags_in_file))
+            tag_to_id_map = self.tag_manager.get_or_create_tag_ids(
+                list(all_tags_in_file)
+            )
             # 构建标签名称到ID的映射字典
             # tag_manager.get_or_create_tag_ids 返回的是ID列表，我们需要构建映射
             tag_names = list(all_tags_in_file)
-            tag_to_id_map = {tag_name: tag_id for tag_name, tag_id in zip(tag_names, tag_to_id_map)}
+            tag_to_id_map = {
+                tag_name: tag_id for tag_name, tag_id in zip(tag_names, tag_to_id_map)
+            }
         else:
             tag_to_id_map = {}
 
@@ -115,7 +121,7 @@ class MarkdownParser:
         for block in all_blocks:
             # 从映射中查找标签ID
             tag_ids = []
-            for tag in block['tags']:
+            for tag in block["tags"]:
                 if tag in tag_to_id_map:
                     tag_ids.append(tag_to_id_map[tag])
 
@@ -124,10 +130,10 @@ class MarkdownParser:
 
             note = NoteData.create_file_block(
                 block_id=block_id,
-                content=block['content'],
+                content=block["content"],
                 file_id=file_id,
                 tag_ids=tag_ids,
-                related_ids=[]  # 暂时为空，下一步建立关联
+                related_ids=[],  # 暂时为空，下一步建立关联
             )
             note_data_list.append(note)
 
@@ -140,64 +146,68 @@ class MarkdownParser:
         """扫描所有标题位置"""
         headers = []
         for i, line in enumerate(lines):
-            match = re.match(r'^(#{1,6})\s+(.+)$', line)
+            match = re.match(r"^(#{1,6})\s+(.+)$", line)
             if match:
                 level = len(match.group(1))
                 text = match.group(2).strip()
-                headers.append({
-                    'level': level,
-                    'text': text,
-                    'line': i
-                })
+                headers.append({"level": level, "text": text, "line": i})
         return headers
 
-    def _identify_sections(self, lines: List[str], headers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _identify_sections(
+        self, lines: List[str], headers: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """识别章节（包含标题行和文档开头内容）"""
         sections = []
 
         # 1. 处理第一个标题之前的内容
-        if not headers or headers[0]['line'] > 0:
+        if not headers or headers[0]["line"] > 0:
             # 如果没有标题，或者第一个标题不在第0行
-            first_header_line = headers[0]['line'] if headers else len(lines)
-            content_before_first_header = '\n'.join(lines[0:first_header_line]).strip()
+            first_header_line = headers[0]["line"] if headers else len(lines)
+            content_before_first_header = "\n".join(lines[0:first_header_line]).strip()
             if content_before_first_header:
-                sections.append({
-                    'content': content_before_first_header,
-                    'start_line': 0,
-                    'end_line': first_header_line - 1
-                })
+                sections.append(
+                    {
+                        "content": content_before_first_header,
+                        "start_line": 0,
+                        "end_line": first_header_line - 1,
+                    }
+                )
 
         # 2. 遍历所有标题，创建后续的 section
         for i, header in enumerate(headers):
-            start_line = header['line']
+            start_line = header["line"]
             # 结束行是下一个标题的行号，或者是文档末尾
-            end_line = headers[i + 1]['line'] if i + 1 < len(headers) else len(lines)
+            end_line = headers[i + 1]["line"] if i + 1 < len(headers) else len(lines)
 
             # 内容从标题行开始，到下一个标题行之前
-            section_content = '\n'.join(lines[start_line:end_line]).strip()
+            section_content = "\n".join(lines[start_line:end_line]).strip()
 
             if section_content:
-                sections.append({
-                    'content': section_content,
-                    'start_line': start_line,
-                    'end_line': end_line - 1
-                })
+                sections.append(
+                    {
+                        "content": section_content,
+                        "start_line": start_line,
+                        "end_line": end_line - 1,
+                    }
+                )
 
         return sections
 
-    def _find_header_tags(self, start_line: int, headers: List[Dict[str, Any]]) -> List[str]:
+    def _find_header_tags(
+        self, start_line: int, headers: List[Dict[str, Any]]
+    ) -> List[str]:
         """从起始行往上找标题标签"""
-        prev_headers = [h for h in headers if h['line'] < start_line]
+        prev_headers = [h for h in headers if h["line"] < start_line]
         if not prev_headers:
             return []
 
         headers_by_level = {}
         for h in prev_headers:
-            headers_by_level[h['level']] = h
+            headers_by_level[h["level"]] = h
 
         tags = []
         for level in sorted(headers_by_level.keys()):
-            tags.append(headers_by_level[level]['text'])
+            tags.append(headers_by_level[level]["text"])
 
         return tags
 
@@ -216,7 +226,7 @@ class MarkdownParser:
         """
         # 允许的字符：中英文、数字、空白、常见运算符 +-*/=<>_
         # 禁止的字符：所有标点符号（包括中英文）
-        forbidden_pattern = r'[^\w\s\u4e00-\u9fff+\-*/=<>_]'
+        forbidden_pattern = r"[^\w\s\u4e00-\u9fff+\-*/=<>_]"
 
         # 如果包含禁止的字符，不能作为标签
         if re.search(forbidden_pattern, text):
@@ -228,7 +238,7 @@ class MarkdownParser:
             return False
 
         # 汉字数量检查：不超过6个汉字
-        chinese_chars = re.findall(r'[\u4e00-\u9fff]', cleaned_text)
+        chinese_chars = re.findall(r"[\u4e00-\u9fff]", cleaned_text)
         if len(chinese_chars) >= 7:
             return False
 
@@ -238,22 +248,22 @@ class MarkdownParser:
         """从文件路径提取标签，只保留raw之后的路径部分"""
         tags = []
         # 统一路径分隔符
-        normalized_path = file_path.replace('\\', '/')
+        normalized_path = file_path.replace("\\", "/")
 
         # 查找raw位置
-        if '/raw/' in normalized_path:
+        if "/raw/" in normalized_path:
             # 分割路径，获取raw之后的部分
-            raw_index = normalized_path.find('/raw/')
-            path_after_raw = normalized_path[raw_index + len('/raw/'):]
+            raw_index = normalized_path.find("/raw/")
+            path_after_raw = normalized_path[raw_index + len("/raw/") :]
 
             # 分割路径并处理每个部分
-            path_parts = path_after_raw.split('/')
+            path_parts = path_after_raw.split("/")
             for i, part in enumerate(path_parts):
                 if part:
                     # 只对最后一个部分（文件名）去除扩展名
                     if i == len(path_parts) - 1:
                         # 使用 rsplit 从右侧分割，只分割一次，去除扩展名
-                        clean_part = part.rsplit('.', 1)[0] if '.' in part else part
+                        clean_part = part.rsplit(".", 1)[0] if "." in part else part
                     else:
                         clean_part = part
 
@@ -261,12 +271,12 @@ class MarkdownParser:
                         tags.append(clean_part)
         else:
             # 如果没有raw，保持原有逻辑（向后兼容）
-            path_parts = normalized_path.split('/')
+            path_parts = normalized_path.split("/")
             for i, part in enumerate(path_parts):
                 if part:
                     # 同样只对最后一个部分去除扩展名
                     if i == len(path_parts) - 1:
-                        clean_part = part.rsplit('.', 1)[0] if '.' in part else part
+                        clean_part = part.rsplit(".", 1)[0] if "." in part else part
                     else:
                         clean_part = part
                     if clean_part:
@@ -279,7 +289,7 @@ class MarkdownParser:
         tags = []
 
         # 加粗标签提取
-        bold_matches = re.findall(r'\*\*([^*]+)\*\*', content)
+        bold_matches = re.findall(r"\*\*([^*]+)\*\*", content)
         for match in bold_matches:
             cleaned_match = match.strip()
             if self._can_be_tag(cleaned_match):
@@ -287,12 +297,12 @@ class MarkdownParser:
 
         # 专有名词标签提取（修复重复的正则表达式）
         proper_noun_patterns = [
-            r'"([^"]+)"',      # 半角双引号
-            r'"([^"]+)"',      # 全角双引号
-            r'「([^」]+)」',    # 日式直角引号
-            r'『([^』]+)』',    # 日式双直角引号
-            r'《([^》]+)》',    # 书名号
-            r'〈([^〉]+)〉',    # 尖括号
+            r'"([^"]+)"',  # 半角双引号
+            r'"([^"]+)"',  # 全角双引号
+            r"「([^」]+)」",  # 日式直角引号
+            r"『([^』]+)』",  # 日式双直角引号
+            r"《([^》]+)》",  # 书名号
+            r"〈([^〉]+)〉",  # 尖括号
         ]
 
         for pattern in proper_noun_patterns:
@@ -335,14 +345,14 @@ class MarkdownParser:
 
         # 保留适合作为标签的词性（排除动词、数词、量词，只保留名词性内容）
         keep_pos = {
-            'n',    # 普通名词
-            'nr',   # 人名
-            'ns',   # 地名
-            'nt',   # 机构团体名
-            'nz',   # 其他专有名词
-            'vn',   # 名动词（名词化的动词，如"发展"->发展）
-            'a',    # 形容词
-            't',    # 时间词
+            "n",  # 普通名词
+            "nr",  # 人名
+            "ns",  # 地名
+            "nt",  # 机构团体名
+            "nz",  # 其他专有名词
+            "vn",  # 名动词（名词化的动词，如"发展"->发展）
+            "a",  # 形容词
+            "t",  # 时间词
         }
 
         for word, pos in words_with_pos:
@@ -369,16 +379,18 @@ class MarkdownParser:
         Returns:
             A表：块列表，每个块100%继承section的tags
         """
-        content = section['content']
-        tags = section['tags']
-        start_line = section['start_line']
+        content = section["content"]
+        tags = section["tags"]
+        start_line = section["start_line"]
 
         # 调用现有方法，按硬边界拆分
         blocks = self._split_by_special_blocks(content, tags, start_line)
 
         return blocks
 
-    def _split_by_special_blocks(self, content: str, tags: List[str], start_line: int) -> List[Dict[str, Any]]:
+    def _split_by_special_blocks(
+        self, content: str, tags: List[str], start_line: int
+    ) -> List[Dict[str, Any]]:
         """
         第一级拆分：按代码块和表格拆分
 
@@ -390,65 +402,73 @@ class MarkdownParser:
         Returns:
             块列表，每个块都继承tags
         """
-        lines = content.split('\n')
+        lines = content.split("\n")
         blocks = []
         i = 0
 
         while i < len(lines):
             # 识别代码块
-            if re.match(r'^```(\w*)$', lines[i]):
-                re.match(r'^```(\w*)$', lines[i]).group(1)
+            if re.match(r"^```(\w*)$", lines[i]):
+                re.match(r"^```(\w*)$", lines[i]).group(1)
                 code_lines = [lines[i]]
                 i += 1
 
                 while i < len(lines):
                     code_lines.append(lines[i])
-                    if re.match(r'^```$', lines[i]):
+                    if re.match(r"^```$", lines[i]):
                         break
                     i += 1
 
-                blocks.append({
-                    'content': '\n'.join(code_lines),
-                    'tags': tags.copy(),  # 100%继承
-                    'start_line': start_line,
-                    'is_code': True
-                })
+                blocks.append(
+                    {
+                        "content": "\n".join(code_lines),
+                        "tags": tags.copy(),  # 100%继承
+                        "start_line": start_line,
+                        "is_code": True,
+                    }
+                )
                 i += 1
                 continue
 
             # 识别表格
-            if re.match(r'^\|', lines[i]):
+            if re.match(r"^\|", lines[i]):
                 table_lines = []
-                while i < len(lines) and (re.match(r'^\|', lines[i]) or not lines[i].strip()):
+                while i < len(lines) and (
+                    re.match(r"^\|", lines[i]) or not lines[i].strip()
+                ):
                     if lines[i].strip():
                         table_lines.append(lines[i])
                     i += 1
 
                 if table_lines:
-                    blocks.append({
-                        'content': '\n'.join(table_lines),
-                        'tags': tags.copy(),  # 100%继承
-                        'start_line': start_line,
-                        'is_table': True
-                    })
+                    blocks.append(
+                        {
+                            "content": "\n".join(table_lines),
+                            "tags": tags.copy(),  # 100%继承
+                            "start_line": start_line,
+                            "is_table": True,
+                        }
+                    )
                 continue
 
             # 普通文本
             text_lines = []
             while i < len(lines):
-                if re.match(r'^```', lines[i]) or re.match(r'^\|', lines[i]):
+                if re.match(r"^```", lines[i]) or re.match(r"^\|", lines[i]):
                     break
                 text_lines.append(lines[i])
                 i += 1
 
             if text_lines:
-                text_content = '\n'.join(text_lines).strip()
+                text_content = "\n".join(text_lines).strip()
                 if text_content:
-                    blocks.append({
-                        'content': text_content,
-                        'tags': tags.copy(),  # 100%继承
-                        'start_line': start_line
-                    })
+                    blocks.append(
+                        {
+                            "content": text_content,
+                            "tags": tags.copy(),  # 100%继承
+                            "start_line": start_line,
+                        }
+                    )
 
         return blocks
 
@@ -468,34 +488,38 @@ class MarkdownParser:
         result = []
 
         for block in blocks:
-            content_tokens = count_tokens(block['content'])
+            content_tokens = count_tokens(block["content"])
 
             if content_tokens <= self.MAX_BLOCK_SIZE:
                 # 不超长，原样保留
                 result.append(block)
             else:
                 # 超长了
-                if block.get('is_code') or block.get('is_table'):
+                if block.get("is_code") or block.get("is_table"):
                     # 代码块和表格即使超长也不拆分，保持完整性
                     # 直接加入结果（这是特殊情况，允许超过MAX_BLOCK_SIZE）
                     result.append(block)
                 else:
                     # 普通文本块超长，需要打碎
                     # 调用现有的_smart_split方法（完全不修改）
-                    parts = self._smart_split(block['content'])
+                    parts = self._smart_split(block["content"])
 
                     # 把parts（字符串列表）转换为block格式
                     for part in parts:
                         if part.strip():
-                            result.append({
-                                'content': part,
-                                'tags': block['tags'].copy(),  # 继承标签
-                                'start_line': block['start_line']
-                            })
+                            result.append(
+                                {
+                                    "content": part,
+                                    "tags": block["tags"].copy(),  # 继承标签
+                                    "start_line": block["start_line"],
+                                }
+                            )
 
         return result
 
-    def _merge_short_blocks_global(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _merge_short_blocks_global(
+        self, blocks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """
         C方法：组装 - 贪婪合并策略
 
@@ -537,20 +561,20 @@ class MarkdownParser:
 
             # 3. 决策与操作：预合并计算
             # 合并内容
-            combined_content = current_block['content'] + '\n\n' + next_block['content']
+            combined_content = current_block["content"] + "\n\n" + next_block["content"]
 
             # 合并标签（去重）
-            combined_tags = list(set(current_block['tags']) | set(next_block['tags']))
+            combined_tags = list(set(current_block["tags"]) | set(next_block["tags"]))
 
             # 计算总tokens（内容 + 标签）
             content_tokens = count_tokens(combined_content)
-            tags_tokens = count_tokens(' '.join(combined_tags))
+            tags_tokens = count_tokens(" ".join(combined_tags))
             combined_tokens = content_tokens + tags_tokens
 
             if combined_tokens <= self.MAX_BLOCK_SIZE:
                 # 可以合并：更新当前块
-                current_block['content'] = combined_content
-                current_block['tags'] = combined_tags
+                current_block["content"] = combined_content
+                current_block["tags"] = combined_tags
             else:
                 # 无法合并：当前块完成，加入结果
                 final_blocks.append(current_block)
@@ -567,7 +591,7 @@ class MarkdownParser:
         智能拆分策略：\n\n → \n → 句号 → 强制拆分
         """
         # 1. 按双换行拆分
-        parts = content.split('\n\n')
+        parts = content.split("\n\n")
         if all(count_tokens(p) <= self.MAX_BLOCK_SIZE for p in parts):
             return [p for p in parts if p.strip()]
 
@@ -575,7 +599,7 @@ class MarkdownParser:
         new_parts = []
         for part in parts:
             if count_tokens(part) > self.MAX_BLOCK_SIZE:
-                lines = part.split('\n')
+                lines = part.split("\n")
                 if all(count_tokens(line) <= self.MAX_BLOCK_SIZE for line in lines):
                     new_parts.extend([line for line in lines if line.strip()])
                 else:
@@ -591,7 +615,7 @@ class MarkdownParser:
         new_parts = []
         for part in parts:
             if count_tokens(part) > self.MAX_BLOCK_SIZE:
-                sentences = re.split(r'([。！？.!?])', part)
+                sentences = re.split(r"([。！？.!?])", part)
                 sentence_parts = []
                 for i in range(0, len(sentences) - 1, 2):
                     sentence_parts.append(sentences[i] + sentences[i + 1])
@@ -626,19 +650,20 @@ class MarkdownParser:
                 tokens = []
                 try:
                     from ..utils.token_utils import get_tokenizer
+
                     tokenizer = get_tokenizer()
                     tokens = tokenizer.encode(part)
                 except Exception:
                     # 回退到字符拆分
                     for i in range(0, len(part), self.MAX_BLOCK_SIZE * 4):
-                        chunk = part[i:i + self.MAX_BLOCK_SIZE * 4]
+                        chunk = part[i : i + self.MAX_BLOCK_SIZE * 4]
                         if chunk.strip():
                             new_parts.append(chunk)
                     continue
 
                 # 按token拆分
                 for i in range(0, len(tokens), self.MAX_BLOCK_SIZE):
-                    chunk_tokens = tokens[i:i + self.MAX_BLOCK_SIZE]
+                    chunk_tokens = tokens[i : i + self.MAX_BLOCK_SIZE]
                     chunk = tokenizer.decode(chunk_tokens)
                     if chunk.strip():
                         new_parts.append(chunk)
@@ -651,7 +676,9 @@ class MarkdownParser:
         """建立关联关系"""
         for i, note in enumerate(notes):
             prev_id = notes[i - 1].id if i > 0 else "none"  # 没有上一个块时用"none"占位
-            next_id = notes[i + 1].id if i < len(notes) - 1 else "none"  # 没有下一个块时用"none"占位
+            next_id = (
+                notes[i + 1].id if i < len(notes) - 1 else "none"
+            )  # 没有下一个块时用"none"占位
 
             # 更新related_block_ids
             note.related_block_ids = f"{prev_id},{next_id}"

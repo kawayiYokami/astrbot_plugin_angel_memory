@@ -13,6 +13,7 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -30,7 +31,7 @@ class PathManager:
         return cls._instance
 
     @classmethod
-    def get_instance(cls) -> 'PathManager':
+    def get_instance(cls) -> "PathManager":
         """获取单例实例"""
         if cls._instance is None:
             cls._instance = cls()
@@ -63,10 +64,12 @@ class PathManager:
 
         # 强制要求传入数据目录
         if not base_data_dir:
-            raise ValueError("必须提供 base_data_dir 参数！数据目录应由外部传入，不应自动推测。")
+            raise ValueError(
+                "必须提供 base_data_dir 参数！数据目录应由外部传入，不应自动推测。"
+            )
 
         # 使用过滤后的安全ID（仅用于文件名）
-        safe_provider_id = re.sub(r'[<>:"/\\|?*]', '_', provider_id.strip())
+        safe_provider_id = re.sub(r'[<>:"/\\|?*]', "_", provider_id.strip())
 
         self._current_provider = safe_provider_id
 
@@ -76,8 +79,9 @@ class PathManager:
         # 创建目录结构
         self._ensure_provider_directories_exist()
 
-        logger.info(f"PathManager供应商设置完成: {provider_id} -> {safe_provider_id}, 基础目录: {self._base_dir}")
-
+        logger.info(
+            f"PathManager供应商设置完成: {provider_id} -> {safe_provider_id}, 基础目录: {self._base_dir}"
+        )
 
     def get_current_provider(self) -> str:
         """获取当前供应商ID"""
@@ -148,7 +152,12 @@ class PathManager:
             提示词文件路径（始终返回异步思考提示词）
         """
         # 总是返回异步思考提示词
-        return cls._get_plugin_root() / "llm_memory" / "prompts" / "memory_system_guide_async.md"
+        return (
+            cls._get_plugin_root()
+            / "llm_memory"
+            / "prompts"
+            / "memory_system_guide_async.md"
+        )
 
     # === 便捷方法 ===
 
@@ -160,7 +169,7 @@ class PathManager:
         return {
             "tag_db": self.get_tag_db_path(),
             "file_db": self.get_file_db_path(),
-            "chroma_db": self.get_chroma_db_path()
+            "chroma_db": self.get_chroma_db_path(),
         }
 
     def get_database_info(self) -> Dict[str, any]:
@@ -172,7 +181,7 @@ class PathManager:
             "provider_id": self.get_current_provider(),
             "base_dir": str(self._base_dir),
             "databases": self.list_databases(),
-            "provider_name": self._get_provider_display_name()
+            "provider_name": self._get_provider_display_name(),
         }
 
     def _get_provider_display_name(self) -> str:
@@ -183,7 +192,7 @@ class PathManager:
             "openai": "OpenAI",
             "claude": "Claude",
             "gemini": "Gemini",
-            "azure": "Azure OpenAI"
+            "azure": "Azure OpenAI",
         }
         return provider_names.get(provider_id, provider_id.upper())
 
@@ -194,6 +203,7 @@ class PathManager:
 
         try:
             import shutil
+
             provider_id = self.get_current_provider()
 
             logger.warning(f"正在清理供应商 {provider_id} 的所有数据: {self._base_dir}")
@@ -218,9 +228,11 @@ class PathManager:
     def __repr__(self) -> str:
         """详细表示"""
         if self.is_provider_set():
-            return (f"PathManager("
-                    f"provider='{self.get_current_provider()}', "
-                    f"base_dir='{self._base_dir}', "
-                    f"databases={list(self.list_databases().keys())}"
-                    f")")
+            return (
+                f"PathManager("
+                f"provider='{self.get_current_provider()}', "
+                f"base_dir='{self._base_dir}', "
+                f"databases={list(self.list_databases().keys())}"
+                f")"
+            )
         return "PathManager(未设置供应商)"

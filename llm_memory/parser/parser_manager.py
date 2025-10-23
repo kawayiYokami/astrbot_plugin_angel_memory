@@ -14,6 +14,7 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -37,7 +38,9 @@ class ParserManager:
             self.register_parser(extension, MarkdownParser)
 
         # 默认启用MarkItDown功能，注册通用解析器支持的扩展名（除了MarkdownParser已支持的）
-        universal_extensions = UniversalParser.SUPPORTED_EXTENSIONS - MarkdownParser.SUPPORTED_EXTENSIONS
+        universal_extensions = (
+            UniversalParser.SUPPORTED_EXTENSIONS - MarkdownParser.SUPPORTED_EXTENSIONS
+        )
         for extension in universal_extensions:
             self.register_parser(extension, UniversalParser)
 

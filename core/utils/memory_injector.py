@@ -14,7 +14,9 @@ class MemoryInjector:
     """记忆注入器"""
 
     @staticmethod
-    def format_memories_for_prompt(feedback_data: Dict[str, Any], session_memories: List[MemoryItem]) -> str:
+    def format_memories_for_prompt(
+        feedback_data: Dict[str, Any], session_memories: List[MemoryItem]
+    ) -> str:
         """
         格式化记忆用于LLM提示词
 
@@ -25,8 +27,8 @@ class MemoryInjector:
         Returns:
             格式化后的记忆上下文
         """
-        useful_memory_ids = feedback_data.get('useful_memory_ids', [])
-        new_memories_raw = feedback_data.get('new_memories', {})
+        useful_memory_ids = feedback_data.get("useful_memory_ids", [])
+        new_memories_raw = feedback_data.get("new_memories", {})
 
         # 使用 MemoryIDResolver 处理数据格式转换
         new_memories = MemoryIDResolver.normalize_new_memories_format(new_memories_raw)
@@ -35,7 +37,7 @@ class MemoryInjector:
         return MemoryFormatter.format_memories_for_prompt(
             memories=session_memories,
             useful_memory_ids=useful_memory_ids,
-            new_memories=new_memories
+            new_memories=new_memories,
         )
 
     @staticmethod

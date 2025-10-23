@@ -8,4 +8,4 @@ from .markdown_parser import MarkdownParser
 from .universal_parser import UniversalParser
 from .parser_manager import parser_manager, ParserManager
 
-__all__ = ['MarkdownParser', 'UniversalParser', 'parser_manager', 'ParserManager']
+__all__ = ["MarkdownParser", "UniversalParser", "parser_manager", "ParserManager"]

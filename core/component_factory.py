@@ -7,10 +7,12 @@ ComponentFactory - 组件工厂
 
 from typing import Dict, Any
 from pathlib import Path
+
 try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 # 导入核心组件
@@ -73,16 +75,24 @@ class ComponentFactory:
 
             # 新增：检查嵌入提供商是否可用
             if not embedding_provider.is_available():
-                self.logger.critical("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                self.logger.critical(
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                )
                 self.logger.critical("!!! 核心组件 embedding_provider 加载失败！")
-                self.logger.critical("!!! 可能原因：网络问题导致无法下载模型，或模型文件损坏。")
-                self.logger.critical("!!! 插件将以功能受限模式启动，所有记忆相关功能将不可用。")
-                self.logger.critical("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                self.logger.critical(
+                    "!!! 可能原因：网络问题导致无法下载模型，或模型文件损坏。"
+                )
+                self.logger.critical(
+                    "!!! 插件将以功能受限模式启动，所有记忆相关功能将不可用。"
+                )
+                self.logger.critical(
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                )
 
                 # 标记初始化完成（以受限模式）并立即返回，不再创建后续组件
                 self._initialized = True
                 if self.init_manager:
-                    self.init_manager.mark_ready() # 同样需要标记，否则主程序可能卡住
+                    self.init_manager.mark_ready()  # 同样需要标记，否则主程序可能卡住
                 return self._components
 
             # 2. 创建向量存储 (只有在 embedding_provider 可用时才会执行)
@@ -98,7 +108,9 @@ class ComponentFactory:
             self._components["note_service"] = note_service
 
             # 5. 创建DeepMind
-            deepmind = await self._create_deepmind(vector_store, note_service, cognitive_service)
+            deepmind = await self._create_deepmind(
+                vector_store, note_service, cognitive_service
+            )
             self._components["deepmind"] = deepmind
 
             # 6. 创建文件监控
@@ -123,6 +135,7 @@ class ComponentFactory:
         except Exception as e:
             self.logger.error(f"❌ 组件创建失败: {e}")
             import traceback
+
             self.logger.error(f"错误详情: {traceback.format_exc()}")
             raise
 
@@ -150,8 +163,7 @@ class ComponentFactory:
         self.logger.info(f"📁 使用数据库路径: {db_path}")
 
         vector_store = VectorStore(
-            embedding_provider=embedding_provider,
-            db_path=db_path
+            embedding_provider=embedding_provider, db_path=db_path
         )
 
         # 获取提供商类型用于日志
@@ -210,7 +222,7 @@ class ComponentFactory:
             vector_store=vector_store,
             note_service=note_service,
             provider_id=llm_provider_id,
-            cognitive_service=cognitive_service  # 使用已创建的认知服务实例
+            cognitive_service=cognitive_service,  # 使用已创建的认知服务实例
         )
 
         self.logger.info("✅ DeepMind创建完成")
@@ -233,10 +245,12 @@ class ComponentFactory:
         file_monitor = FileMonitorService(
             data_directory=data_directory,
             note_service=note_service,  # 传入已创建的note_service实例
-            config=self.plugin_context.config  # 传入配置
+            config=self.plugin_context.config,  # 传入配置
         )
 
-        self.logger.info(f"✅ 文件监控组件创建完成 (提供商: {self.plugin_context.get_current_provider()})")
+        self.logger.info(
+            f"✅ 文件监控组件创建完成 (提供商: {self.plugin_context.get_current_provider()})"
+        )
         return file_monitor
 
     async def _start_file_monitor(self, file_monitor):
@@ -244,6 +258,7 @@ class ComponentFactory:
         try:
             # 直接调用同步方法（在线程池中执行，避免阻塞event loop）
             import asyncio
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, file_monitor.start_monitoring)
             self.logger.info("📂 文件监控服务已启动")
@@ -276,7 +291,7 @@ class ComponentFactory:
             "note_service",
             "cognitive_service",
             "vector_store",
-            "embedding_provider"
+            "embedding_provider",
         ]
 
         for component_name in component_shutdown_order:

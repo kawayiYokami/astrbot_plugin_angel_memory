@@ -11,7 +11,9 @@ class MemoryIDResolver:
     """记忆ID解析器"""
 
     @staticmethod
-    def generate_id_mapping(items: List[Dict[str, Any]], id_field: str = 'id') -> Dict[str, str]:
+    def generate_id_mapping(
+        items: List[Dict[str, Any]], id_field: str = "id"
+    ) -> Dict[str, str]:
         """
         通用的ID映射生成方法
 
@@ -31,7 +33,9 @@ class MemoryIDResolver:
         return mapping
 
     @staticmethod
-    def resolve_memory_ids(short_ids: List[str], memories: List, logger=None) -> List[str]:
+    def resolve_memory_ids(
+        short_ids: List[str], memories: List, logger=None
+    ) -> List[str]:
         """
         将短ID转换为完整ID
 
@@ -59,7 +63,9 @@ class MemoryIDResolver:
         return resolved_ids
 
     @staticmethod
-    def normalize_new_memories_format(new_memories_raw: Dict[str, Any] | List[Dict[str, Any]], logger=None) -> List[Dict[str, Any]]:
+    def normalize_new_memories_format(
+        new_memories_raw: Dict[str, Any] | List[Dict[str, Any]], logger=None
+    ) -> List[Dict[str, Any]]:
         """
         统一化新记忆格式，从字典（按类型分组）转换为列表
 
@@ -79,10 +85,12 @@ class MemoryIDResolver:
                         # 检查 memory 是否是字典
                         if not isinstance(memory, dict):
                             if logger:
-                                logger.warning(f"Skipping non-dict memory in {memory_type}: {type(memory)} - {memory}")
+                                logger.warning(
+                                    f"Skipping non-dict memory in {memory_type}: {type(memory)} - {memory}"
+                                )
                             continue
                         # 添加类型字段
-                        memory['type'] = memory_type
+                        memory["type"] = memory_type
                         new_memories.append(memory)
         elif isinstance(new_memories_raw, list):
             # 如果已经是列表，直接使用
@@ -94,7 +102,9 @@ class MemoryIDResolver:
         return new_memories
 
     @staticmethod
-    def normalize_merge_groups_format(merge_groups_raw: List[Dict[str, Any] | List[str]]) -> List[List[str]]:
+    def normalize_merge_groups_format(
+        merge_groups_raw: List[Dict[str, Any] | List[str]],
+    ) -> List[List[str]]:
         """
         统一化合并组格式：从对象列表提取ids字段或直接使用列表
 
@@ -108,8 +118,8 @@ class MemoryIDResolver:
 
         if isinstance(merge_groups_raw, list):
             for group in merge_groups_raw:
-                if isinstance(group, dict) and 'ids' in group:
-                    merge_groups.append(group['ids'])
+                if isinstance(group, dict) and "ids" in group:
+                    merge_groups.append(group["ids"])
                 elif isinstance(group, list):
                     # 如果已经是列表格式，直接使用
                     merge_groups.append(group)
@@ -129,10 +139,11 @@ class MemoryIDResolver:
             短ID（基于哈希的无冲突标识符）
         """
         import hashlib
+
         if not memory_id:
             return ""
 
         # 使用MD5哈希算法生成唯一短ID，避免截取可能产生的冲突
-        hash_obj = hashlib.md5(memory_id.encode('utf-8'))
+        hash_obj = hashlib.md5(memory_id.encode("utf-8"))
         hash_hex = hash_obj.hexdigest()
         return hash_hex[:length]

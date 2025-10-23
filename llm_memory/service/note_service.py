@@ -19,6 +19,7 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 from ..config.system_config import system_config
 
@@ -72,7 +73,9 @@ class NoteService:
             # vector_store需要在ComponentFactory中设置
             self.vector_store = None
             self.collections_initialized = False
-            self.logger.info("笔记服务初始化完成（PluginContext模式），等待vector_store设置。")
+            self.logger.info(
+                "笔记服务初始化完成（PluginContext模式），等待vector_store设置。"
+            )
         elif vector_store:
             # 向后兼容模式
             if not vector_store:
@@ -94,7 +97,7 @@ class NoteService:
         # 创建轻量线程池（仅用于同步解析器的兼容，顺序处理模式下几乎不并发）
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,  # 顺序处理，只需1个线程
-            thread_name_prefix="NoteService"
+            thread_name_prefix="NoteService",
         )
 
         # 批量向量化优化配置
@@ -140,12 +143,18 @@ class NoteService:
         """确保服务已准备就绪（用于PluginContext模式）"""
         if not self.collections_initialized:
             if not self.vector_store:
-                raise RuntimeError("NoteService未设置VectorStore，请先调用set_vector_store()")
+                raise RuntimeError(
+                    "NoteService未设置VectorStore，请先调用set_vector_store()"
+                )
             self._initialize_collections()
         return True
 
     def search_notes(
-        self, query: str, max_results: int = 10, tag_filter: List[str] = None, threshold: float = 0.5
+        self,
+        query: str,
+        max_results: int = 10,
+        tag_filter: List[str] = None,
+        threshold: float = 0.5,
     ) -> List[Dict]:
         """
         搜索笔记
@@ -171,7 +180,11 @@ class NoteService:
             return []
 
     def search_notes_by_token_limit(
-        self, query: str, max_tokens: int = 10000, recall_count: int = 100, tag_filter: List[str] = None
+        self,
+        query: str,
+        max_tokens: int = 10000,
+        recall_count: int = 100,
+        tag_filter: List[str] = None,
     ) -> List[Dict]:
         """
         基于token数量限制搜索笔记
@@ -187,7 +200,9 @@ class NoteService:
         """
         try:
             # 使用现有的混合检索算法获取高质量排序结果
-            candidates = self._hybrid_search(query, recall_count=recall_count, max_results=recall_count)
+            candidates = self._hybrid_search(
+                query, recall_count=recall_count, max_results=recall_count
+            )
 
             # 如果候选结果为空，直接返回
             if not candidates:
@@ -201,7 +216,7 @@ class NoteService:
             candidate_count = 0
 
             for note in candidates:
-                note_content = note.get('content', '')
+                note_content = note.get("content", "")
                 note_tokens = count_tokens(note_content)
 
                 # 检查是否超出token限制
@@ -248,9 +263,7 @@ class NoteService:
         # 1. 第一阶段：过滤 (Filtering)
         # 使用 VectorStore 的笔记专用检索方法进行向量搜索
         recall_results = self.vector_store.search_notes(
-            collection=self.main_collection,
-            query=query,
-            limit=recall_count
+            collection=self.main_collection, query=query, limit=recall_count
         )
 
         # 处理无结果情况
@@ -261,7 +274,7 @@ class NoteService:
         all_recalled_notes = []
         for note in recall_results:
             # 获取真实的相似度分数（由VectorStore设置）
-            content_similarity = getattr(note, 'similarity', 0.0)
+            content_similarity = getattr(note, "similarity", 0.0)
 
             # 应用阈值过滤：只保留相似度 >= threshold 的结果
             if content_similarity < threshold:
@@ -288,9 +301,7 @@ class NoteService:
         # 使用轻量级方法查询副集合（只获取标签相关性分数）
         # 副集合不存储 metadata，所以不能使用 search_notes
         tag_scores = self.vector_store._search_vector_scores(
-            collection=self.sub_collection,
-            query=query,
-            limit=len(all_recalled_notes)
+            collection=self.sub_collection, query=query, limit=len(all_recalled_notes)
         )
 
         # 3. 最终排序
@@ -348,6 +359,7 @@ class NoteService:
                 tag_ids = metadata.get("tag_ids", [])
                 if isinstance(tag_ids, str):
                     import json
+
                     try:
                         tag_ids = json.loads(tag_ids)
                     except json.JSONDecodeError:
@@ -378,7 +390,9 @@ class NoteService:
 
     # ===== 文件解析和文档向量化 =====
 
-    def parse_and_store_file_sync(self, file_path: str, relative_path: str = None) -> tuple:
+    def parse_and_store_file_sync(
+        self, file_path: str, relative_path: str = None
+    ) -> tuple:
         """
         同步版本：解析并存储文件（顺序处理优化）
 
@@ -390,6 +404,7 @@ class NoteService:
             (文档数量, 计时字典)
         """
         import time
+
         timings = {}
 
         try:
@@ -401,8 +416,10 @@ class NoteService:
 
             # 获取解析器
             t_parser = time.time()
-            parser = self.parser_manager.get_parser_for_file(file_path, self.id_service.tag_manager)
-            timings['parser_select'] = (time.time() - t_parser) * 1000
+            parser = self.parser_manager.get_parser_for_file(
+                file_path, self.id_service.tag_manager
+            )
+            timings["parser_select"] = (time.time() - t_parser) * 1000
 
             if parser is None:
                 self.logger.warning(f"未找到适合的解析器，跳过处理: {file_path}")
@@ -419,12 +436,12 @@ class NoteService:
             # 获取或创建文件ID
             t_start = time.time()
             file_id = self.id_service.file_to_id(relative_path, file_timestamp)
-            timings['id_lookup'] = (time.time() - t_start) * 1000
+            timings["id_lookup"] = (time.time() - t_start) * 1000
 
             # 同步解析文件
             t_start = time.time()
             document_blocks = self._parse_file_sync(file_path, parser, file_id)
-            timings['parse'] = (time.time() - t_start) * 1000
+            timings["parse"] = (time.time() - t_start) * 1000
 
             # 存储notes（完全同步版本，直接存储不走队列）
             if document_blocks:
@@ -433,12 +450,12 @@ class NoteService:
                 # 直接同步存储（跳过批量队列）
                 store_timings = self._store_notes_batch(document_blocks)
 
-                timings['store_total'] = (time.time() - t_store_submit) * 1000
+                timings["store_total"] = (time.time() - t_store_submit) * 1000
 
                 if store_timings:
                     timings.update(store_timings)
             else:
-                timings['store_total'] = 0
+                timings["store_total"] = 0
 
             return len(document_blocks), timings
 
@@ -502,6 +519,7 @@ class NoteService:
             计时字典
         """
         import time
+
         timings = {}
         t_method_start = time.time()
 
@@ -525,7 +543,7 @@ class NoteService:
             # 准备 metadatas（包含所有笔记数据）
             metadatas = [note.to_dict() for note in notes]
 
-            timings['prep_main'] = (time.time() - t_prep_main) * 1000
+            timings["prep_main"] = (time.time() - t_prep_main) * 1000
 
             # 批量存储到主集合
             t_main = time.time()
@@ -534,13 +552,12 @@ class NoteService:
                 ids=ids,
                 embedding_texts=embedding_texts,
                 metadatas=metadatas,
-                _return_timings=True
+                _return_timings=True,
             )
-            timings['store_main'] = (time.time() - t_main) * 1000
+            timings["store_main"] = (time.time() - t_main) * 1000
             if upsert_timings:
-                timings['main_embed'] = upsert_timings.get('embed', 0)
-                timings['main_db'] = upsert_timings.get('db_upsert', 0)
-
+                timings["main_embed"] = upsert_timings.get("embed", 0)
+                timings["main_db"] = upsert_timings.get("db_upsert", 0)
 
             # === 批量处理副集合 ===
             t_prep_sub = time.time()
@@ -554,7 +571,7 @@ class NoteService:
                 sub_ids.append(note.id)
                 sub_tags_texts.append(tags_text)
 
-            timings['prep_sub'] = (time.time() - t_prep_sub) * 1000
+            timings["prep_sub"] = (time.time() - t_prep_sub) * 1000
 
             # 批量存储到副集合（不传 metadatas）
             t_sub = time.time()
@@ -563,21 +580,22 @@ class NoteService:
                 ids=sub_ids,
                 embedding_texts=sub_tags_texts,
                 metadatas=None,  # 副集合不存储 metadata
-                _return_timings=True
+                _return_timings=True,
             )
-            timings['store_sub'] = (time.time() - t_sub) * 1000
+            timings["store_sub"] = (time.time() - t_sub) * 1000
             if sub_upsert_timings:
-                timings['sub_embed'] = sub_upsert_timings.get('embed', 0)
-                timings['sub_db'] = sub_upsert_timings.get('db_upsert', 0)
+                timings["sub_embed"] = sub_upsert_timings.get("embed", 0)
+                timings["sub_db"] = sub_upsert_timings.get("db_upsert", 0)
 
             # 记录方法总体执行时间
-            timings['_batch_method_total'] = (time.time() - t_method_start) * 1000
+            timings["_batch_method_total"] = (time.time() - t_method_start) * 1000
 
             return timings
 
         except Exception as e:
             self.logger.error(f"批量存储文档块失败: {e}")
             import traceback
+
             self.logger.error(f"错误详情: {traceback.format_exc()}")
             raise
 
@@ -652,7 +670,9 @@ class NoteService:
                 # 从副集合删除
                 self.sub_collection.delete(ids=ids_to_delete)
 
-                self.logger.info(f"成功删除文件ID {file_id} 的 {len(ids_to_delete)} 条笔记记录")
+                self.logger.info(
+                    f"成功删除文件ID {file_id} 的 {len(ids_to_delete)} 条笔记记录"
+                )
                 return True
             else:
                 self.logger.debug(f"文件ID {file_id} 没有关联的笔记数据")
@@ -666,12 +686,12 @@ class NoteService:
         """关闭服务，释放资源"""
         try:
             # 关闭线程池
-            if hasattr(self, '_thread_pool'):
+            if hasattr(self, "_thread_pool"):
                 self._thread_pool.shutdown(wait=True)
                 self.logger.debug("线程池已关闭")
 
             # 关闭ID服务
-            if hasattr(self, 'id_service'):
+            if hasattr(self, "id_service"):
                 self.id_service.close()
 
             self.logger.debug("笔记服务已关闭")
@@ -708,6 +728,10 @@ class NoteService:
             "ready": self.collections_initialized,
             "has_vector_store": self.vector_store is not None,
             "has_plugin_context": self.plugin_context is not None,
-            "provider_id": self.id_service.provider_id if hasattr(self, 'id_service') else None,
-            "batch_queue_size": len(self._embedding_queue) if hasattr(self, '_embedding_queue') else 0
+            "provider_id": self.id_service.provider_id
+            if hasattr(self, "id_service")
+            else None,
+            "batch_queue_size": len(self._embedding_queue)
+            if hasattr(self, "_embedding_queue")
+            else 0,
         }

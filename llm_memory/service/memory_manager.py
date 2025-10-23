@@ -22,6 +22,7 @@ from ..config.system_config import system_config
 # 导入查询处理器（用于统一检索词预处理）
 from ...core.utils.query_processor import get_query_processor
 
+
 class MemoryManager:
     """
     记忆管理器类 - 处理记忆的高级功能。
@@ -30,7 +31,9 @@ class MemoryManager:
     这些功能不直接与特定记忆类型绑定，而是处理记忆的通用行为。
     """
 
-    def __init__(self, main_collection, vector_store, association_manager: AssociationManager):
+    def __init__(
+        self, main_collection, vector_store, association_manager: AssociationManager
+    ):
         """
         初始化记忆管理器。
 
@@ -66,9 +69,11 @@ class MemoryManager:
             # 将所有新鲜记忆转变为已巩固记忆
             fresh_results = self.collection.get(where={"is_consolidated": False})
             consolidated_count = 0
-            if fresh_results and fresh_results['ids']:
-                for memory_id in fresh_results['ids']:
-                    self.store.update_memory(self.collection, memory_id, {"is_consolidated": True})
+            if fresh_results and fresh_results["ids"]:
+                for memory_id in fresh_results["ids"]:
+                    self.store.update_memory(
+                        self.collection, memory_id, {"is_consolidated": True}
+                    )
                     consolidated_count += 1
                 self.logger.debug(f"已巩固 {consolidated_count} 条新鲜记忆")
 
@@ -93,17 +98,25 @@ class MemoryManager:
         for memory_id in memory_ids:
             try:
                 # 获取当前记忆的强度
-                current_meta = self.collection.get(ids=[memory_id])['metadatas'][0]
+                current_meta = self.collection.get(ids=[memory_id])["metadatas"][0]
                 if current_meta:
-                    current_strength = current_meta.get('strength', 1)
+                    current_strength = current_meta.get("strength", 1)
                     # 强度 +1
-                    self.store.update_memory(self.collection, memory_id, {"strength": current_strength + 1})
+                    self.store.update_memory(
+                        self.collection, memory_id, {"strength": current_strength + 1}
+                    )
             except Exception as e:
                 self.logger.error(f"强化记忆 {memory_id} 失败: {str(e)}")
 
     # ===== 高级回忆功能 =====
 
-    def comprehensive_recall(self, query: str, fresh_limit: int = None, consolidated_limit: int = None, event=None) -> List[BaseMemory]:
+    def comprehensive_recall(
+        self,
+        query: str,
+        fresh_limit: int = None,
+        consolidated_limit: int = None,
+        event=None,
+    ) -> List[BaseMemory]:
         """
         实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容。
 
@@ -119,7 +132,9 @@ class MemoryManager:
         # 预处理查询词（如果有查询处理器）
         processed_query = query
         if self.query_processor and event:
-            processed_query = self.query_processor.process_query_for_memory(query, event)
+            processed_query = self.query_processor.process_query_for_memory(
+                query, event
+            )
 
         if fresh_limit is None:
             fresh_limit = system_config.fresh_recall_limit
@@ -131,7 +146,7 @@ class MemoryManager:
             collection=self.collection,
             query=processed_query,
             limit=fresh_limit,
-            where_filter={"is_consolidated": False}
+            where_filter={"is_consolidated": False},
         )
 
         # 检索已巩固记忆
@@ -139,7 +154,7 @@ class MemoryManager:
             collection=self.collection,
             query=processed_query,
             limit=consolidated_limit,
-            where_filter={"is_consolidated": True}
+            where_filter={"is_consolidated": True},
         )
 
         # 合并结果：新鲜记忆在前，已巩固记忆在后
@@ -155,8 +170,14 @@ class MemoryManager:
 
         return unique_memories
 
-    def chained_recall(self, query: str, per_type_limit: int = 7, final_limit: int = 7,
-                       memory_handlers: Dict[str, object] = None, event=None) -> List[BaseMemory]:
+    def chained_recall(
+        self,
+        query: str,
+        per_type_limit: int = 7,
+        final_limit: int = 7,
+        memory_handlers: Dict[str, object] = None,
+        event=None,
+    ) -> List[BaseMemory]:
         """
         链式多通道回忆 - 基于关联网络的多轮回忆（中文核心概念）
 
@@ -182,11 +203,18 @@ class MemoryManager:
         # 预处理查询词（如果有查询处理器）
         processed_query = query
         if self.query_processor and event:
-            processed_query = self.query_processor.process_query_for_memory(query, event)
+            processed_query = self.query_processor.process_query_for_memory(
+                query, event
+            )
 
         if not memory_handlers:
             self.logger.warning("未提供记忆处理器，使用简单回忆")
-            return self.comprehensive_recall(processed_query, fresh_limit=final_limit, consolidated_limit=final_limit, event=event)
+            return self.comprehensive_recall(
+                processed_query,
+                fresh_limit=final_limit,
+                consolidated_limit=final_limit,
+                event=event,
+            )
 
         # 第一轮：分类型召回
         memory_types = [
@@ -206,7 +234,9 @@ class MemoryManager:
             if not handler:
                 continue  # 排除未提供的处理器
 
-            memories = handler.recall(processed_query, limit=per_type_limit, include_consolidated=True)
+            memories = handler.recall(
+                processed_query, limit=per_type_limit, include_consolidated=True
+            )
             if memories:
                 recalled_by_type[memory_type] = memories
                 all_recalled_ids.update([m.id for m in memories])
@@ -225,14 +255,20 @@ class MemoryManager:
                     # 获取关联记忆
                     try:
                         assoc_results = self.collection.get(ids=[assoc_id])
-                        if not assoc_results['metadatas']:
+                        if not assoc_results["metadatas"]:
                             continue
 
-                        metadata = assoc_results['metadatas'][0]
-                        assoc_type = metadata.get('memory_type', '知识记忆')
+                        metadata = assoc_results["metadatas"][0]
+                        assoc_type = metadata.get("memory_type", "知识记忆")
 
                         # 根据类型构建记忆对象
-                        assoc_memory = self._build_memory_from_metadata(assoc_id, metadata, assoc_results['documents'][0] if assoc_results['documents'] else "")
+                        assoc_memory = self._build_memory_from_metadata(
+                            assoc_id,
+                            metadata,
+                            assoc_results["documents"][0]
+                            if assoc_results["documents"]
+                            else "",
+                        )
 
                         if assoc_memory:
                             if assoc_type not in recalled_by_type:
@@ -291,9 +327,11 @@ class MemoryManager:
 
         return selected_memories
 
-    def _build_memory_from_metadata(self, memory_id: str, metadata: dict, document: str) -> Optional[BaseMemory]:
+    def _build_memory_from_metadata(
+        self, memory_id: str, metadata: dict, document: str
+    ) -> Optional[BaseMemory]:
         """从元数据构建记忆对象的辅助方法"""
-        memory_type_str = metadata.get('memory_type', '知识记忆')
+        memory_type_str = metadata.get("memory_type", "知识记忆")
 
         try:
             # 解析记忆类型
@@ -305,13 +343,15 @@ class MemoryManager:
             # 统一构建BaseMemory对象
             return BaseMemory(
                 memory_type=memory_type,
-                judgment=metadata.get('judgment', ''),
-                reasoning=metadata.get('reasoning', ''),
-                tags=BaseMemory._parse_tags(metadata.get('tags', [])),
+                judgment=metadata.get("judgment", ""),
+                reasoning=metadata.get("reasoning", ""),
+                tags=BaseMemory._parse_tags(metadata.get("tags", [])),
                 id=memory_id,
-                strength=metadata.get('strength', 1),
-                is_consolidated=metadata.get('is_consolidated', False),
-                associations=BaseMemory._parse_associations(metadata.get('associations', {}))
+                strength=metadata.get("strength", 1),
+                is_consolidated=metadata.get("is_consolidated", False),
+                associations=BaseMemory._parse_associations(
+                    metadata.get("associations", {})
+                ),
             )
         except Exception as e:
             self.logger.error(f"构建记忆对象失败: {str(e)}")
@@ -319,9 +359,13 @@ class MemoryManager:
 
     # ===== 记忆合并功能 =====
 
-    def merge_memories(self, memories_to_merge_ids: List[str],
-                      new_judgment: str, new_reasoning: str,
-                      new_tags: List[str]) -> BaseMemory:
+    def merge_memories(
+        self,
+        memories_to_merge_ids: List[str],
+        new_judgment: str,
+        new_reasoning: str,
+        new_tags: List[str],
+    ) -> BaseMemory:
         """
         记忆合并方法 - LLM驱动的记忆抽象化（中文核心概念）
 
@@ -357,15 +401,21 @@ class MemoryManager:
             # 从存储中获取记忆元数据
             try:
                 memory_results = self.collection.get(ids=[memory_id])
-                if not memory_results['metadatas']:
+                if not memory_results["metadatas"]:
                     self.logger.warning(f"记忆 {memory_id} 不存在，跳过合并")
                     continue
 
-                metadata = memory_results['metadatas'][0]
-                document = memory_results['documents'][0] if memory_results['documents'] else ""
+                metadata = memory_results["metadatas"][0]
+                document = (
+                    memory_results["documents"][0]
+                    if memory_results["documents"]
+                    else ""
+                )
 
                 # 使用统一的构建方法
-                memory_obj = self._build_memory_from_metadata(memory_id, metadata, document)
+                memory_obj = self._build_memory_from_metadata(
+                    memory_id, metadata, document
+                )
 
                 if not memory_obj:
                     self.logger.warning(f"无法构建记忆对象: {memory_id}")
@@ -383,7 +433,9 @@ class MemoryManager:
 
         # 步骤 2: 创建新记忆（默认为知识记忆）
         # 使用去重后的强度，避免相同ID重复累加
-        unique_strength = sum(memory_obj.strength for memory_obj in set(memories_to_merge))
+        unique_strength = sum(
+            memory_obj.strength for memory_obj in set(memories_to_merge)
+        )
 
         new_memory = BaseMemory(
             memory_type=MemoryType.KNOWLEDGE,
@@ -391,7 +443,7 @@ class MemoryManager:
             reasoning=new_reasoning,
             tags=new_tags,
             strength=unique_strength,  # 强度等于去重后记忆之和
-            is_consolidated=False  # 合并记忆作为新鲜记忆重新开始生命周期
+            is_consolidated=False,  # 合并记忆作为新鲜记忆重新开始生命周期
         )
 
         # 步骤 3: 存储新记忆
@@ -400,7 +452,9 @@ class MemoryManager:
         # 步骤 4: 删除所有旧记忆
         self.collection.delete(ids=memories_to_merge_ids)
 
-        self.logger.debug(f"成功合并 {len(memories_to_merge)} 条记忆为新记忆 '{new_judgment}'，强度为 {total_strength}")
+        self.logger.debug(
+            f"成功合并 {len(memories_to_merge)} 条记忆为新记忆 '{new_judgment}'，强度为 {total_strength}"
+        )
 
         return new_memory
 
@@ -411,7 +465,7 @@ class MemoryManager:
         useful_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
         merge_groups: List[List[str]] = None,
-        memory_handlers: Dict[str, object] = None
+        memory_handlers: Dict[str, object] = None,
     ) -> List[BaseMemory]:
         """
         统一反馈接口 - 处理回忆后的反馈（核心工作流）
@@ -448,7 +502,9 @@ class MemoryManager:
 
         association_cache: Dict[str, MemorySnapshot] = {}
         if useful_memory_ids:
-            association_cache = self.association_manager.preload_memories(useful_memory_ids)
+            association_cache = self.association_manager.preload_memories(
+                useful_memory_ids
+            )
         if useful_memory_ids:
             # 强化记忆强度
             self.reinforce_memories(useful_memory_ids)
@@ -457,8 +513,12 @@ class MemoryManager:
             for i in range(len(useful_memory_ids)):
                 for j in range(i + 1, len(useful_memory_ids)):
                     id1, id2 = useful_memory_ids[i], useful_memory_ids[j]
-                    self.association_manager._add_or_update_association(id1, id2, strength_increase=1, cache=association_cache)
-                    self.association_manager._add_or_update_association(id2, id1, strength_increase=1, cache=association_cache)
+                    self.association_manager._add_or_update_association(
+                        id1, id2, strength_increase=1, cache=association_cache
+                    )
+                    self.association_manager._add_or_update_association(
+                        id2, id1, strength_increase=1, cache=association_cache
+                    )
         # 2. 批量创建新记忆
         created_ids = []
         for mem_data in new_memories:
@@ -469,12 +529,13 @@ class MemoryManager:
             reasoning = mem_data.get("reasoning")
 
             if not judgment or not reasoning:
-                self.logger.warning(f"跳过缺少必需字段的记忆: judgment={bool(judgment)}, reasoning={bool(reasoning)}")
+                self.logger.warning(
+                    f"跳过缺少必需字段的记忆: judgment={bool(judgment)}, reasoning={bool(reasoning)}"
+                )
                 continue
 
             # tags 是可选的，默认为空列表
             tags = mem_data.get("tags", [])
-
 
             # 根据类型创建记忆，获取返回的对象
             new_memory_object = None
@@ -493,34 +554,46 @@ class MemoryManager:
                     self._consolidate_previous_task_memory(new_memory_object.id)
 
         if created_ids:
-            association_cache = self.association_manager.preload_memories(created_ids, association_cache)
+            association_cache = self.association_manager.preload_memories(
+                created_ids, association_cache
+            )
 
         # 3. 新记忆之间两两建立关联（初始强度1）
         for i in range(len(created_ids)):
             for j in range(i + 1, len(created_ids)):
                 id1, id2 = created_ids[i], created_ids[j]
-                self.association_manager._add_or_update_association(id1, id2, strength_increase=1, cache=association_cache)
-                self.association_manager._add_or_update_association(id2, id1, strength_increase=1, cache=association_cache)
+                self.association_manager._add_or_update_association(
+                    id1, id2, strength_increase=1, cache=association_cache
+                )
+                self.association_manager._add_or_update_association(
+                    id2, id1, strength_increase=1, cache=association_cache
+                )
 
         # 4. 新记忆和有用回忆之间建立关联
         for new_id in created_ids:
             for useful_id in useful_memory_ids:
-                self.association_manager._add_or_update_association(new_id, useful_id, strength_increase=1, cache=association_cache)
-                self.association_manager._add_or_update_association(useful_id, new_id, strength_increase=1, cache=association_cache)
+                self.association_manager._add_or_update_association(
+                    new_id, useful_id, strength_increase=1, cache=association_cache
+                )
+                self.association_manager._add_or_update_association(
+                    useful_id, new_id, strength_increase=1, cache=association_cache
+                )
 
         # 5. 合并重复记忆
         for group in merge_groups:
             if len(group) >= 2:
                 # 获取第一个记忆作为模板
                 first_mem = self.collection.get(ids=[group[0]])
-                if first_mem and first_mem['metadatas']:
-                    metadata = first_mem['metadatas'][0]
+                if first_mem and first_mem["metadatas"]:
+                    metadata = first_mem["metadatas"][0]
                     # 使用第一个记忆的数据作为合并后的内容
                     self.merge_memories(
                         memories_to_merge_ids=group,
                         new_judgment=metadata.get("judgment", "合并记忆"),
                         new_reasoning=metadata.get("reasoning", "合并多个相似记忆"),
-                        new_tags=metadata.get("tags", "").split(", ") if metadata.get("tags") else []
+                        new_tags=metadata.get("tags", "").split(", ")
+                        if metadata.get("tags")
+                        else [],
                     )
 
         return created_memories  # 返回新创建的记忆对象列表
@@ -537,19 +610,17 @@ class MemoryManager:
         try:
             # 查找除了当前记忆之外的所有新鲜任务记忆
             where_filter = {
-                "$and": [
-                    {"memory_type": "任务记忆"},
-                    {"is_consolidated": False}
-                ]
+                "$and": [{"memory_type": "任务记忆"}, {"is_consolidated": False}]
             }
 
             fresh_task_results = self.collection.get(where=where_filter)
-            if not fresh_task_results or not fresh_task_results['ids']:
+            if not fresh_task_results or not fresh_task_results["ids"]:
                 return  # 没有其他新鲜任务记忆
 
             # 过滤掉当前刚创建的任务记忆
             previous_task_ids = [
-                mem_id for mem_id in fresh_task_results['ids']
+                mem_id
+                for mem_id in fresh_task_results["ids"]
                 if mem_id != current_task_id
             ]
 
@@ -558,9 +629,13 @@ class MemoryManager:
 
             # 将之前的新鲜任务记忆转为已巩固状态
             for task_id in previous_task_ids:
-                self.store.update_memory(self.collection, task_id, {"is_consolidated": True})
+                self.store.update_memory(
+                    self.collection, task_id, {"is_consolidated": True}
+                )
 
-            self.logger.debug(f"已将 {len(previous_task_ids)} 个之前的任务记忆转为已巩固状态")
+            self.logger.debug(
+                f"已将 {len(previous_task_ids)} 个之前的任务记忆转为已巩固状态"
+            )
 
         except Exception as e:
             self.logger.error(f"巩固之前任务记忆失败: {str(e)}")

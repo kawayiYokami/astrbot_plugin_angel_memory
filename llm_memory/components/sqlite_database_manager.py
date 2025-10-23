@@ -18,11 +18,13 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
 class DatabaseError(Exception):
     """数据库操作异常"""
+
     pass
 
 
@@ -44,11 +46,13 @@ class SQLiteDatabaseManager(ABC):
         self.db_name = db_name
 
         # 在生成数据库文件名时确保安全 (保留连字符，但对文件名是合法的)
-        safe_provider_id_for_filename = re.sub(r'[^\w\-]', '_', str(provider_id))
-        self.db_path = self.data_directory / f"{db_name}_{safe_provider_id_for_filename}.db"
+        safe_provider_id_for_filename = re.sub(r"[^\w\-]", "_", str(provider_id))
+        self.db_path = (
+            self.data_directory / f"{db_name}_{safe_provider_id_for_filename}.db"
+        )
 
         # 新增：创建一个对SQL表名安全的ID (不允许连字符)
-        self.safe_table_provider_id = re.sub(r'[^\w]', '_', str(provider_id))
+        self.safe_table_provider_id = re.sub(r"[^\w]", "_", str(provider_id))
 
         self._lock = threading.Lock()
         # 优化：使用连接池替代线程本地存储
@@ -65,8 +69,9 @@ class SQLiteDatabaseManager(ABC):
 
         # 初始化数据库
         self._init_database()
-        self.logger.info(f"{self.__class__.__name__}初始化完成 (提供商: {provider_id}, 数据库: {self.db_path}, 连接池: {self._created_connections}/{self._max_pool_size})")
-
+        self.logger.info(
+            f"{self.__class__.__name__}初始化完成 (提供商: {provider_id}, 数据库: {self.db_path}, 连接池: {self._created_connections}/{self._max_pool_size})"
+        )
 
     def _initialize_pool(self, initial_size: int = 2):
         """
@@ -89,11 +94,7 @@ class SQLiteDatabaseManager(ABC):
         Returns:
             配置好的SQLite连接对象
         """
-        conn = sqlite3.connect(
-            self.db_path,
-            check_same_thread=False,
-            timeout=30.0
-        )
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
         # 设置优化参数
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -123,7 +124,9 @@ class SQLiteDatabaseManager(ABC):
                 if self._created_connections < self._max_pool_size:
                     conn = self._create_optimized_connection()
                     self._created_connections += 1
-                    self.logger.debug(f"[{caller}] 创建新连接，当前连接数: {self._created_connections}/{self._max_pool_size}")
+                    self.logger.debug(
+                        f"[{caller}] 创建新连接，当前连接数: {self._created_connections}/{self._max_pool_size}"
+                    )
                     return conn
                 else:
                     # 连接池已满，等待可用连接
@@ -177,7 +180,9 @@ class SQLiteDatabaseManager(ABC):
             if conn:
                 self._return_connection(conn)
 
-    def _execute_query(self, query: str, params: Optional[Tuple] = None, caller: str = "unknown") -> sqlite3.Cursor:
+    def _execute_query(
+        self, query: str, params: Optional[Tuple] = None, caller: str = "unknown"
+    ) -> sqlite3.Cursor:
         """
         执行SQL查询
 
@@ -192,6 +197,7 @@ class SQLiteDatabaseManager(ABC):
         Raises:
             DatabaseError: 数据库操作失败时
         """
+
         def query_func(conn):
             cursor = conn.cursor()
             if params:
@@ -206,7 +212,9 @@ class SQLiteDatabaseManager(ABC):
             self.logger.error(f"SQL查询执行失败: {query}, 参数: {params}, 错误: {e}")
             raise DatabaseError(f"SQL查询执行失败: {e}") from e
 
-    def _execute_batch(self, query: str, params_list: List[Tuple], caller: str = "unknown") -> None:
+    def _execute_batch(
+        self, query: str, params_list: List[Tuple], caller: str = "unknown"
+    ) -> None:
         """
         批量执行SQL操作
 
@@ -231,7 +239,13 @@ class SQLiteDatabaseManager(ABC):
             self.logger.error(f"批量操作失败: {query}, 错误: {e}")
             raise DatabaseError(f"批量操作失败: {e}") from e
 
-    def _execute_single(self, query: str, params: Optional[Tuple] = None, caller: str = "unknown", auto_commit: bool = True) -> sqlite3.Cursor:
+    def _execute_single(
+        self,
+        query: str,
+        params: Optional[Tuple] = None,
+        caller: str = "unknown",
+        auto_commit: bool = True,
+    ) -> sqlite3.Cursor:
         """
         执行单个SQL操作（依赖SQLite内置锁机制）
 
@@ -244,6 +258,7 @@ class SQLiteDatabaseManager(ABC):
         Returns:
             游标对象
         """
+
         def query_func(conn):
             cursor = conn.cursor()
             if params:
@@ -260,7 +275,9 @@ class SQLiteDatabaseManager(ABC):
             self.logger.error(f"SQL操作执行失败: {query}, 参数: {params}, 错误: {e}")
             raise DatabaseError(f"SQL操作执行失败: {e}") from e
 
-    def _batch_get_or_create_ids(self, values: List[str], value_field: str, caller: str = "unknown") -> List[int]:
+    def _batch_get_or_create_ids(
+        self, values: List[str], value_field: str, caller: str = "unknown"
+    ) -> List[int]:
         """
         批量获取或创建ID的通用方法（依赖SQLite内置锁机制）
 
@@ -288,8 +305,8 @@ class SQLiteDatabaseManager(ABC):
             cursor = conn.cursor()
 
             # 第一步：批量查询已存在的记录
-            placeholders = ','.join(['?' for _ in values])
-            query = f'SELECT id, {value_field} FROM {table_name} WHERE {value_field} IN ({placeholders})'
+            placeholders = ",".join(["?" for _ in values])
+            query = f"SELECT id, {value_field} FROM {table_name} WHERE {value_field} IN ({placeholders})"
             cursor.execute(query, values)
             existing_records = {row[1]: row[0] for row in cursor.fetchall()}
 
@@ -297,13 +314,15 @@ class SQLiteDatabaseManager(ABC):
             new_values = [value for value in values if value not in existing_records]
             if new_values:
                 # 批量插入新记录
-                if value_field == 'relative_path':
+                if value_field == "relative_path":
                     # 文件表需要时间戳字段
-                    insert_query = f'INSERT INTO {table_name} ({value_field}, file_timestamp) VALUES (?, ?)'
+                    insert_query = f"INSERT INTO {table_name} ({value_field}, file_timestamp) VALUES (?, ?)"
                     params_list = [(value, 0) for value in new_values]  # 默认时间戳为0
                 else:
                     # 标签表只需要name字段
-                    insert_query = f'INSERT OR IGNORE INTO {table_name} ({value_field}) VALUES (?)'
+                    insert_query = (
+                        f"INSERT OR IGNORE INTO {table_name} ({value_field}) VALUES (?)"
+                    )
                     params_list = [(value,) for value in new_values]
 
                 cursor.executemany(insert_query, params_list)
@@ -311,8 +330,11 @@ class SQLiteDatabaseManager(ABC):
 
                 # 获取新插入记录的ID
                 if new_values:
-                    new_placeholders = ','.join(['?' for _ in new_values])
-                    cursor.execute(f'SELECT id, {value_field} FROM {table_name} WHERE {value_field} IN ({new_placeholders})', new_values)
+                    new_placeholders = ",".join(["?" for _ in new_values])
+                    cursor.execute(
+                        f"SELECT id, {value_field} FROM {table_name} WHERE {value_field} IN ({new_placeholders})",
+                        new_values,
+                    )
                     new_records = {row[1]: row[0] for row in cursor.fetchall()}
                     existing_records.update(new_records)
 
@@ -330,7 +352,9 @@ class SQLiteDatabaseManager(ABC):
             if conn:
                 self._return_connection(conn)
 
-    def _batch_get_names_by_ids(self, ids: List[int], name_field: str, caller: str = "unknown") -> List[str]:
+    def _batch_get_names_by_ids(
+        self, ids: List[int], name_field: str, caller: str = "unknown"
+    ) -> List[str]:
         """
         批量根据ID获取名称的通用方法
 
@@ -348,8 +372,8 @@ class SQLiteDatabaseManager(ABC):
         table_name = self._get_table_name()
 
         try:
-            placeholders = ','.join(['?' for _ in ids])
-            query = f'SELECT id, {name_field} FROM {table_name} WHERE id IN ({placeholders})'
+            placeholders = ",".join(["?" for _ in ids])
+            query = f"SELECT id, {name_field} FROM {table_name} WHERE id IN ({placeholders})"
             cursor = self._execute_query(query, tuple(ids), caller=caller)
 
             id_to_name = {row[0]: row[1] for row in cursor.fetchall()}
@@ -377,7 +401,7 @@ class SQLiteDatabaseManager(ABC):
         table_name = self._get_table_name()
 
         try:
-            cursor = self._execute_query(f'SELECT * FROM {table_name} ORDER BY id')
+            cursor = self._execute_query(f"SELECT * FROM {table_name} ORDER BY id")
             columns = [description[0] for description in cursor.description]
 
             results = []
@@ -403,11 +427,44 @@ class SQLiteDatabaseManager(ABC):
         table_name = self._get_table_name()
 
         try:
-            cursor = self._execute_single(f'DELETE FROM {table_name} WHERE id = ?', (record_id,), caller="delete_by_id")
+            cursor = self._execute_single(
+                f"DELETE FROM {table_name} WHERE id = ?",
+                (record_id,),
+                caller="delete_by_id",
+            )
             return cursor.rowcount > 0
         except sqlite3.Error as e:
             self.logger.error(f"删除记录失败 (ID: {record_id}): {e}")
             return False
+
+    def _execute_batch_delete(
+        self, query: str, params_list: List[Tuple], caller: str = "unknown"
+    ) -> int:
+        """
+        批量执行删除操作，并确保事务提交。
+        这是一个专门为解决删除操作不可靠问题而创建的方法。
+
+        Args:
+            query: SQL DELETE 语句
+            params_list: 参数列表
+            caller: 调用者说明
+
+        Returns:
+            实际删除的行数
+        """
+        if not params_list:
+            return 0
+
+        conn = None
+        try:
+            conn = self._get_connection(caller)
+            cursor = conn.cursor()
+            cursor.executemany(query, params_list)
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            if conn:
+                self._return_connection(conn)
 
     def _return_connection(self, conn: sqlite3.Connection):
         """

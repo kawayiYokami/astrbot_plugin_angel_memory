@@ -12,6 +12,7 @@ try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 from ..llm_memory.utils.path_manager import PathManager
@@ -28,7 +29,9 @@ class PluginContext:
     - 供应商信息
     """
 
-    def __init__(self, astrbot_context, config: Dict[str, Any], base_data_dir: str = None):
+    def __init__(
+        self, astrbot_context, config: Dict[str, Any], base_data_dir: str = None
+    ):
         """
         初始化插件上下文
 
@@ -45,7 +48,9 @@ class PluginContext:
         # 初始化插件资源
         self._setup_plugin_resources()
 
-        self.logger.info(f"PluginContext初始化完成 (提供商: {self.get_embedding_provider_id()})")
+        self.logger.info(
+            f"PluginContext初始化完成 (提供商: {self.get_embedding_provider_id()})"
+        )
 
     def _setup_plugin_resources(self):
         """初始化插件专用资源"""
@@ -60,7 +65,9 @@ class PluginContext:
             self.path_manager = PathManager()
             self.path_manager.set_provider(embedding_provider_id, base_data_dir)
 
-            self.logger.debug(f"插件资源初始化完成: 提供商={embedding_provider_id}, 数据目录={base_data_dir}")
+            self.logger.debug(
+                f"插件资源初始化完成: 提供商={embedding_provider_id}, 数据目录={base_data_dir}"
+            )
 
         except Exception as e:
             self.logger.error(f"插件资源初始化失败: {e}")
@@ -91,7 +98,7 @@ class PluginContext:
 
     def get_all_embedding_providers(self):
         """获取所有嵌入提供商（代理到AstrBot Context）"""
-        if hasattr(self.astrbot_context, 'get_all_embedding_providers'):
+        if hasattr(self.astrbot_context, "get_all_embedding_providers"):
             return self.astrbot_context.get_all_embedding_providers()
         return []
 
@@ -178,19 +185,23 @@ class PluginContext:
 
     def __repr__(self) -> str:
         """详细表示"""
-        return (f"PluginContext("
-                f"embedding_provider='{self.get_embedding_provider_id()}', "
-                f"llm_provider='{self.get_llm_provider_id()}', "
-                f"has_providers={self.has_providers()}, "
-                f"index_dir='{self.get_index_dir()}')"
-                f")")
+        return (
+            f"PluginContext("
+            f"embedding_provider='{self.get_embedding_provider_id()}', "
+            f"llm_provider='{self.get_llm_provider_id()}', "
+            f"has_providers={self.has_providers()}, "
+            f"index_dir='{self.get_index_dir()}')"
+            f")"
+        )
 
 
 class PluginContextFactory:
     """插件上下文工厂 - 提供统一的Context创建接口"""
 
     @staticmethod
-    def create_from_initialization(astrbot_context, config: Dict[str, Any], base_data_dir: str = None) -> PluginContext:
+    def create_from_initialization(
+        astrbot_context, config: Dict[str, Any], base_data_dir: str = None
+    ) -> PluginContext:
         """
         从初始化创建PluginContext
 
@@ -230,10 +241,7 @@ class PluginContextFactory:
             模拟的PluginContext实例
         """
         if config is None:
-            config = {
-                "astrbot_embedding_provider_id": "test",
-                "provider_id": "test"
-            }
+            config = {"astrbot_embedding_provider_id": "test", "provider_id": "test"}
 
         # 创建模拟的AstrBot Context
         class MockAstrbotContext:

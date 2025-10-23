@@ -16,6 +16,7 @@ from .config import MemoryConstants, MemoryCapacityConfig
 @dataclass
 class MemoryItem:
     """记忆项数据结构"""
+
     id: str
     memory_type: str
     judgment: str
@@ -29,7 +30,12 @@ class MemoryItem:
 class SessionMemory:
     """单个会话的短期记忆管理"""
 
-    def __init__(self, session_id: str, capacity_config: MemoryCapacityConfig, capacity_multiplier: float = 1.0):
+    def __init__(
+        self,
+        session_id: str,
+        capacity_config: MemoryCapacityConfig,
+        capacity_multiplier: float = 1.0,
+    ):
         """
         初始化会话记忆
 
@@ -59,20 +65,26 @@ class SessionMemory:
         with self.lock:
             for memory in memories:
                 # 获取记忆类型字符串（处理枚举类型）
-                memory_type_str = memory.memory_type.value if hasattr(memory.memory_type, 'value') else str(memory.memory_type)
+                memory_type_str = (
+                    memory.memory_type.value
+                    if hasattr(memory.memory_type, "value")
+                    else str(memory.memory_type)
+                )
 
                 # 将中文枚举值转换为英文键
-                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(memory_type_str, memory_type_str.lower())
+                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(
+                    memory_type_str, memory_type_str.lower()
+                )
 
                 memory_item = MemoryItem(
                     id=memory.id,
                     memory_type=memory_type_key,
-                    judgment=getattr(memory, 'judgment', ''),
-                    reasoning=getattr(memory, 'reasoning', ''),
-                    tags=getattr(memory, 'tags', []),
-                    strength=getattr(memory, 'strength', 0),
+                    judgment=getattr(memory, "judgment", ""),
+                    reasoning=getattr(memory, "reasoning", ""),
+                    tags=getattr(memory, "tags", []),
+                    strength=getattr(memory, "strength", 0),
                     life_points=3,  # 新记忆默认3点生命值
-                    created_at=time.time()  # 记录创建时间
+                    created_at=time.time(),  # 记录创建时间
                 )
 
                 # 如果记忆已存在，先移除旧的
@@ -96,7 +108,9 @@ class SessionMemory:
             memory_type: 记忆类型
         """
         # 获取该类型的记忆
-        type_memories = [memory for memory in self.memories if memory.memory_type == memory_type]
+        type_memories = [
+            memory for memory in self.memories if memory.memory_type == memory_type
+        ]
 
         # 获取该类型的容量限制
         base_capacity = getattr(self.capacity_config, memory_type, 0)
@@ -141,7 +155,9 @@ class SessionMemory:
             指定类型的记忆列表
         """
         with self.lock:
-            return [memory for memory in self.memories if memory.memory_type == memory_type]
+            return [
+                memory for memory in self.memories if memory.memory_type == memory_type
+            ]
 
     def clear(self) -> None:
         """清空会话记忆"""
@@ -149,7 +165,9 @@ class SessionMemory:
             self.memories.clear()
             self.memory_map.clear()
 
-    def update_memories(self, new_memories: List[BaseMemory], useful_memory_ids: List[str]) -> None:
+    def update_memories(
+        self, new_memories: List[BaseMemory], useful_memory_ids: List[str]
+    ) -> None:
         """
         更新会话记忆：添加新记忆，评估现有记忆，清理死亡记忆
 
@@ -160,18 +178,24 @@ class SessionMemory:
         with self.lock:
             # 1. 添加新记忆
             for memory in new_memories:
-                memory_type_str = memory.memory_type.value if hasattr(memory.memory_type, 'value') else str(memory.memory_type)
-                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(memory_type_str, memory_type_str.lower())
+                memory_type_str = (
+                    memory.memory_type.value
+                    if hasattr(memory.memory_type, "value")
+                    else str(memory.memory_type)
+                )
+                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(
+                    memory_type_str, memory_type_str.lower()
+                )
 
                 memory_item = MemoryItem(
                     id=memory.id,
                     memory_type=memory_type_key,
-                    judgment=getattr(memory, 'judgment', ''),
-                    reasoning=getattr(memory, 'reasoning', ''),
-                    tags=getattr(memory, 'tags', []),
-                    strength=getattr(memory, 'strength', 0),
+                    judgment=getattr(memory, "judgment", ""),
+                    reasoning=getattr(memory, "reasoning", ""),
+                    tags=getattr(memory, "tags", []),
+                    strength=getattr(memory, "strength", 0),
                     life_points=3,  # 新记忆默认3点生命值
-                    created_at=time.time()  # 记录创建时间
+                    created_at=time.time(),  # 记录创建时间
                 )
 
                 # 如果记忆已存在，先移除旧的
@@ -217,42 +241,45 @@ class SessionMemory:
         """
         with self.lock:
             stats = {
-                'session_id': self.session_id,
-                'capacity_multiplier': self.capacity_multiplier,
-                'total_memories': len(self.memories),
-                'by_type': {},
-                'life_points_distribution': {
-                    'high': 0,  # >5
-                    'medium': 0,  # 2-5
-                    'low': 0,  # 1
-                    'critical': 0  # =0 (即将死亡)
-                }
+                "session_id": self.session_id,
+                "capacity_multiplier": self.capacity_multiplier,
+                "total_memories": len(self.memories),
+                "by_type": {},
+                "life_points_distribution": {
+                    "high": 0,  # >5
+                    "medium": 0,  # 2-5
+                    "low": 0,  # 1
+                    "critical": 0,  # =0 (即将死亡)
+                },
             }
 
             # 按类型统计
             for memory in self.memories:
                 memory_type = memory.memory_type
-                if memory_type not in stats['by_type']:
-                    stats['by_type'][memory_type] = {
-                        'current': 0,
-                        'capacity': int(getattr(self.capacity_config, memory_type, 0) * self.capacity_multiplier),
-                        'usage': 0.0
+                if memory_type not in stats["by_type"]:
+                    stats["by_type"][memory_type] = {
+                        "current": 0,
+                        "capacity": int(
+                            getattr(self.capacity_config, memory_type, 0)
+                            * self.capacity_multiplier
+                        ),
+                        "usage": 0.0,
                     }
-                stats['by_type'][memory_type]['current'] += 1
+                stats["by_type"][memory_type]["current"] += 1
 
                 # 生命值分布统计
                 if memory.life_points > 5:
-                    stats['life_points_distribution']['high'] += 1
+                    stats["life_points_distribution"]["high"] += 1
                 elif memory.life_points >= 2:
-                    stats['life_points_distribution']['medium'] += 1
+                    stats["life_points_distribution"]["medium"] += 1
                 elif memory.life_points == 1:
-                    stats['life_points_distribution']['low'] += 1
+                    stats["life_points_distribution"]["low"] += 1
 
             # 计算使用率
-            for memory_type, type_stats in stats['by_type'].items():
-                capacity = type_stats['capacity']
+            for memory_type, type_stats in stats["by_type"].items():
+                capacity = type_stats["capacity"]
                 if capacity > 0:
-                    type_stats['usage'] = type_stats['current'] / capacity
+                    type_stats["usage"] = type_stats["current"] / capacity
 
             return stats
 
@@ -285,13 +312,13 @@ class SessionMemoryManager:
         with self.lock:
             if session_id not in self.sessions:
                 self.sessions[session_id] = SessionMemory(
-                    session_id,
-                    self.capacity_config,
-                    self.capacity_multiplier
+                    session_id, self.capacity_config, self.capacity_multiplier
                 )
             return self.sessions[session_id]
 
-    def add_memories_to_session(self, session_id: str, memories: List[BaseMemory]) -> None:
+    def add_memories_to_session(
+        self, session_id: str, memories: List[BaseMemory]
+    ) -> None:
         """
         向指定会话添加记忆
 
@@ -302,7 +329,12 @@ class SessionMemoryManager:
         session = self.get_or_create_session(session_id)
         session.add_memories(memories)
 
-    def update_session_memories(self, session_id: str, new_memories: List[BaseMemory], useful_memory_ids: List[str]) -> None:
+    def update_session_memories(
+        self,
+        session_id: str,
+        new_memories: List[BaseMemory],
+        useful_memory_ids: List[str],
+    ) -> None:
         """
         更新会话记忆：添加新记忆，评估现有记忆，清理死亡记忆
 

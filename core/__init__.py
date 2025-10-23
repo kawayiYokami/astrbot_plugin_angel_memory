@@ -12,15 +12,15 @@ from .background_initializer import BackgroundInitializer
 from .plugin_manager import PluginManager
 
 __all__ = [
-    'DeepMind',
-    'MemoryConfig',
-    'MemoryConstants',
-    'MemoryCapacityConfig',
-    'SessionMemoryManager',
-    'SessionMemory',
-    'MemoryItem',
-    'InitializationManager',
-    'InitializationState',
-    'BackgroundInitializer',
-    'PluginManager'
+    "DeepMind",
+    "MemoryConfig",
+    "MemoryConstants",
+    "MemoryCapacityConfig",
+    "SessionMemoryManager",
+    "SessionMemory",
+    "MemoryItem",
+    "InitializationManager",
+    "InitializationState",
+    "BackgroundInitializer",
+    "PluginManager",
 ]

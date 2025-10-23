@@ -33,21 +33,21 @@ class QueryProcessor:
         names = set()
 
         try:
-            if hasattr(event, 'angelheart_context'):
+            if hasattr(event, "angelheart_context"):
                 angelheart_data = json.loads(event.angelheart_context)
-                secretary_decision = angelheart_data.get('secretary_decision', {})
+                secretary_decision = angelheart_data.get("secretary_decision", {})
 
                 # 提取persona_name
-                persona_name = secretary_decision.get('persona_name', '').strip()
+                persona_name = secretary_decision.get("persona_name", "").strip()
                 if persona_name:
                     names.add(persona_name)
 
                 # 提取alias（可能是字符串或列表）
-                alias = secretary_decision.get('alias', '')
+                alias = secretary_decision.get("alias", "")
                 if isinstance(alias, str) and alias.strip():
                     # 处理 | 分隔的别名格式
-                    if '|' in alias:
-                        for name in alias.split('|'):
+                    if "|" in alias:
+                        for name in alias.split("|"):
                             name = name.strip()
                             if name:
                                 names.add(name)
@@ -81,7 +81,7 @@ class QueryProcessor:
         for name in names:
             # 使用正则表达式匹配名字（中文环境中不需要词边界）
             pattern = re.escape(name)
-            filtered_query = re.sub(pattern, '', filtered_query, flags=re.IGNORECASE)
+            filtered_query = re.sub(pattern, "", filtered_query, flags=re.IGNORECASE)
 
         return filtered_query
 
@@ -118,7 +118,7 @@ class QueryProcessor:
             # 降级处理：简单字符截断（从后往前）
             if len(text) <= max_tokens * 4:  # 粗略估计1 token ≈ 4 字符
                 return text
-            return text[-(max_tokens * 4):]
+            return text[-(max_tokens * 4) :]
 
     def _clean_text(self, text: str) -> str:
         """
@@ -134,7 +134,7 @@ class QueryProcessor:
             return text
 
         # 替换多个连续空格为单个空格
-        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r"\s+", " ", text)
 
         return text.strip()
 
@@ -208,6 +208,7 @@ class QueryProcessor:
 
 # 全局单例实例
 _query_processor_instance = None
+
 
 def get_query_processor() -> QueryProcessor:
     """获取QueryProcessor的全局单例实例"""

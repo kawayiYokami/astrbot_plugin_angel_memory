@@ -8,8 +8,8 @@ from .memory_formatter import MemoryFormatter
 from .memory_id_resolver import MemoryIDResolver
 
 __all__ = [
-    'SmallModelPromptBuilder',
-    'MemoryInjector',
-    'MemoryFormatter',
-    'MemoryIDResolver'
+    "SmallModelPromptBuilder",
+    "MemoryInjector",
+    "MemoryFormatter",
+    "MemoryIDResolver",
 ]

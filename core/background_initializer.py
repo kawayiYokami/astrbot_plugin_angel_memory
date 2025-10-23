@@ -9,17 +9,21 @@ import threading
 import asyncio
 from .initialization_manager import InitializationManager
 from .component_factory import ComponentFactory
+
 try:
     from astrbot.api import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
 class BackgroundInitializer:
     """后台初始化器 - 仅负责初始化逻辑，不拥有实例"""
 
-    def __init__(self, init_manager: InitializationManager, config: dict, plugin_context):
+    def __init__(
+        self, init_manager: InitializationManager, config: dict, plugin_context
+    ):
         """
         初始化后台初始化器
 
@@ -36,10 +40,14 @@ class BackgroundInitializer:
         self.plugin_context = plugin_context
 
         self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
-        self.logger.info(f"📋 后台初始化器使用数据目录: {plugin_context.get_index_dir()}")
+        self.logger.info(
+            f"📋 后台初始化器使用数据目录: {plugin_context.get_index_dir()}"
+        )
 
         # 直接使用主线程的PluginContext创建ComponentFactory
-        self.component_factory = ComponentFactory(self.plugin_context, init_manager=self.init_manager)
+        self.component_factory = ComponentFactory(
+            self.plugin_context, init_manager=self.init_manager
+        )
         self.logger.debug("BackgroundInitializer初始化完成 - 共享主线程PluginContext")
 
     def start_background_initialization(self):
@@ -47,7 +55,7 @@ class BackgroundInitializer:
         self.background_thread = threading.Thread(
             target=self._initialization_worker,
             daemon=True,
-            name="BackgroundInitializer"
+            name="BackgroundInitializer",
         )
         self.background_thread.start()
         self.logger.info("🚀 后台初始化线程已启动")
@@ -72,6 +80,7 @@ class BackgroundInitializer:
         except Exception as e:
             self.logger.error(f"❌ 后台初始化失败: {e}")
             import traceback
+
             self.logger.error(f"异常详情: {traceback.format_exc()}")
 
     def _perform_initialization(self):
@@ -94,7 +103,9 @@ class BackgroundInitializer:
                 # 3. DeepMind初始化时已经执行了记忆巩固，这里不需要重复执行
                 deepmind = components.get("deepmind")
                 if deepmind and deepmind.is_enabled():
-                    self.logger.info("🧠 DeepMind已在初始化时完成记忆巩固，跳过重复巩固")
+                    self.logger.info(
+                        "🧠 DeepMind已在初始化时完成记忆巩固，跳过重复巩固"
+                    )
                 else:
                     self.logger.warning("⚠️ DeepMind未启用")
 
@@ -104,6 +115,7 @@ class BackgroundInitializer:
         except Exception as e:
             self.logger.error(f"❌ 系统初始化失败: {e}")
             import traceback
+
             self.logger.error(f"错误详情: {traceback.format_exc()}")
             raise
 

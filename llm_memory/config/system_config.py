@@ -17,28 +17,32 @@ class MemorySystemConfig:
     """记忆系统配置类"""
 
     # 嵌入模型
-    embedding_model: str = field(default_factory=lambda: os.getenv(
-        "MEMORY_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"
-    ))
+    embedding_model: str = field(
+        default_factory=lambda: os.getenv(
+            "MEMORY_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"
+        )
+    )
 
     # 嵌入式模型提供商ID
-    astrbot_embedding_provider_id: str = field(default_factory=lambda: os.getenv(
-        "MEMORY_ASTRBOT_EMBEDDING_PROVIDER_ID", ""
-    ))
+    astrbot_embedding_provider_id: str = field(
+        default_factory=lambda: os.getenv("MEMORY_ASTRBOT_EMBEDDING_PROVIDER_ID", "")
+    )
 
     # 集合名称配置
-    collection_name: str = field(default_factory=lambda: os.getenv(
-        "MEMORY_COLLECTION_NAME", "personal_memory_v1"
-    ))
+    collection_name: str = field(
+        default_factory=lambda: os.getenv(
+            "MEMORY_COLLECTION_NAME", "personal_memory_v1"
+        )
+    )
 
     # 笔记服务专用集合名称
-    notes_main_collection_name: str = field(default_factory=lambda: os.getenv(
-        "NOTES_MAIN_COLLECTION_NAME", "notes_main"
-    ))
+    notes_main_collection_name: str = field(
+        default_factory=lambda: os.getenv("NOTES_MAIN_COLLECTION_NAME", "notes_main")
+    )
 
-    notes_sub_collection_name: str = field(default_factory=lambda: os.getenv(
-        "NOTES_SUB_COLLECTION_NAME", "notes_sub"
-    ))
+    notes_sub_collection_name: str = field(
+        default_factory=lambda: os.getenv("NOTES_SUB_COLLECTION_NAME", "notes_sub")
+    )
 
     # 注意：storage_dir 和 index_dir 应该从 PathManager 实例获取（在设置供应商后）
     # 这里不再设置默认值，由外部传入或通过 PathManager 动态获取
@@ -46,31 +50,33 @@ class MemorySystemConfig:
     index_dir: Path = field(default=None)
 
     # 阈值配置
-    strength_threshold: int = field(default_factory=lambda: int(os.getenv(
-        "MEMORY_STRENGTH_THRESHOLD", "2"
-    )))
+    strength_threshold: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_STRENGTH_THRESHOLD", "2"))
+    )
 
-    association_threshold: int = field(default_factory=lambda: int(os.getenv(
-        "MEMORY_ASSOCIATION_THRESHOLD", "1"
-    )))
+    association_threshold: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_ASSOCIATION_THRESHOLD", "1"))
+    )
 
     # 检索限制
-    default_recall_limit: int = field(default_factory=lambda: int(os.getenv(
-        "MEMORY_DEFAULT_RECALL_LIMIT", "10"
-    )))
+    default_recall_limit: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_DEFAULT_RECALL_LIMIT", "10"))
+    )
 
-    fresh_recall_limit: int = field(default_factory=lambda: int(os.getenv(
-        "MEMORY_FRESH_RECALL_LIMIT", "5"
-    )))
+    fresh_recall_limit: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_FRESH_RECALL_LIMIT", "5"))
+    )
 
-    consolidated_recall_limit: int = field(default_factory=lambda: int(os.getenv(
-        "MEMORY_CONSOLIDATED_RECALL_LIMIT", "5"
-    )))
+    consolidated_recall_limit: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_CONSOLIDATED_RECALL_LIMIT", "5"))
+    )
 
     # 巩固间隔（小时）
-    consolidation_interval_hours: int = field(default_factory=lambda: int(os.getenv(
-        "MEMORY_CONSOLIDATION_INTERVAL_HOURS", "24"
-    )))
+    consolidation_interval_hours: int = field(
+        default_factory=lambda: int(
+            os.getenv("MEMORY_CONSOLIDATION_INTERVAL_HOURS", "24")
+        )
+    )
 
     def __post_init__(self):
         """初始化后处理"""
@@ -105,12 +111,12 @@ class MemorySystemConfig:
         }
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'MemorySystemConfig':
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "MemorySystemConfig":
         """从字典创建配置"""
-        if 'storage_dir' in config_dict:
-            config_dict['storage_dir'] = Path(config_dict['storage_dir'])
-        if 'index_dir' in config_dict:
-            config_dict['index_dir'] = Path(config_dict['index_dir'])
+        if "storage_dir" in config_dict:
+            config_dict["storage_dir"] = Path(config_dict["storage_dir"])
+        if "index_dir" in config_dict:
+            config_dict["index_dir"] = Path(config_dict["index_dir"])
 
         return cls(**config_dict)
 
