@@ -7,6 +7,7 @@
 import chromadb
 from typing import List, Optional, Tuple
 import traceback
+import concurrent.futures
 from pathlib import Path
 from .embedding_provider import EmbeddingProvider, LocalEmbeddingProvider
 from ..utils.path_manager import PathManager
@@ -255,8 +256,13 @@ class VectorStore:
         Returns:
             相关的记忆对象列表(BaseMemory 的子类)
         """
-        # 显式生成查询向量(同步调用)
-        query_embedding = self.embed_single_document(query)
+        # 显式生成查询向量(同步调用)，指明这是查询场景
+        query_embedding = self.embed_single_document(query, is_query=True)
+
+        # --- 处理向量化失败 ---
+        if query_embedding is None:
+            self.logger.warning(f"因向量化失败，查询 '{query[:50]}...' 的回忆流程已中止。")
+            return []  # 立即返回空列表
 
         # 构建查询参数 - 获取更多候选结果用于阈值过滤
         query_params = {
@@ -477,89 +483,120 @@ class VectorStore:
 
         return timings if _return_timings else None
 
-    def embed_documents(self, documents: List[str]) -> List[List[float]]:
+    def embed_documents(self, documents: List[str], is_query: bool = False, timeout: int = 3) -> Optional[List[List[float]]]:
         """
-        使用嵌入提供商为文档列表生成向量嵌入(同步方法,支持429错误重试).
+        使用嵌入提供商为文档列表生成向量嵌入(同步方法).
 
         Args:
             documents: 需要进行向量化的文档字符串列表.
+            is_query: 是否为查询场景. True=性能敏感的查询场景, False=可靠的存储场景.
+            timeout: 查询场景下的超时时间(秒), 仅在 is_query=True 时生效.
 
         Returns:
-            一个由向量(浮点数列表)组成的列表.
+            一个由向量(浮点数列表)组成的列表, 或在查询失败时返回 None.
 
         Raises:
-            RateLimitExceededError: 当重试3次后仍然遇到429错误时抛出
+            RateLimitExceededError: 仅在存储场景(is_query=False)下, 当重试3次后仍然遇到429错误时抛出
             Exception: 其他错误直接抛出,不重试
         """
         if not documents:
             return []
 
-        # 导入自定义异常
-        from ..exceptions import RateLimitExceededError
-
-        # 重试配置(仅针对429错误)
-        max_retries = 3
-        base_wait_time = 60  # 基础等待时间(秒)
-
-        for attempt in range(max_retries):
+        # --- 性能敏感的查询路径 ---
+        if is_query:
             try:
-                # 使用嵌入提供商生成向量(同步调用)
-                embeddings = self.embedding_provider.embed_documents_sync(documents)
-                return embeddings
-
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    # 提交向量化任务
+                    future = executor.submit(self.embedding_provider.embed_documents_sync, documents)
+                    # 等待结果，设置超时
+                    embeddings = future.result(timeout=timeout)
+                    return embeddings
+            except concurrent.futures.TimeoutError:
+                self.logger.warning(f"查询向量化超时（超过 {timeout} 秒），操作已中断。")
+                return None
             except Exception as e:
-                error_msg = str(e)
+                self.logger.error(f"查询向量化失败，立即返回。错误: {e}")
+                return None
 
-                # 只对429错误进行重试,其他错误直接抛出
-                is_rate_limit = (
-                    "429" in error_msg
-                    or "rate limit" in error_msg.lower()
-                    or "TPM limit" in error_msg
-                )
+        # --- 可靠的存储路径 (保留现有重试逻辑) ---
+        else:
+            # 导入自定义异常
+            from ..exceptions import RateLimitExceededError
 
-                if not is_rate_limit:
-                    # 非429错误,直接抛出,不重试
-                    self.logger.error(f"❌ 向量化失败: {error_msg}")
-                    raise
+            # 重试配置(仅针对429错误)
+            max_retries = 3
+            base_wait_time = 60  # 基础等待时间(秒)
 
-                # 429错误的重试逻辑
-                if attempt < max_retries - 1:
-                    # 指数退避:60s, 120s, 240s
-                    wait_time = base_wait_time * (2**attempt)
+            for attempt in range(max_retries):
+                try:
+                    # 使用嵌入提供商生成向量(同步调用)
+                    embeddings = self.embedding_provider.embed_documents_sync(documents)
+                    return embeddings
 
-                    # 添加随机抖动(±10%)避免同时重试
-                    import random
-                    import time
+                except Exception as e:
+                    error_msg = str(e)
 
-                    jitter = random.uniform(-0.1, 0.1) * wait_time
-                    final_wait = int(wait_time + jitter)
-
-                    self.logger.warning(
-                        f"⏱️  遇到速率限制 (429错误),"
-                        f"等待 {final_wait} 秒后重试 "
-                        f"(第 {attempt + 1}/{max_retries} 次)"
+                    # 只对429错误进行重试,其他错误直接抛出
+                    is_rate_limit = (
+                        "429" in error_msg
+                        or "rate limit" in error_msg.lower()
+                        or "TPM limit" in error_msg
                     )
 
-                    time.sleep(final_wait)
-                else:
-                    # 达到最大重试次数,抛出自定义异常
-                    self.logger.error(
-                        f"❌ 向量化失败:达到最大重试次数 ({max_retries}),"
-                        f"速率限制错误: {error_msg}"
-                    )
-                    raise RateLimitExceededError(
-                        f"速率限制重试失败 (尝试了{max_retries}次): {error_msg}",
-                        attempts=max_retries,
-                    ) from e
+                    if not is_rate_limit:
+                        # 非429错误,直接抛出,不重试
+                        self.logger.error(f"❌ 向量化失败: {error_msg}")
+                        raise
 
-        # 理论上不会到这里
-        raise Exception("向量化失败:未知错误")
+                    # 429错误的重试逻辑
+                    if attempt < max_retries - 1:
+                        # 指数退避:60s, 120s, 240s
+                        wait_time = base_wait_time * (2**attempt)
 
-    def embed_single_document(self, document: str) -> List[float]:
+                        # 添加随机抖动(±10%)避免同时重试
+                        import random
+                        import time
+
+                        jitter = random.uniform(-0.1, 0.1) * wait_time
+                        final_wait = int(wait_time + jitter)
+
+                        self.logger.warning(
+                            f"⏱️  遇到速率限制 (429错误),"
+                            f"等待 {final_wait} 秒后重试 "
+                            f"(第 {attempt + 1}/{max_retries} 次)"
+                        )
+
+                        time.sleep(final_wait)
+                    else:
+                        # 达到最大重试次数,抛出自定义异常
+                        self.logger.error(
+                            f"❌ 向量化失败:达到最大重试次数 ({max_retries}),"
+                            f"速率限制错误: {error_msg}"
+                        )
+                        raise RateLimitExceededError(
+                            f"速率限制重试失败 (尝试了{max_retries}次): {error_msg}",
+                            attempts=max_retries,
+                        ) from e
+
+            # 理论上不会到这里
+            raise Exception("向量化失败:未知错误")
+
+    def embed_single_document(self, document: str, is_query: bool = False, timeout: int = 3) -> Optional[List[float]]:
         """
         为单个文档生成向量嵌入(同步方法).
+
+        Args:
+            document: 需要向量化的单个文档字符串.
+            is_query: 是否为查询场景.
+            timeout: 查询场景下的超时时间(秒).
+
+        Returns:
+            单个文档的向量, 或在查询失败时返回 None.
         """
-        return self.embed_documents([document])[0]
+        embeddings = self.embed_documents([document], is_query=is_query, timeout=timeout)
+        if embeddings:
+            return embeddings[0]
+        return None
 
     def clear_all(self):
         """清空所有记忆."""
@@ -968,8 +1005,13 @@ class VectorStore:
         Returns:
             相关的笔记对象列表(NoteData)
         """
-        # 显式生成查询向量(同步调用)
-        query_embedding = self.embed_single_document(query)
+        # 显式生成查询向量(同步调用)，指明这是查询场景
+        query_embedding = self.embed_single_document(query, is_query=True)
+
+        # --- 处理向量化失败 ---
+        if query_embedding is None:
+            self.logger.warning(f"因向量化失败，笔记查询 '{query[:50]}...' 的流程已中止。")
+            return []  # 立即返回空列表
 
         # 构建查询参数
         query_params = {"query_embeddings": [query_embedding], "n_results": limit}
@@ -1036,8 +1078,13 @@ class VectorStore:
             {'note_id': similarity_score, ...} 的字典
         """
         try:
-            # 显式生成查询向量(同步调用)
-            query_embedding = self.embed_single_document(query)
+            # 显式生成查询向量(同步调用)，指明这是查询场景
+            query_embedding = self.embed_single_document(query, is_query=True)
+
+            # --- 处理向量化失败 ---
+            if query_embedding is None:
+                self.logger.warning(f"因向量化失败，向量搜索 '{query[:50]}...' 已中止。")
+                return {}  # 立即返回空字典
 
             # 执行向量搜索
             results = collection.query(
