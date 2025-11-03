@@ -466,6 +466,25 @@ class DeepMind:
 
         return ""
 
+    def _clean_note_content(self, content: str) -> str:
+        """
+        清理笔记内容，保留单个换行符，去除双换行符
+
+        Args:
+            content: 原始笔记内容
+
+        Returns:
+            清理后的笔记内容（保留\n，去除\n\n）
+        """
+        # 去除首尾空白
+        content = content.strip()
+        
+        # 将所有连续的换行符（包括空行）替换为单个换行符
+        import re
+        content = re.sub(r'\n+', '\n', content)
+        
+        return content
+
     async def organize_and_inject_memories(
         self, event: AstrMessageEvent, request: ProviderRequest
     ):
@@ -625,18 +644,24 @@ class DeepMind:
                     # 使用新的方法构建笔记上下文，避免模型误解标签为引用
                     note_context_parts = []
                     for note in selected_notes:
-                        content = note.get("content", "").strip()
+                        content = note.get("content", "")
                         tags = note.get("tags", [])
+
+                        # 清理笔记内容（去除所有空行）
+                        cleaned_content = self._clean_note_content(content)
 
                         if tags:
                             # 如果有标签，构建新的引言格式
                             tags_str = ", ".join(tags)
                             intro_str = f"关于({tags_str})的笔记："
-                            note_context_parts.append(f"{intro_str}\n{content}")
+                            note_context_parts.append(f"{intro_str} {cleaned_content}")
                         else:
                             # 如果没有标签，直接添加内容
-                            note_context_parts.append(content)
-                    note_context = "\n\n---\n\n".join(note_context_parts)
+                            note_context_parts.append(cleaned_content)
+                    
+                    # 合并所有笔记，只在开头添加一次时效性提醒
+                    time_warning = "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n"
+                    note_context = time_warning + "\n\n".join(note_context_parts)
                     self.logger.debug(
                         f"构建了包含 {len(selected_notes)} 条笔记的上下文，共 {current_tokens} tokens"
                     )
