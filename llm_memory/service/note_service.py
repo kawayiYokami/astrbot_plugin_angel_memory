@@ -297,6 +297,9 @@ class NoteService:
             self.logger.debug(f"所有召回结果都低于阈值 {threshold}，返回空列表")
             return []
 
+        # 去重处理：移除内容完全相同的笔记
+        all_recalled_notes = self._deduplicate_notes(all_recalled_notes)
+        
         # 2. 第二阶段：重排 (Reranking)
         # 使用轻量级方法查询副集合（只获取标签相关性分数）
         # 副集合不存储 metadata，所以不能使用 search_notes
@@ -331,6 +334,44 @@ class NoteService:
             )
 
         return final_results
+
+    def _deduplicate_notes(self, notes: List[Dict]) -> List[Dict]:
+        """
+        去除内容完全相同的笔记，保留相似度最高的版本
+        
+        Args:
+            notes: 笔记列表，每个笔记包含 id, content, content_similarity 等字段
+            
+        Returns:
+            去重后的笔记列表
+        """
+        if not notes:
+            return notes
+            
+        # 使用字典记录每个内容的最佳笔记（相似度最高的）
+        content_to_best_note = {}
+        
+        for note in notes:
+            content = note.get("content", "")
+            similarity = note.get("content_similarity", 0.0)
+            
+            # 如果这个内容还没有记录，或者当前笔记的相似度更高
+            if (content not in content_to_best_note or 
+                similarity > content_to_best_note[content].get("content_similarity", 0.0)):
+                content_to_best_note[content] = note
+        
+        # 记录去重统计
+        original_count = len(notes)
+        deduplicated_count = len(content_to_best_note)
+        
+        if original_count > deduplicated_count:
+            self.logger.info(
+                f"笔记去重：{original_count} -> {deduplicated_count} "
+                f"(移除了 {original_count - deduplicated_count} 个重复笔记)"
+            )
+        
+        # 返回去重后的笔记列表
+        return list(content_to_best_note.values())
 
     def get_note(self, note_id: str) -> Dict:
         """
