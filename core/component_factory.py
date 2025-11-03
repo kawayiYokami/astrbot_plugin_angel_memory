@@ -147,7 +147,7 @@ class ComponentFactory:
         self.logger.info(f"🔧 配置的嵌入式模型提供商ID: '{embedding_provider_id}'")
 
         factory = EmbeddingProviderFactory(self.context)
-        embedding_provider = await factory.create_provider(embedding_provider_id)
+        embedding_provider = await factory.create_provider(embedding_provider_id, enable_local_embedding=self.plugin_context.get_enable_local_embedding())
 
         provider_info = embedding_provider.get_model_info()
         self.logger.info(f"✅ 嵌入提供商创建完成: {provider_info}")

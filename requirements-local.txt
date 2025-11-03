@@ -1,0 +1,17 @@
+# Angel Memory Plugin - 本地模型支持（可选）
+# 
+# 安装此文件以启用本地嵌入模型（完全离线运行）
+# 警告：这将安装重量级依赖 (~800MB+)
+#
+# 使用方法：
+# pip install -r requirements-local.txt
+#
+# 或者通过配置启用自动安装：
+# 在插件配置中设置 enable_local_embedding: true
+
+# PyTorch CPU版本（轻量级，无GPU依赖）
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=1.11.0
+
+# Sentence Transformers（会复用上面的CPU版torch）
+sentence-transformers>=2.2.0

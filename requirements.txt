@@ -1,6 +1,6 @@
 # Angel Memory Plugin Dependencies
 
-# 核心依赖
+# 核心依赖（轻量级）
 chromadb>=1.2.1
 requests>=2.28.0
 mistune>=2.0.0
@@ -8,13 +8,6 @@ markitdown[all]>=0.1.0
 tiktoken>=0.4.0
 bm25s>=0.2.0
 jieba>=0.42.0
-
-# PyTorch CPU版本（轻量级，无GPU依赖）
---extra-index-url https://download.pytorch.org/whl/cpu
-torch>=1.11.0
-
-# Sentence Transformers（会复用上面的CPU版torch）
-sentence-transformers>=2.2.0
 
 # 本项目依赖的llm_memory模块已包含在插件内部
 # 无需额外依赖，使用AstrBot内置的模块

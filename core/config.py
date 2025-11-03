@@ -101,6 +101,7 @@ class MemoryConfig:
         self._large_model_note_budget = self._validate_token_budget(
             config_get("large_model_note_budget", 12000), "large_model_note_budget"
         )
+        self._enable_local_embedding = config_get("enable_local_embedding", False)
 
     @property
     def min_message_length(self) -> int:
@@ -136,6 +137,10 @@ class MemoryConfig:
     def large_model_note_budget(self) -> int:
         """获取大模型笔记Token预算"""
         return self._large_model_note_budget
+    @property
+    def enable_local_embedding(self) -> bool:
+        """是否启用本地嵌入模型"""
+        return self._enable_local_embedding
 
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """
@@ -156,6 +161,7 @@ class MemoryConfig:
             "min_message_length": self.min_message_length,
             "short_term_memory_capacity": self.short_term_memory_capacity,
             "sleep_interval": self.sleep_interval,
+            "enable_local_embedding": self.enable_local_embedding,
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "small_model_note_budget": self.small_model_note_budget,

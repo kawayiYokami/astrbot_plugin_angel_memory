@@ -1,4 +1,11 @@
 {
+  "enable_local_embedding": {
+    "type": "bool",
+    "title": "启用本地嵌入模型",
+    "description": "启用本地嵌入模型支持（需要安装重量级依赖torch+sentence-transformers）",
+    "default": false,
+    "hint": "默认关闭以减小安装体积，开启后首次使用时将自动安装本地模型依赖（约800MB）"
+  },
   "min_message_length": {
     "type": "int",
     "title": "最小消息长度",

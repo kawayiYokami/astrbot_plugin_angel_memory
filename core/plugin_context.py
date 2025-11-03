@@ -115,6 +115,9 @@ class PluginContext:
     def get_embedding_provider_id(self) -> str:
         """获取嵌入提供商ID"""
         return self.config.get("astrbot_embedding_provider_id", "local")
+    def get_enable_local_embedding(self) -> bool:
+        """获取是否启用本地嵌入模型"""
+        return self.config.get("enable_local_embedding", False)
 
     def get_llm_provider_id(self) -> str:
         """获取LLM提供商ID"""

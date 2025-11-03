@@ -11,7 +11,6 @@ import asyncio
 import threading
 import sys
 from collections import OrderedDict
-from sentence_transformers import SentenceTransformer
 
 # 尝试导入astrbot logger，如果失败则使用标准库logger
 try:
@@ -331,13 +330,13 @@ class EmbeddingProvider(ABC):
 
 
 class LocalEmbeddingProvider(EmbeddingProvider):
-    """本地嵌入模型提供商"""
+    """本地嵌入模型提供商（懒加载，自动依赖安装）"""
 
     def __init__(
         self, model_name: str = "BAAI/bge-small-zh-v1.5", cache_size_mb: float = 100.0
     ):
         """
-        初始化本地嵌入提供商
+        初始化本地嵌入提供商（懒加载模式）
 
         Args:
             model_name: 本地模型名称
@@ -345,15 +344,60 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         """
         self.model_name = model_name
         self.logger = logger
-        self._model: Optional[SentenceTransformer] = None
+        self._model = None
+        self._model_class = None  # 延迟导入的SentenceTransformer类
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
-        self._load_model()
+        self._auto_install_attempted = False  # 避免重复尝试自动安装
+
+    def _ensure_dependencies(self):
+        """确保依赖已安装，如需要则自动安装"""
+        if self._model_class is not None:
+            return True  # 已经加载
+
+        try:
+            # 尝试导入sentence_transformers
+            self._model_class = importlib.import_module('sentence_transformers').SentenceTransformer
+            self.logger.info("✅ sentence-transformers 已安装")
+            return True
+        except ImportError:
+            self.logger.warning("⚠️ sentence-transformers 未安装")
+            
+            # 如果已经尝试过自动安装，则不再重复尝试
+            if self._auto_install_attempted:
+                self.logger.error("❌ 自动安装已失败，跳过")
+                return False
+                
+            self._auto_install_attempted = True
+            
+            # 自动安装依赖
+            self.logger.info("🚀 自动安装本地模型依赖...")
+            try:
+                subprocess.check_call([
+                    sys.executable, "-m", "pip", "install", 
+                    "--upgrade", 
+                    "torch",
+                    "sentence-transformers>=2.2.0"
+                ])
+                self.logger.info("✅ 本地模型依赖安装完成")
+                
+                # 重新尝试导入
+                self._model_class = importlib.import_module('sentence_transformers').SentenceTransformer
+                return True
+                
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"❌ 自动安装失败: {e}")
+                self.logger.error("请手动安装: pip install torch sentence-transformers")
+                return False
 
     def _load_model(self):
-        """加载本地模型"""
+        """懒加载本地模型"""
+        if not self._ensure_dependencies():
+            self.logger.error("❌ 无法加载本地模型：缺少依赖")
+            return
+            
         try:
             self.logger.info(f"正在加载本地嵌入模型: {self.model_name}")
-            self._model = SentenceTransformer(self.model_name)
+            self._model = self._model_class(self.model_name)
             self.logger.info(f"本地嵌入模型加载完成: {self.model_name}")
         except Exception as e:
             self.logger.error(f"本地嵌入模型加载失败: {e}")
@@ -739,6 +783,7 @@ class EmbeddingProviderFactory:
         self,
         provider_id: Optional[str] = None,
         local_model_name: str = "BAAI/bge-small-zh-v1.5",
+        enable_local_embedding: bool = True,
     ) -> EmbeddingProvider:
         """
         创建嵌入提供商
@@ -750,6 +795,11 @@ class EmbeddingProviderFactory:
         Returns:
             嵌入提供商实例
         """
+        # 检查是否启用本地模型
+        if not enable_local_embedding:
+            self.logger.warning("本地嵌入模型已禁用，使用API模式")
+            provider_id = provider_id or ""  # 强制使用API模式
+        
         # 如果没有提供商ID，直接使用本地模型
         if not provider_id:
             self.logger.info("未指定API提供商，使用本地嵌入模型")
