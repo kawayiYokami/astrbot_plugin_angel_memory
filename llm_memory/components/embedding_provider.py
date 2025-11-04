@@ -8,6 +8,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import asyncio
+import importlib
+import subprocess
 import threading
 import sys
 from collections import OrderedDict
@@ -361,29 +363,29 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             return True
         except ImportError:
             self.logger.warning("⚠️ sentence-transformers 未安装")
-            
+
             # 如果已经尝试过自动安装，则不再重复尝试
             if self._auto_install_attempted:
                 self.logger.error("❌ 自动安装已失败，跳过")
                 return False
-                
+
             self._auto_install_attempted = True
-            
+
             # 自动安装依赖
             self.logger.info("🚀 自动安装本地模型依赖...")
             try:
                 subprocess.check_call([
-                    sys.executable, "-m", "pip", "install", 
-                    "--upgrade", 
+                    sys.executable, "-m", "pip", "install",
+                    "--upgrade",
                     "torch",
                     "sentence-transformers>=2.2.0"
                 ])
                 self.logger.info("✅ 本地模型依赖安装完成")
-                
+
                 # 重新尝试导入
                 self._model_class = importlib.import_module('sentence_transformers').SentenceTransformer
                 return True
-                
+
             except subprocess.CalledProcessError as e:
                 self.logger.error(f"❌ 自动安装失败: {e}")
                 self.logger.error("请手动安装: pip install torch sentence-transformers")
@@ -394,7 +396,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         if not self._ensure_dependencies():
             self.logger.error("❌ 无法加载本地模型：缺少依赖")
             return
-            
+
         try:
             self.logger.info(f"正在加载本地嵌入模型: {self.model_name}")
             self._model = self._model_class(self.model_name)
@@ -799,7 +801,7 @@ class EmbeddingProviderFactory:
         if not enable_local_embedding:
             self.logger.warning("本地嵌入模型已禁用，使用API模式")
             provider_id = provider_id or ""  # 强制使用API模式
-        
+
         # 如果没有提供商ID，直接使用本地模型
         if not provider_id:
             self.logger.info("未指定API提供商，使用本地嵌入模型")
