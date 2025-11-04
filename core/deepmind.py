@@ -308,22 +308,21 @@ class DeepMind:
 
         # 2. 合并记忆和笔记上下文
         if memory_context or note_context:
-            combined_context = ""
+            # 注入记忆内容作为用户消息
             if memory_context:
-                combined_context += memory_context
+                request.contexts.append({
+                    "role": "user",
+                    "content": f"[RAG-记忆] 相关记忆参考:\n{memory_context}"
+                })
+                
+            # 注入笔记内容作为用户消息
             if note_context:
-                if combined_context:
-                    combined_context += "\n\n---\n\n"
-                combined_context += f"相关笔记上下文：\n{note_context}"
+                request.contexts.append({
+                    "role": "user",
+                    "content": f"[RAG-笔记] 相关笔记参考:\n{note_context}"
+                })
 
-            self.logger.debug(f"合并后的上下文长度: {len(combined_context)} 字符")
-
-            # 3. 注入到系统提示词
-            original_system_prompt = request.system_prompt
-            request.system_prompt = self.memory_injector.inject_into_system_prompt(
-                original_system_prompt, combined_context
-            )
-            self.logger.debug("记忆已成功注入到系统提示词中")
+            self.logger.debug("记忆和笔记已成功注入到请求上下文中")
         else:
             self.logger.debug("没有记忆或笔记上下文需要注入")
 

@@ -185,7 +185,7 @@ class AngelMemoryPlugin(Star):
             }
             self.plugin_manager.set_main_thread_components(main_components)
 
-    @filter.on_llm_request(priority=-51)
+    @filter.on_llm_request(priority=40)
     async def on_llm_request(self, event: AstrMessageEvent, request: ProviderRequest):
         """
         LLM调用前整理记忆并注入到请求中
