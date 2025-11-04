@@ -610,15 +610,7 @@ class VectorStore:
             return embeddings[0]
         return None
 
-    def clear_all(self):
-        """清空所有记忆."""
-        try:
-            collection_name = self.collection.name
-            self.client.delete_collection(collection_name)
-            self.collection = self.client.get_or_create_collection(name=collection_name)
-        except Exception as e:
-            self.logger.error(f"清空所有记忆失败: {e}")
-            raise
+
 
     def get_or_create_collection_with_dimension_check(self, name: str):
         """

@@ -121,9 +121,32 @@ class MemoryFormatter:
         return "".join(formatted_lines)
 
     @staticmethod
+    def _deduplicate_memories(memories: List[MemoryItem]) -> List[MemoryItem]:
+        """
+        去重记忆列表，基于judgment文本内容
+
+        Args:
+            memories: 记忆列表
+
+        Returns:
+            去重后的记忆列表
+        """
+        seen_judgments = set()
+        deduplicated = []
+
+        for memory in memories:
+            # 标准化judgment文本用于比较
+            normalized_judgment = memory.judgment.strip().lower()
+            if normalized_judgment not in seen_judgments:
+                seen_judgments.add(normalized_judgment)
+                deduplicated.append(memory)
+
+        return deduplicated
+
+    @staticmethod
     def format_fifo_memories(memories: List[MemoryItem]) -> str:
         """
-        专门格式化来自FIFO短期记忆的列表，无过滤。
+        专门格式化来自FIFO短期记忆的列表，无过滤，但会去重。
 
         Args:
             memories: 记忆列表
@@ -134,8 +157,11 @@ class MemoryFormatter:
         if not memories:
             return ""
 
+        # 去重处理
+        deduplicated_memories = MemoryFormatter._deduplicate_memories(memories)
+
         # 按类型分组并格式化
-        grouped_memories = MemoryFormatter.format_memories_by_type(memories)
+        grouped_memories = MemoryFormatter.format_memories_by_type(deduplicated_memories)
 
         # 构建最终文本
         formatted_lines = ["[相关记忆]"]
@@ -146,6 +172,8 @@ class MemoryFormatter:
             )
 
         return "".join(formatted_lines)
+
+    
 
     @staticmethod
     def format_memories_for_display(memories: List[MemoryItem]) -> str:

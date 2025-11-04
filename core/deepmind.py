@@ -282,6 +282,8 @@ class DeepMind:
             "core_topic": core_topic,
         }
 
+
+
     def _inject_memories_to_request(
         self, request: ProviderRequest, session_id: str, note_context: str
     ) -> None:
@@ -314,7 +316,7 @@ class DeepMind:
                     "role": "user",
                     "content": f"[RAG-记忆] 相关记忆参考:\n{memory_context}"
                 })
-                
+
             # 注入笔记内容作为用户消息
             if note_context:
                 request.contexts.append({
@@ -477,11 +479,11 @@ class DeepMind:
         """
         # 去除首尾空白
         content = content.strip()
-        
+
         # 将所有连续的换行符（包括空行）替换为单个换行符
         import re
         content = re.sub(r'\n+', '\n', content)
-        
+
         return content
 
     async def organize_and_inject_memories(
@@ -657,7 +659,7 @@ class DeepMind:
                         else:
                             # 如果没有标签，直接添加内容
                             note_context_parts.append(cleaned_content)
-                    
+
                     # 合并所有笔记，只在开头添加一次时效性提醒
                     time_warning = "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n"
                     note_context = time_warning + "\n\n".join(note_context_parts)

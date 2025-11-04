@@ -12,7 +12,8 @@ from dataclasses import dataclass
 class MemoryCapacityConfig:
     """记忆容量配置类"""
 
-    knowledge: int = 14
+    knowledge: int = 14  # 普通知识记忆容量
+    knowledge_user_info: int = 14  # 用户信息专用知识记忆容量
     emotional: int = 1
     skill: int = 7
     task: int = 1
