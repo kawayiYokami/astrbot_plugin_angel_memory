@@ -54,7 +54,7 @@ def ensure_chromadb_version():
             f"chromadb 未安装，将安装最新版本（不低于 {MINIMUM_CHROMADB_VERSION}）。"
         )
         _upgrade_chromadb()
-    except Exception as e:
+    except (ImportError, OSError, subprocess.SubprocessError) as e:
         logger.error(f"检查 chromadb 版本时出错: {e}")
 
 
@@ -154,7 +154,7 @@ class AngelMemoryPlugin(Star):
             else:
                 self.logger.info("ℹ️ 未检测到可用提供商，将使用本地模式")
 
-        except Exception as e:
+        except (AttributeError, KeyError, TypeError) as e:
             self.logger.error(f"❌ 配置检查失败: {e}")
 
     def update_components(self):
@@ -216,7 +216,7 @@ class AngelMemoryPlugin(Star):
                     f"LLM请求处理失败: {result.get('message', '未知错误')}"
                 )
 
-        except Exception as e:
+        except (AttributeError, ValueError, RuntimeError) as e:
             self.logger.error(f"LLM_REQUEST failed: {e}")
 
     @filter.on_llm_response(priority=-100)
@@ -250,7 +250,7 @@ class AngelMemoryPlugin(Star):
                     f"LLM响应处理失败: {result.get('message', '未知错误')}"
                 )
 
-        except Exception as e:
+        except (AttributeError, ValueError, RuntimeError) as e:
             self.logger.error(f"LLM_RESPONSE failed: {e}")
 
     async def terminate(self) -> None:
@@ -272,7 +272,7 @@ class AngelMemoryPlugin(Star):
                 f"Angel Memory Plugin 已关闭，最终状态: {status.get('state', 'unknown')}"
             )
 
-        except Exception as e:
+        except (AttributeError, RuntimeError) as e:
             self.logger.error(f"Angel Memory Plugin: 插件卸载清理失败: {e}")
 
     def get_plugin_status(self):
