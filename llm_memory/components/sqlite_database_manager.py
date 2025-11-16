@@ -8,11 +8,9 @@ SQLite数据库管理器 - 提供基础的连接管理和CRUD操作
 
 import re
 import sqlite3
-import threading
 from abc import ABC
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from queue import Queue, Empty
 
 try:
     from astrbot.api import logger
@@ -54,38 +52,21 @@ class SQLiteDatabaseManager(ABC):
         # 新增：创建一个对SQL表名安全的ID (不允许连字符)
         self.safe_table_provider_id = re.sub(r"[^\w]", "_", str(provider_id))
 
-        self._lock = threading.Lock()
-        # 优化：使用连接池替代线程本地存储
-        self._connection_pool = Queue(maxsize=8)  # 限制连接池大小为8
-        self._pool_lock = threading.Lock()
-        self._created_connections = 0
-        self._max_pool_size = 8
+        # 优化：单连接模式（依赖 SQLite 内置线程安全，threadsafety=3）
+        self._conn = None  # 单个连接
 
         # 确保数据目录存在
         self.data_directory.mkdir(parents=True, exist_ok=True)
 
-        # 预先创建2个连接以提升性能
-        self._initialize_pool(2)
+        # 创建单个连接
+        self._conn = self._create_optimized_connection()
 
         # 初始化数据库
         self._init_database()
         self.logger.info(
-            f"{self.__class__.__name__}初始化完成 (提供商: {provider_id}, 数据库: {self.db_path}, 连接池: {self._created_connections}/{self._max_pool_size})"
+            f"{self.__class__.__name__}初始化完成 (提供商: {provider_id}, "
+            f"数据库: {self.db_path}, 单连接模式, SQLite内置线程安全)"
         )
-
-    def _initialize_pool(self, initial_size: int = 2):
-        """
-        初始化连接池，预先创建指定数量的连接
-
-        Args:
-            initial_size: 初始连接数量
-        """
-        for _ in range(initial_size):
-            if self._created_connections < self._max_pool_size:
-                conn = self._create_optimized_connection()
-                with self._pool_lock:
-                    self._connection_pool.put(conn)
-                    self._created_connections += 1
 
     def _create_optimized_connection(self) -> sqlite3.Connection:
         """
@@ -100,12 +81,12 @@ class SQLiteDatabaseManager(ABC):
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=10000")
         conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA wal_autocheckpoint=1000")
+        conn.execute("PRAGMA wal_autocheckpoint=100")  # 优化：从1000改为100
         return conn
 
     def _get_connection(self, caller: str = "unknown") -> sqlite3.Connection:
         """
-        从连接池获取数据库连接
+        获取数据库连接（单连接模式）
 
         Args:
             caller: 调用者说明，用于追踪连接来源
@@ -113,32 +94,8 @@ class SQLiteDatabaseManager(ABC):
         Returns:
             SQLite连接对象
         """
-        try:
-            # 尝试从连接池获取连接
-            conn = self._connection_pool.get_nowait()
-            # self.logger.debug(f"[{caller}] 从池中获取连接")  # 注释掉，减少日志噪音
-            return conn
-        except Empty:
-            # 连接池为空，尝试创建新连接
-            with self._pool_lock:
-                if self._created_connections < self._max_pool_size:
-                    conn = self._create_optimized_connection()
-                    self._created_connections += 1
-                    self.logger.debug(
-                        f"[{caller}] 创建新连接，当前连接数: {self._created_connections}/{self._max_pool_size}"
-                    )
-                    return conn
-                else:
-                    # 连接池已满，等待可用连接
-                    try:
-                        # self.logger.debug(f"[{caller}] 连接池已满，等待可用连接...")  # 注释掉
-                        conn = self._connection_pool.get(timeout=5.0)  # 等待5秒
-                        # self.logger.debug(f"[{caller}] 等待成功，获得连接")  # 注释掉
-                        return conn
-                    except Empty:
-                        # 等待超时，创建临时连接（会被立即关闭）
-                        self.logger.warning(f"[{caller}] 连接池等待超时，创建临时连接")
-                        return self._create_optimized_connection()
+        # 单连接模式，直接返回
+        return self._conn
 
     def _init_database(self) -> None:
         """
@@ -163,7 +120,7 @@ class SQLiteDatabaseManager(ABC):
 
     def _execute_with_connection(self, query_func, caller: str = "unknown"):
         """
-        包装数据库操作，自动管理连接
+        包装数据库操作，自动管理连接（依赖 SQLite 内置线程安全）
 
         Args:
             query_func: 接收连接对象作为参数的函数
@@ -172,13 +129,12 @@ class SQLiteDatabaseManager(ABC):
         Returns:
             query_func的返回值
         """
-        conn = None
+        # SQLite threadsafety=3 保证线程安全，不需要额外的 Python 层锁
         try:
-            conn = self._get_connection(caller)
-            return query_func(conn)
-        finally:
-            if conn:
-                self._return_connection(conn)
+            return query_func(self._conn)
+        except Exception as e:
+            self.logger.error(f"[{caller}] 数据库操作失败: {e}")
+            raise
 
     def _execute_query(
         self, query: str, params: Optional[Tuple] = None, caller: str = "unknown"
@@ -229,12 +185,11 @@ class SQLiteDatabaseManager(ABC):
         if not params_list:
             return
 
+        # SQLite threadsafety=3 保证线程安全，不需要额外的 Python 层锁
         try:
-            conn = self._get_connection(caller)
-            cursor = conn.cursor()
+            cursor = self._conn.cursor()
             cursor.executemany(query, params_list)
-            conn.commit()
-            self._return_connection(conn)
+            self._conn.commit()
         except sqlite3.Error as e:
             self.logger.error(f"批量操作失败: {query}, 错误: {e}")
             raise DatabaseError(f"批量操作失败: {e}") from e
@@ -298,11 +253,9 @@ class SQLiteDatabaseManager(ABC):
         table_name = self._get_table_name()
         result_ids = []
 
-        # 依赖SQLite内置锁机制，不使用手动锁
-        conn = None
+        # SQLite threadsafety=3 保证线程安全，不需要额外的 Python 层锁
         try:
-            conn = self._get_connection(f"{caller}->batch_get_or_create_ids")
-            cursor = conn.cursor()
+            cursor = self._conn.cursor()
 
             # 第一步：批量查询已存在的记录
             placeholders = ",".join(["?" for _ in values])
@@ -326,7 +279,7 @@ class SQLiteDatabaseManager(ABC):
                     params_list = [(value,) for value in new_values]
 
                 cursor.executemany(insert_query, params_list)
-                conn.commit()
+                self._conn.commit()
 
                 # 获取新插入记录的ID
                 if new_values:
@@ -347,10 +300,6 @@ class SQLiteDatabaseManager(ABC):
         except sqlite3.Error as e:
             self.logger.error(f"批量获取或创建ID失败: {e}")
             raise DatabaseError(f"批量获取或创建ID失败: {e}") from e
-        finally:
-            # 确保连接总是被返还
-            if conn:
-                self._return_connection(conn)
 
     def _batch_get_names_by_ids(
         self, ids: List[int], name_field: str, caller: str = "unknown"
@@ -455,59 +404,32 @@ class SQLiteDatabaseManager(ABC):
         if not params_list:
             return 0
 
-        conn = None
-        try:
-            conn = self._get_connection(caller)
-            cursor = conn.cursor()
-            cursor.executemany(query, params_list)
-            conn.commit()
-            return cursor.rowcount
-        finally:
-            if conn:
-                self._return_connection(conn)
+        # SQLite threadsafety=3 保证线程安全，不需要额外的 Python 层锁
+        cursor = self._conn.cursor()
+        cursor.executemany(query, params_list)
+        self._conn.commit()
+        return cursor.rowcount
 
     def _return_connection(self, conn: sqlite3.Connection):
         """
-        将连接返回到连接池
+        返回连接（单连接模式下为空操作）
 
         Args:
             conn: SQLite连接对象
         """
-        try:
-            # 检查连接是否仍然有效
-            try:
-                conn.execute("SELECT 1")
-                # 连接有效，返回到池中
-                self._connection_pool.put_nowait(conn)
-            except sqlite3.Error:
-                # 连接无效，关闭并减少计数
-                conn.close()
-                with self._pool_lock:
-                    if self._created_connections > 0:
-                        self._created_connections -= 1
-                self.logger.debug("无效连接已关闭，连接池大小减少")
-        except Exception:
-            # 连接池已满或其它错误，直接关闭连接
-            try:
-                conn.close()
-            except Exception:
-                pass
-            with self._pool_lock:
-                if self._created_connections > 0:
-                    self._created_connections -= 1
+        # 单连接模式，无需返回连接池
+        pass
 
     def close(self):
-        """关闭所有数据库连接"""
-        with self._pool_lock:
-            # 关闭连接池中的所有连接
-            while not self._connection_pool.empty():
-                try:
-                    conn = self._connection_pool.get_nowait()
-                    conn.close()
-                except (Empty, Exception):
-                    break
-            self._created_connections = 0
-            self.logger.debug("所有连接已关闭")
+        """关闭数据库连接"""
+        if self._conn:
+            try:
+                self._conn.close()
+                self.logger.info(f"{self.__class__.__name__} 数据库连接已关闭")
+            except Exception as e:
+                self.logger.error(f"关闭数据库连接失败: {e}")
+            finally:
+                self._conn = None
 
     def __enter__(self):
         return self

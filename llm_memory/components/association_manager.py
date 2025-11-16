@@ -98,7 +98,7 @@ class AssociationManager:
 
         return cache
 
-    def _persist_snapshot(self, snapshot: MemorySnapshot) -> bool:
+    async def _persist_snapshot(self, snapshot: MemorySnapshot) -> bool:
         """将内存中的记忆快照写回存储，返回是否重新生成嵌入。"""
         embedding_regenerated = False
         try:
@@ -116,10 +116,10 @@ class AssociationManager:
             embedding = snapshot.embedding
             if embedding is None:
                 semantic_core = snapshot.memory.get_semantic_core()
-                # 使用同步方法生成embedding
-                embedding = self.vector_store.embedding_provider.embed_documents_sync(
+                # 使用异步方法生成embedding
+                embedding = (await self.vector_store.embedding_provider.embed_documents(
                     [semantic_core]
-                )[0]
+                ))[0]
                 snapshot.embedding = embedding
                 embedding_regenerated = True
                 self.logger.debug(
@@ -138,7 +138,7 @@ class AssociationManager:
             self.logger.error(f"更新记忆 {snapshot.memory.id} 的关联失败: {str(e)}")
             return False
 
-    def reinforce_association(self, memory_ids: List[str]):
+    async def reinforce_association(self, memory_ids: List[str]):
         """
         强化记忆之间的关联强度。
 
@@ -177,11 +177,11 @@ class AssociationManager:
 
                 # 更新存储中的关联信息
                 if snapshot1:
-                    self._persist_snapshot(snapshot1)
+                    await self._persist_snapshot(snapshot1)
                 if snapshot2:
-                    self._persist_snapshot(snapshot2)
+                    await self._persist_snapshot(snapshot2)
 
-    def _add_or_update_association(
+    async def _add_or_update_association(
         self,
         id1: str,
         id2: str,
@@ -243,7 +243,7 @@ class AssociationManager:
                 memory_obj.associations[id2] = strength_increase
 
             # 持久化到存储
-            self._persist_snapshot(snapshot)
+            await self._persist_snapshot(snapshot)
             cache[id1] = snapshot
 
         except Exception as e:
@@ -335,7 +335,7 @@ class AssociationManager:
             self.logger.error(f"获取记忆 {id1} 和 {id2} 之间的关联强度失败: {str(e)}")
             return None
 
-    def cleanup_weak_associations(self, strength_threshold: int = 1):
+    async def cleanup_weak_associations(self, strength_threshold: int = 1):
         """
         清理强度过低的关联（在记忆巩固过程中调用）。
 
@@ -395,12 +395,12 @@ class AssociationManager:
                     if current_embedding is None:
                         memory_obj = BaseMemory.from_dict(metadata)
                         semantic_core = memory_obj.get_semantic_core()
-                        # 使用同步方法生成embedding
+                        # 使用异步方法生成embedding
                         current_embedding = (
-                            self.vector_store.embedding_provider.embed_documents_sync(
+                            await self.vector_store.embedding_provider.embed_documents(
                                 [semantic_core]
-                            )[0]
-                        )
+                            )
+                        )[0]
 
                     # 更新存储
                     self.collection.upsert(

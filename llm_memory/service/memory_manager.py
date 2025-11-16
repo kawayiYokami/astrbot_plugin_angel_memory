@@ -52,7 +52,7 @@ class MemoryManager:
 
     # ===== 记忆巩固和强化 =====
 
-    def consolidate_memories(self):
+    async def consolidate_memories(self):
         """
         执行记忆巩固过程（睡眠模式）。
 
@@ -71,14 +71,14 @@ class MemoryManager:
             consolidated_count = 0
             if fresh_results and fresh_results["ids"]:
                 for memory_id in fresh_results["ids"]:
-                    self.store.update_memory(
+                    await self.store.update_memory(
                         self.collection, memory_id, {"is_consolidated": True}
                     )
                     consolidated_count += 1
                 self.logger.debug(f"已巩固 {consolidated_count} 条新鲜记忆")
 
             # 清理弱关联
-            self.association_manager.cleanup_weak_associations()
+            await self.association_manager.cleanup_weak_associations()
 
             self.logger.debug("记忆巩固过程完成（记忆和关联永不丢失）")
 
@@ -460,7 +460,7 @@ class MemoryManager:
 
     # ===== 反馈处理 =====
 
-    def process_feedback(
+    async def process_feedback(
         self,
         useful_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
@@ -513,10 +513,10 @@ class MemoryManager:
             for i in range(len(useful_memory_ids)):
                 for j in range(i + 1, len(useful_memory_ids)):
                     id1, id2 = useful_memory_ids[i], useful_memory_ids[j]
-                    self.association_manager._add_or_update_association(
+                    await self.association_manager._add_or_update_association(
                         id1, id2, strength_increase=1, cache=association_cache
                     )
-                    self.association_manager._add_or_update_association(
+                    await self.association_manager._add_or_update_association(
                         id2, id1, strength_increase=1, cache=association_cache
                     )
         # 2. 批量创建新记忆
@@ -562,20 +562,20 @@ class MemoryManager:
         for i in range(len(created_ids)):
             for j in range(i + 1, len(created_ids)):
                 id1, id2 = created_ids[i], created_ids[j]
-                self.association_manager._add_or_update_association(
+                await self.association_manager._add_or_update_association(
                     id1, id2, strength_increase=1, cache=association_cache
                 )
-                self.association_manager._add_or_update_association(
+                await self.association_manager._add_or_update_association(
                     id2, id1, strength_increase=1, cache=association_cache
                 )
 
         # 4. 新记忆和有用回忆之间建立关联
         for new_id in created_ids:
             for useful_id in useful_memory_ids:
-                self.association_manager._add_or_update_association(
+                await self.association_manager._add_or_update_association(
                     new_id, useful_id, strength_increase=1, cache=association_cache
                 )
-                self.association_manager._add_or_update_association(
+                await self.association_manager._add_or_update_association(
                     useful_id, new_id, strength_increase=1, cache=association_cache
                 )
 

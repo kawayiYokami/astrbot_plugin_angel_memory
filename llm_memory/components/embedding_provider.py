@@ -349,6 +349,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         self._model = None
         self._model_class = None  # 延迟导入的SentenceTransformer类
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
+        self._cache_enabled = True  # 缓存启用标志
         self._auto_install_attempted = False  # 避免重复尝试自动安装
 
     def _ensure_dependencies(self):
@@ -412,6 +413,11 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
         if not self.is_available():
             raise RuntimeError("本地模型不可用")
+
+        # 如果缓存已禁用，直接处理
+        if not self._cache_enabled or not self._cache:
+            embeddings = self._model.encode(texts, convert_to_numpy=True)
+            return embeddings.tolist()
 
         # 1. 尝试从缓存获取
         cached_results, missing_indices = self._cache.get_batch(texts)
@@ -483,8 +489,22 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     def clear_cache(self) -> None:
         """清空缓存"""
-        self._cache.clear()
-        self.logger.info("本地提供商缓存已清空")
+        if self._cache:
+            self._cache.clear()
+            self.logger.info("本地提供商缓存已清空")
+
+    def clear_and_disable_cache(self) -> None:
+        """清理并禁用缓存（初始化完成后调用以节省内存）"""
+        if self._cache:
+            stats = self._cache.get_stats()
+            self._cache.clear()
+            self._cache = None
+            self._cache_enabled = False
+            self.logger.info(
+                f"本地提供商 {self.model_name} 缓存已清理并禁用 "
+                f"(命中率: {stats.get('hit_rate', 0):.1%}, "
+                f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
+            )
 
     def shutdown(self):
         """关闭本地提供商"""
@@ -511,31 +531,12 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self._available = None  # None表示未测试，True/False表示测试结果
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
         self.batch_size = 64  # 程序启动时的批量大小，遇到413会减半
-
-        # 创建共享的线程池和事件循环（只创建一次，避免overhead）
-        import concurrent.futures
-        import threading
-
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=16, thread_name_prefix="embed-api"
-        )
-
-        # 创建一个专门的线程运行共享event loop
-        self._shared_loop = None
-        self._loop_thread = threading.Thread(
-            target=self._run_event_loop, daemon=True, name="embed-loop"
-        )
-        self._loop_thread.start()
-
-        # 等待loop就绪
-        import time
-
-        while self._shared_loop is None:
-            time.sleep(0.001)
+        self._cache_enabled = True  # 缓存启用标志
 
         # 延迟测试可用性，避免在构造函数中进行异步操作
         self.logger.info(
-            f"API嵌入提供商已初始化: {self.provider_id}, 批量大小: {self.batch_size}, 共享loop已启动"
+            f"API嵌入提供商已初始化: {self.provider_id}, "
+            f"批量大小: {self.batch_size} (纯异步模式)"
         )
 
     async def check_availability(self) -> bool:
@@ -562,23 +563,6 @@ class APIEmbeddingProvider(EmbeddingProvider):
         except Exception as e:
             raise e
 
-    def _run_event_loop(self):
-        """在专门的线程中运行共享event loop"""
-        self._shared_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._shared_loop)
-        self._shared_loop.run_forever()
-
-    def embed_documents_sync(self, texts: List[str]) -> List[List[float]]:
-        """同步方法：为文档列表生成向量嵌入（使用共享event loop）"""
-        if not texts:
-            return []
-
-        # 在共享event loop中运行异步代码
-        future = asyncio.run_coroutine_threadsafe(
-            self.embed_documents(texts), self._shared_loop
-        )
-        return future.result()
-
     async def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """异步方法：为文档列表生成向量嵌入（带缓存，批次内去重，自动分批）"""
         if not texts:
@@ -586,6 +570,12 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         if not self.is_available():
             raise RuntimeError(f"API提供商不可用: {self.provider_id}")
+
+        # 如果缓存已禁用，直接处理
+        if not self._cache_enabled or not self._cache:
+            unique_texts, original_to_unique, unique_to_original = self._deduplicate_texts(texts)
+            unique_embeddings = await self._get_embeddings_with_batch(unique_texts, self.batch_size)
+            return self._map_embeddings_back(unique_embeddings, unique_to_original, len(texts))
 
         # 1. 尝试从缓存获取
         cached_results, missing_indices = self._cache.get_batch(texts)
@@ -743,27 +733,26 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     def clear_cache(self) -> None:
         """清空缓存"""
-        self._cache.clear()
-        self.logger.info(f"API提供商 {self.provider_id} 缓存已清空")
+        if self._cache:
+            self._cache.clear()
+            self.logger.info(f"API提供商 {self.provider_id} 缓存已清空")
+
+    def clear_and_disable_cache(self) -> None:
+        """清理并禁用缓存（初始化完成后调用以节省内存）"""
+        if self._cache:
+            stats = self._cache.get_stats()
+            self._cache.clear()
+            self._cache = None
+            self._cache_enabled = False
+            self.logger.info(
+                f"API提供商 {self.provider_id} 缓存已清理并禁用 "
+                f"(命中率: {stats.get('hit_rate', 0):.1%}, "
+                f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
+            )
 
     def shutdown(self):
         """关闭API提供商，释放资源"""
         self.logger.info(f"正在关闭API嵌入提供商: {self.provider_id}")
-
-        # 关闭共享事件循环
-        if self._shared_loop and self._shared_loop.is_running():
-            self._shared_loop.call_soon_threadsafe(self._shared_loop.stop)
-        if self._loop_thread and self._loop_thread.is_alive():
-            self._loop_thread.join(timeout=5)
-            if self._loop_thread.is_alive():
-                self.logger.warning(
-                    f"事件循环线程未能及时关闭: {self._loop_thread.name}"
-                )
-
-        # 关闭线程池
-        if self._executor:
-            self._executor.shutdown(wait=True)
-
         self.clear_cache()
         self.logger.info(f"API嵌入提供商 {self.provider_id} 已成功关闭")
 

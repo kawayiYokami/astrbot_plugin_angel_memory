@@ -4,8 +4,54 @@
 处理插件的配置选项和默认值。
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Union
 from dataclasses import dataclass
+
+
+class ConfigValidator:
+    """通用配置验证器"""
+
+    @staticmethod
+    def validate_positive_int(value: Any, field_name: str, max_value: int = None) -> int:
+        """验证正整数"""
+        if not isinstance(value, int) or value < 1:
+            raise ValueError(f"{field_name} must be a positive integer, got: {value}")
+        if max_value and value > max_value:
+            raise ValueError(f"{field_name} too large (max {max_value}), got: {value}")
+        return value
+
+    @staticmethod
+    def validate_non_negative_int(
+        value: Any, field_name: str, max_value: int = None
+    ) -> int:
+        """验证非负整数"""
+        if not isinstance(value, int) or value < 0:
+            raise ValueError(
+                f"{field_name} must be a non-negative integer, got: {value}"
+            )
+        if max_value and value > max_value:
+            raise ValueError(f"{field_name} too large (max {max_value}), got: {value}")
+        return value
+
+    @staticmethod
+    def validate_positive_number(
+        value: Any, field_name: str, max_value: Union[int, float] = None
+    ) -> float:
+        """验证正数（整数或浮点数）"""
+        if not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"{field_name} must be a positive number, got: {value}")
+        if max_value and value > max_value:
+            raise ValueError(f"{field_name} too large (max {max_value}), got: {value}")
+        return float(value)
+
+    @staticmethod
+    def validate_bool(value: Any, field_name: str) -> bool:
+        """验证布尔值"""
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"{field_name} must be a boolean, got: {type(value).__name__}"
+            )
+        return value
 
 
 @dataclass
@@ -81,26 +127,36 @@ class MemoryConfig:
         self.config = config or {}
         self.data_dir = data_dir
 
-        # 预计算常用配置值（使用更紧凑的表达）
+        # 预计算常用配置值（使用通用验证器）
         config_get = self.config.get
-        self._min_message_length = self._validate_min_message_length(
-            config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH)
+        self._min_message_length = ConfigValidator.validate_positive_int(
+            config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH),
+            "min_message_length",
+            max_value=500,
         )
-        self._short_term_memory_capacity = self._validate_short_term_memory_capacity(
+        self._short_term_memory_capacity = ConfigValidator.validate_positive_number(
             config_get(
                 "short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY
-            )
+            ),
+            "short_term_memory_capacity",
+            max_value=10.0,
         )
-        self._sleep_interval = self._validate_sleep_interval(
-            config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL)
+        self._sleep_interval = ConfigValidator.validate_non_negative_int(
+            config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL),
+            "sleep_interval",
+            max_value=86400,
         )
         self._data_directory = config_get("data_directory", self.data_dir)
         self._provider_id = config_get("provider_id", "")
-        self._small_model_note_budget = self._validate_token_budget(
-            config_get("small_model_note_budget", 8000), "small_model_note_budget"
+        self._small_model_note_budget = ConfigValidator.validate_non_negative_int(
+            config_get("small_model_note_budget", 8000),
+            "small_model_note_budget",
+            max_value=64000,
         )
-        self._large_model_note_budget = self._validate_token_budget(
-            config_get("large_model_note_budget", 12000), "large_model_note_budget"
+        self._large_model_note_budget = ConfigValidator.validate_non_negative_int(
+            config_get("large_model_note_budget", 12000),
+            "large_model_note_budget",
+            max_value=64000,
         )
         self._enable_local_embedding = config_get("enable_local_embedding", False)
 
@@ -172,55 +228,3 @@ class MemoryConfig:
     def get_capacity_config(self) -> MemoryCapacityConfig:
         """获取记忆容量配置"""
         return MemoryCapacityConfig()
-
-    def _validate_min_message_length(self, value: Any) -> int:
-        """验证最小消息长度"""
-        if not isinstance(value, int) or value < 1:
-            raise ValueError(
-                f"min_message_length must be a positive integer, got: {value}"
-            )
-        if value > 500:
-            raise ValueError(f"min_message_length too large (max 500), got: {value}")
-        return value
-
-    def _validate_short_term_memory_capacity(self, value: Any) -> float:
-        """验证短期记忆容量倍数"""
-        if not isinstance(value, (int, float)) or value <= 0:
-            raise ValueError(
-                f"short_term_memory_capacity must be a positive number, got: {value}"
-            )
-        if value > 10.0:
-            raise ValueError(
-                f"short_term_memory_capacity too large (max 10.0), got: {value}"
-            )
-        return float(value)
-
-    def _validate_sleep_interval(self, value: Any) -> int:
-        """验证睡眠间隔"""
-        if not isinstance(value, int) or value < 0:
-            raise ValueError(
-                f"sleep_interval must be a non-negative integer, got: {value}"
-            )
-        if value > 24 * 60 * 60:  # 超过24小时被视为不合理
-            raise ValueError(
-                f"sleep_interval too large (max 86400 seconds), got: {value}"
-            )
-        return value
-
-    def _validate_token_budget(self, value: Any, field_name: str) -> int:
-        """验证Token预算"""
-        if not isinstance(value, int) or value < 0:
-            raise ValueError(
-                f"{field_name} must be a non-negative integer, got: {value}"
-            )
-        if value > 64000:
-            raise ValueError(f"{field_name} too large (max 64000), got: {value}")
-        return value
-
-    def _validate_bool(self, value: Any, field_name: str) -> bool:
-        """验证布尔值"""
-        if not isinstance(value, bool):
-            raise ValueError(
-                f"{field_name} must be a boolean, got: {type(value).__name__}"
-            )
-        return value

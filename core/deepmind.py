@@ -10,7 +10,6 @@ DeepMind潜意识核心模块
 
 import time
 import json
-import threading
 from typing import List, Dict, Any, Optional
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
@@ -98,16 +97,13 @@ class DeepMind:
             capacity_multiplier=self.short_term_memory_capacity
         )
 
+        # 睡眠状态管理
+        self.last_sleep_time = None  # 上次睡眠时间戳
+
         # 初始化工具类
         self.prompt_builder = SmallModelPromptBuilder()
         self.memory_injector = MemoryInjector()
         self.query_processor = get_query_processor()
-
-        # 睡眠相关
-        self._sleep_timer = None
-        self._stop_sleep_event = (
-            threading.Event()
-        )  # 使用Event替代布尔标志，避免竞态条件
 
         # 初始化记忆系统（如果没有通过依赖注入提供）
         self._init_memory_system()
@@ -117,22 +113,12 @@ class DeepMind:
         # 如果已经有了注入的认知服务，直接使用
         if self.memory_system is not None:
             self.logger.info("Using injected CognitiveService instance")
-            # 初始化时执行一次睡眠
-            self._sleep()
-            # 启动定期睡眠
-            self._start_periodic_sleep()
             return
 
         # 否则创建新的认知服务实例（向后兼容）
         try:
             self.memory_system = CognitiveService(vector_store=self.vector_store)
             self.logger.info("Memory system initialized successfully")
-
-            # 初始化时执行一次睡眠
-            self._sleep()
-
-            # 启动定期睡眠
-            self._start_periodic_sleep()
 
         except Exception as e:
             self.logger.error(f"Memory system initialization failed: {e}")
@@ -328,7 +314,7 @@ class DeepMind:
         else:
             self.logger.debug("没有记忆或笔记上下文需要注入")
 
-    def _update_memory_system(
+    async def _update_memory_system(
         self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
     ) -> None:
         """
@@ -412,18 +398,18 @@ class DeepMind:
                 # 'payload' 字段可以保留并传入 session_id，因为 _execute_feedback_task 会用到
                 "payload": {"session_id": session_id},
             }
-            get_feedback_queue().submit(task_payload)
+            await get_feedback_queue().submit(task_payload)
         else:
             self.logger.debug("记忆反馈无待处理内容，跳过")
 
-    def _execute_feedback_task(
+    async def _execute_feedback_task(
         self,
         useful_memory_ids: List[str],
         new_memories: List[Dict[str, Any]],
         merge_groups: List[List[str]],
         session_id: str,
     ) -> None:
-        """后台线程执行的长期记忆反馈。"""
+        """异步执行的长期记忆反馈。"""
         self.logger.debug(
             "[feedback_queue] session=%s 开始处理反馈: useful=%d new=%d merge=%d",
             session_id,
@@ -434,7 +420,8 @@ class DeepMind:
 
         # 检查 memory_system 是否可用
         if self.memory_system is not None:
-            self.memory_system.feedback(
+            # 直接异步调用
+            await self.memory_system.feedback(
                 useful_memory_ids=useful_memory_ids,
                 new_memories=new_memories,
                 merge_groups=merge_groups,
@@ -804,54 +791,80 @@ class DeepMind:
 
     # _resolve_memory_ids 方法已移至 MemoryIDResolver 类中
 
-    def _sleep(self):
+    async def check_and_sleep_if_needed(self, sleep_interval: int) -> bool:
+        """
+        检查是否需要睡眠，如果需要则触发睡眠
+
+        Args:
+            sleep_interval: 睡眠间隔（秒），0表示禁用睡眠
+
+        Returns:
+            bool: 是否执行了睡眠
+        """
+        # 如果睡眠间隔为0，表示禁用睡眠
+        if sleep_interval <= 0:
+            self.logger.debug("睡眠功能已禁用 (sleep_interval=0)")
+            return False
+
+        import time
+
+        current_time = time.time()
+
+        # 首次运行，立即睡眠
+        if self.last_sleep_time is None:
+            self.logger.info("🌙 首次运行，立即触发睡眠（记忆巩固）")
+            await self._sleep()
+            self.last_sleep_time = current_time
+            return True
+
+        # 计算距离上次睡眠的时间
+        time_since_last_sleep = current_time - self.last_sleep_time
+        time_until_next_sleep = sleep_interval - time_since_last_sleep
+
+        # 检查是否到达睡眠间隔
+        if time_since_last_sleep >= sleep_interval:
+            hours = time_since_last_sleep / 3600
+            self.logger.info(
+                f"🌙 距离上次睡眠已过 {hours:.1f} 小时，触发睡眠（记忆巩固）"
+            )
+            await self._sleep()
+            self.last_sleep_time = current_time
+            return True
+        else:
+            # 未到睡眠时间
+            hours_until_next = time_until_next_sleep / 3600
+            self.logger.debug(
+                f"距离下次睡眠还有 {hours_until_next:.1f} 小时，跳过睡眠"
+            )
+            return False
+
+    async def _sleep(self):
         """AI睡觉整理记忆：重要内容加强，无用内容清理"""
         if not self.is_enabled():
             return
 
+        import time
+
+        start_time = time.time()
+        self.logger.info("💤 开始睡眠（记忆巩固）...")
+
         try:
             # 检查 memory_system 是否可用
             if self.memory_system is not None:
-                self.memory_system.consolidate_memories()
-                self.logger.info("记忆巩固完成")
+                await self.memory_system.consolidate_memories()
+                elapsed_time = time.time() - start_time
+                self.logger.info(f"✅ 记忆巩固完成，耗时 {elapsed_time:.2f} 秒")
             else:
                 self.logger.warning(
                     "Memory system is not available, skipping consolidation"
                 )
         except Exception as e:
-            self.logger.error(f"记忆巩固失败: {e}")
-
-    def _start_periodic_sleep(self):
-        """启动定期睡觉：像人一样按时整理记忆"""
-        if not self.is_enabled():
-            return
-
-        sleep_interval = self.sleep_interval
-        if sleep_interval <= 0:
-            return
-
-        def sleep_worker():
-            # 使用Event.wait()替代time.sleep()，可以立即响应停止信号
-            while not self._stop_sleep_event.wait(timeout=sleep_interval):
-                self._sleep()
-
-        self._sleep_timer = threading.Thread(target=sleep_worker, daemon=True)
-        self._sleep_timer.start()
-        self.logger.info(f"启动定期睡眠，间隔: {sleep_interval}秒")
-
-    def stop_sleep(self):
-        """停止定期睡眠"""
-        self._stop_sleep_event.set()  # 设置事件，通知线程停止
-        if self._sleep_timer and self._sleep_timer.is_alive():
-            self._sleep_timer.join(timeout=5)
-        self.logger.info("定期睡眠已停止")
+            elapsed_time = time.time() - start_time
+            self.logger.error(f"❌ 记忆巩固失败（耗时 {elapsed_time:.2f} 秒）: {e}")
 
     def shutdown(self):
         """关闭潜意识系统，让AI好好休息"""
         self.logger.info("正在关闭AI的潜意识...")
-
-        # 停止定期睡觉
-        self.stop_sleep()
 
         # 停止记忆整理任务
         from .utils.feedback_queue import stop_feedback_queue
@@ -890,7 +903,7 @@ class DeepMind:
         }
 
         # 提交到反馈队列后台执行
-        get_feedback_queue().submit(task_payload)
+        await get_feedback_queue().submit(task_payload)
 
         self.logger.debug(f"异步记忆分析任务已提交到后台队列，会话ID: {session_id}")
 
@@ -931,11 +944,11 @@ class DeepMind:
             self.logger.warning(f"序列化响应数据失败: {e}")
             return {"completion_text": ""}
 
-    def _execute_async_analysis_task(
+    async def _execute_async_analysis_task(
         self, event_data: Dict, response_data: Dict, session_id: str
     ):
         """
-        在后台线程执行的异步分析任务
+        异步执行的记忆分析任务
 
         Args:
             event_data: 序列化的事件数据
@@ -1029,16 +1042,8 @@ class DeepMind:
 
             try:
                 self.logger.info(f"[异步分析] 开始调用分析LLM - 会话ID: {session_id}")
-                # 在后台线程中同步调用，不使用async/await
-                llm_response = provider.text_chat(prompt=prompt)
-
-                # 等待响应完成
-                if hasattr(llm_response, "__await__"):
-                    # 如果返回的是协程对象，需要在事件循环中运行
-                    import asyncio
-
-                    llm_response = asyncio.run(llm_response)
-
+                # 直接异步调用，无需检查
+                llm_response = await provider.text_chat(prompt=prompt)
                 self.logger.debug(f"[后台任务] LLM调用完成，会话ID: {session_id}")
             except Exception as e:
                 self.logger.warning(
@@ -1106,7 +1111,8 @@ class DeepMind:
             #    (以及我们之前讨论过的，让 feedback 返回新创建的对象)
             newly_created_memories = []
             if self.memory_system:
-                newly_created_memories = self.memory_system.feedback(
+                # 直接异步调用
+                newly_created_memories = await self.memory_system.feedback(
                     useful_memory_ids=feedback_data.get("useful_memory_ids", []),
                     new_memories=new_memories_normalized,  # <--- 使用转换后的数据
                     merge_groups=feedback_data.get("merge_groups", []),

@@ -1,11 +1,10 @@
 """
-BackgroundInitializer - 后台初始化器
+BackgroundInitializer - 后台初始化器（异步版本）
 
-负责在后台线程中执行初始化任务，但实例由主线程统一管理。
-后台线程只负责执行初始化逻辑，不拥有任何组件实例。
+使用 asyncio.create_task() 在后台异步执行初始化任务。
+按照 AstrBot 官方推荐的异步架构设计。
 """
 
-import threading
 import asyncio
 from .initialization_manager import InitializationManager
 from .component_factory import ComponentFactory
@@ -19,7 +18,7 @@ except ImportError:
 
 
 class BackgroundInitializer:
-    """后台初始化器 - 仅负责初始化逻辑，不拥有实例"""
+    """后台初始化器 - 使用 asyncio 异步初始化"""
 
     def __init__(
         self, init_manager: InitializationManager, config: dict, plugin_context
@@ -33,7 +32,7 @@ class BackgroundInitializer:
             plugin_context: PluginContext实例（与主线程共享）
         """
         self.init_manager = init_manager
-        self.background_thread = None
+        self.background_task = None
         self.context = init_manager.context
         self.logger = logger
         self.config = config
@@ -51,36 +50,45 @@ class BackgroundInitializer:
         self.logger.debug("BackgroundInitializer初始化完成 - 共享主线程PluginContext")
 
     def start_background_initialization(self):
-        """启动后台初始化线程"""
-        self.background_thread = threading.Thread(
-            target=self._initialization_worker,
-            daemon=True,
-            name="BackgroundInitializer",
-        )
-        self.background_thread.start()
-        self.logger.info("🚀 后台初始化线程已启动")
-
-    def _initialization_worker(self):
-        """后台初始化工作线程"""
+        """启动后台初始化任务（纯 asyncio，无线程回退）"""
         try:
-            self.logger.info("🚀 启动后台初始化工作线程...")
+            # 检查是否有运行中的事件循环
+            asyncio.get_running_loop()
+        except RuntimeError as e:
+            error_msg = (
+                "BackgroundInitializer 需要运行中的 asyncio 事件循环。\n"
+                "请确保在 async 上下文中调用此方法。\n"
+                "如果您看到此错误，说明 AstrBot 的异步环境未正确初始化。"
+            )
+            self.logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
 
-            # 等待提供商就绪
-            should_initialize = self.init_manager.wait_for_providers_and_initialize()
+        # 按照官方推荐使用 asyncio.create_task()
+        self.background_task = asyncio.create_task(self._background_initialization())
+        self.logger.info("🚀 后台初始化任务已启动（asyncio）")
+
+    async def _background_initialization(self):
+        """异步后台初始化任务"""
+        try:
+            self.logger.info("🚀 启动异步后台初始化...")
+
+            # 等待提供商就绪（在线程池中执行同步方法）
+            should_initialize = await asyncio.to_thread(
+                self.init_manager.wait_for_providers_and_initialize
+            )
 
             if should_initialize:
-                # 开始真正的初始化
-                self._perform_initialization()
+                # 开始真正的初始化（在线程池中执行）
+                await asyncio.to_thread(self._perform_initialization)
             else:
                 self.logger.info("⏹️ 初始化被中断")
                 return
 
-            self.logger.info("✅ 后台初始化工作完成")
+            self.logger.info("✅ 异步后台初始化完成")
 
         except Exception as e:
-            self.logger.error(f"❌ 后台初始化失败: {e}")
+            self.logger.error(f"❌ 异步后台初始化失败: {e}")
             import traceback
-
             self.logger.error(f"异常详情: {traceback.format_exc()}")
 
     def _perform_initialization(self):
@@ -99,6 +107,12 @@ class BackgroundInitializer:
                     self.component_factory.create_all_components(self.config)
                 )
                 self.logger.info("✅ 所有组件在后台线程中创建完成")
+
+                # 清理并禁用嵌入缓存（初始化完成后节省内存）
+                embedding_provider = components.get("embedding_provider")
+                if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):
+                    embedding_provider.clear_and_disable_cache()
+                    self.logger.info("🗑️ 嵌入缓存已清理并禁用（节省内存）")
 
                 # 3. DeepMind初始化时已经执行了记忆巩固，这里不需要重复执行
                 deepmind = components.get("deepmind")
@@ -131,11 +145,10 @@ class BackgroundInitializer:
         """关闭后台初始化器和所有组件"""
         self.logger.info("后台初始化器正在关闭...")
 
-        # 停止后台初始化线程（如果仍在运行）
-        if self.background_thread and self.background_thread.is_alive():
-            # 这里不直接终止线程，而是依赖于守护线程的特性
-            # 在主程序退出时自动结束
-            self.logger.info("后台初始化线程将在主程序退出时自动停止")
+        # 取消后台初始化任务（如果仍在运行）
+        if self.background_task and not self.background_task.done():
+            self.background_task.cancel()
+            self.logger.info("后台初始化任务已取消")
 
         # 关闭所有由ComponentFactory创建的组件
         if self.component_factory:

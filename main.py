@@ -222,36 +222,71 @@ class AngelMemoryPlugin(Star):
     @filter.on_llm_response(priority=-100)
     async def on_llm_response(self, event: AstrMessageEvent, response):
         """
-        LLM调用后异步分析并更新记忆
+        LLM调用后捕获响应数据，存储到event上下文中
 
         Args:
             event: 消息事件
             response: LLM响应对象
         """
-        self.logger.debug("开始执行 on_llm_response")
+        self.logger.debug("开始执行 on_llm_response - 捕获响应数据")
+        try:
+            # 将响应数据存储到event上下文中，供after_message_sent使用
+            if hasattr(event, "angelmemory_context"):
+                try:
+                    import json
+                    import time
+
+                    context_data = json.loads(event.angelmemory_context)
+                    # 添加响应数据
+                    context_data["llm_response"] = {
+                        "completion_text": getattr(response, "completion_text", str(response))
+                        if response
+                        else "",
+                        "timestamp": time.time(),
+                    }
+                    event.angelmemory_context = json.dumps(context_data)
+                    self.logger.debug("LLM响应数据已存储到event上下文")
+                except (json.JSONDecodeError, AttributeError) as e:
+                    self.logger.warning(f"存储响应数据失败: {e}")
+
+        except Exception as e:
+            self.logger.error(f"on_llm_response failed: {e}")
+
+    @filter.after_message_sent(priority=-100)
+    async def after_message_sent(self, event: AstrMessageEvent):
+        """
+        消息发送后执行记忆整理，不阻塞主线程
+
+        Args:
+            event: 消息事件
+        """
+        self.logger.debug("开始执行 after_message_sent - 记忆整理")
         try:
             # 更新组件引用
             self.update_components()
-            self.logger.debug("组件引用已更新")
 
-            # 使用共享的PluginContext处理响应
-            result = await self.plugin_manager.handle_llm_response(
-                event, response, self.plugin_context
+            # 检查是否有需要处理的记忆数据
+            if not hasattr(event, "angelmemory_context"):
+                self.logger.debug("没有记忆上下文，跳过记忆整理")
+                return
+
+            # 使用共享的PluginContext处理记忆整理
+            result = await self.plugin_manager.handle_memory_consolidation(
+                event, self.plugin_context
             )
-            self.logger.debug(f"handle_llm_response 返回结果: {result}")
 
             if result["status"] == "waiting":
-                self.logger.info("系统正在初始化中，跳过此次LLM响应处理")
+                self.logger.info("系统正在初始化中，跳过此次记忆整理")
                 return
             elif result["status"] == "success":
-                self.logger.debug("LLM响应处理完成")
+                self.logger.debug("记忆整理完成")
+            elif result["status"] == "skipped":
+                self.logger.debug(f"记忆整理跳过: {result.get('message', '未知原因')}")
             else:
-                self.logger.error(
-                    f"LLM响应处理失败: {result.get('message', '未知错误')}"
-                )
+                self.logger.error(f"记忆整理失败: {result.get('message', '未知错误')}")
 
-        except (AttributeError, ValueError, RuntimeError) as e:
-            self.logger.error(f"LLM_RESPONSE failed: {e}")
+        except Exception as e:
+            self.logger.error(f"after_message_sent failed: {e}")
 
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""

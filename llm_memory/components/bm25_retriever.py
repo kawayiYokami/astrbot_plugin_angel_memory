@@ -110,34 +110,3 @@ def rerank_with_bm25(
     except Exception as e:
         logger.error(f"BM25 精排失败: {e}")
         return []
-
-
-# 为了向后兼容，保留一个空的 BM25Retriever 类
-# 但其所有方法都将被标记为已弃用，并直接返回或记录警告
-class BM25Retriever:
-    """
-    @deprecated
-    已弃用：BM25Retriever 类已被无状态的 rerank_with_bm25 函数取代。
-    为了向后兼容而保留，但不应再使用。
-    """
-
-    def __init__(self, *args, **kwargs):
-        logger.warning("BM25Retriever 类已弃用，请使用 rerank_with_bm25 函数。")
-
-    def add_documents(self, *args, **kwargs):
-        logger.warning("add_documents 方法已弃用，BM25 索引不再需要预先建立。")
-        return True
-
-    def search(self, *args, **kwargs):
-        logger.warning("search 方法已弃用，请使用 rerank_with_bm25 函数。")
-        return []
-
-    def clear_collection(self, *args, **kwargs):
-        logger.warning("clear_collection 方法已弃用。")
-        return True
-
-    def is_available(self):
-        return True
-
-    def get_collection_names(self):
-        return []

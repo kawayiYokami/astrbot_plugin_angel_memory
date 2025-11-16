@@ -7,7 +7,6 @@
 import chromadb
 from typing import List, Optional, Tuple
 import traceback
-import concurrent.futures
 from pathlib import Path
 from .embedding_provider import EmbeddingProvider, LocalEmbeddingProvider
 from ..utils.path_manager import PathManager
@@ -204,7 +203,7 @@ class VectorStore:
             )
         return self.collections[collection_name]
 
-    def remember(self, collection, memory: BaseMemory):
+    async def remember(self, collection, memory: BaseMemory):
         """
         记住一条新记忆.
 
@@ -227,7 +226,7 @@ class VectorStore:
             content_text = semantic_core  # 兜底方案
 
         # 使用高级抽象方法存储记忆
-        self.upsert_documents(
+        await self.upsert_documents(
             collection=collection,
             ids=memory.id,
             embedding_texts=semantic_core,  # 用于向量化的语义核心
@@ -235,7 +234,7 @@ class VectorStore:
             metadatas=memory.to_dict(),
         )
 
-    def recall(
+    async def recall(
         self,
         collection,
         query: str,
@@ -244,7 +243,7 @@ class VectorStore:
         similarity_threshold: float = 0.6,
     ) -> List[BaseMemory]:
         """
-        根据查询回忆相关记忆,支持复杂的元数据过滤(同步方法).
+        根据查询回忆相关记忆,支持复杂的元数据过滤(异步方法).
 
         Args:
             collection: 目标 ChromaDB 集合.
@@ -256,8 +255,8 @@ class VectorStore:
         Returns:
             相关的记忆对象列表(BaseMemory 的子类)
         """
-        # 显式生成查询向量(同步调用)，指明这是查询场景
-        query_embedding = self.embed_single_document(query, is_query=True)
+        # 显式生成查询向量(异步调用)，指明这是查询场景
+        query_embedding = await self.embed_single_document(query, is_query=True)
 
         # --- 处理向量化失败 ---
         if query_embedding is None:
@@ -317,7 +316,7 @@ class VectorStore:
 
         return final_results
 
-    def update_memory(self, collection, memory_id: str, updates: dict):
+    async def update_memory(self, collection, memory_id: str, updates: dict):
         """
         更新记忆的元数据.
 
@@ -345,8 +344,8 @@ class VectorStore:
             # 应用更新
             current_meta.update(updates)
 
-            # 使用同步方法重新存储
-            self.upsert_documents(
+            # 使用异步方法重新存储
+            await self.upsert_documents(
                 collection=collection,
                 ids=memory_id,
                 embedding_texts=semantic_core,
@@ -411,7 +410,7 @@ class VectorStore:
             self.logger.error(f"清空所有记忆失败: {e}")
             raise
 
-    def upsert_documents(
+    async def upsert_documents(
         self,
         collection,
         *,
@@ -422,7 +421,7 @@ class VectorStore:
         _return_timings=False,
     ):
         """
-        高级 upsert 方法(同步接口):从文本生成向量并存储到向量数据库.
+        高级 upsert 方法(异步接口):从文本生成向量并存储到向量数据库.
 
         这是向量数据库的通用方法,支持不同的使用场景:
         - 记忆系统:documents 参数可选,所有数据可存储在 metadatas 中
@@ -458,9 +457,9 @@ class VectorStore:
         if not ids_list:
             return timings if _return_timings else None
 
-        # 1. 使用嵌入提供商从源文本生成 embeddings(同步调用)
+        # 1. 使用嵌入提供商从源文本生成 embeddings(异步调用)
         t_embed = time.time()
-        embeddings = self.embed_documents(embedding_texts_list)
+        embeddings = await self.embed_documents(embedding_texts_list)
         if _return_timings:
             timings["embed"] = (time.time() - t_embed) * 1000
 
@@ -485,11 +484,11 @@ class VectorStore:
 
         return timings if _return_timings else None
 
-    def embed_documents(
+    async def embed_documents(
         self, documents: List[str], is_query: bool = False, timeout: int = 3
     ) -> Optional[List[List[float]]]:
         """
-        使用嵌入提供商为文档列表生成向量嵌入(同步方法).
+        使用嵌入提供商为文档列表生成向量嵌入(异步方法).
 
         Args:
             documents: 需要进行向量化的文档字符串列表.
@@ -509,15 +508,14 @@ class VectorStore:
         # --- 性能敏感的查询路径 ---
         if is_query:
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    # 提交向量化任务
-                    future = executor.submit(
-                        self.embedding_provider.embed_documents_sync, documents
-                    )
-                    # 等待结果，设置超时
-                    embeddings = future.result(timeout=timeout)
-                    return embeddings
-            except concurrent.futures.TimeoutError:
+                # 使用 asyncio.wait_for 实现超时控制
+                import asyncio
+                embeddings = await asyncio.wait_for(
+                    self.embedding_provider.embed_documents(documents),
+                    timeout=timeout
+                )
+                return embeddings
+            except asyncio.TimeoutError:
                 self.logger.warning(
                     f"查询向量化超时（超过 {timeout} 秒），操作已中断。"
                 )
@@ -530,6 +528,7 @@ class VectorStore:
         else:
             # 导入自定义异常
             from ..exceptions import RateLimitExceededError
+            import asyncio
 
             # 重试配置(仅针对429错误)
             max_retries = 3
@@ -537,8 +536,8 @@ class VectorStore:
 
             for attempt in range(max_retries):
                 try:
-                    # 使用嵌入提供商生成向量(同步调用)
-                    embeddings = self.embedding_provider.embed_documents_sync(documents)
+                    # 使用嵌入提供商生成向量(异步调用)
+                    embeddings = await self.embedding_provider.embed_documents(documents)
                     return embeddings
 
                 except Exception as e:
@@ -563,7 +562,6 @@ class VectorStore:
 
                         # 添加随机抖动(±10%)避免同时重试
                         import random
-                        import time
 
                         jitter = random.uniform(-0.1, 0.1) * wait_time
                         final_wait = int(wait_time + jitter)
@@ -574,7 +572,7 @@ class VectorStore:
                             f"(第 {attempt + 1}/{max_retries} 次)"
                         )
 
-                        time.sleep(final_wait)
+                        await asyncio.sleep(final_wait)
                     else:
                         # 达到最大重试次数,抛出自定义异常
                         self.logger.error(
@@ -589,11 +587,11 @@ class VectorStore:
             # 理论上不会到这里
             raise Exception("向量化失败:未知错误")
 
-    def embed_single_document(
+    async def embed_single_document(
         self, document: str, is_query: bool = False, timeout: int = 3
     ) -> Optional[List[float]]:
         """
-        为单个文档生成向量嵌入(同步方法).
+        为单个文档生成向量嵌入(异步方法).
 
         Args:
             document: 需要向量化的单个文档字符串.
@@ -603,7 +601,7 @@ class VectorStore:
         Returns:
             单个文档的向量, 或在查询失败时返回 None.
         """
-        embeddings = self.embed_documents(
+        embeddings = await self.embed_documents(
             [document], is_query=is_query, timeout=timeout
         )
         if embeddings:
@@ -972,7 +970,7 @@ class VectorStore:
 
     # ===== 笔记专用检索方法 =====
 
-    def store_note(self, collection, note: NoteData):
+    async def store_note(self, collection, note: NoteData):
         """
         存储笔记到向量数据库.
 
@@ -981,7 +979,7 @@ class VectorStore:
             note: NoteData 对象
         """
         # 使用高级抽象方法存储笔记(笔记数据全部存储在 metadata 中)
-        self.upsert_documents(
+        await self.upsert_documents(
             collection=collection,
             ids=note.id,
             embedding_texts=note.get_embedding_text(),  # 用于向量化的文本
@@ -990,7 +988,7 @@ class VectorStore:
 
         # 笔记使用无状态BM25精排,不需要预先建立索引
 
-    def search_notes(
+    async def search_notes(
         self,
         collection,
         query: str,
@@ -1009,8 +1007,8 @@ class VectorStore:
         Returns:
             相关的笔记对象列表(NoteData)
         """
-        # 显式生成查询向量(同步调用)，指明这是查询场景
-        query_embedding = self.embed_single_document(query, is_query=True)
+        # 显式生成查询向量(异步调用)，指明这是查询场景
+        query_embedding = await self.embed_single_document(query, is_query=True)
 
         # --- 处理向量化失败 ---
         if query_embedding is None:
@@ -1068,7 +1066,7 @@ class VectorStore:
 
         return final_results
 
-    def _search_vector_scores(self, collection, query: str, limit: int = 100) -> dict:
+    async def _search_vector_scores(self, collection, query: str, limit: int = 100) -> dict:
         """
         执行向量搜索,只返回 ID 和相似度分数的映射.
 
@@ -1084,8 +1082,8 @@ class VectorStore:
             {'note_id': similarity_score, ...} 的字典
         """
         try:
-            # 显式生成查询向量(同步调用)，指明这是查询场景
-            query_embedding = self.embed_single_document(query, is_query=True)
+            # 显式生成查询向量(异步调用)，指明这是查询场景
+            query_embedding = await self.embed_single_document(query, is_query=True)
 
             # --- 处理向量化失败 ---
             if query_embedding is None:

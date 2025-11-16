@@ -187,6 +187,97 @@ class PluginManager:
             self.logger.error(f"LLM响应处理失败: {e}")
             return {"status": "error", "message": f"LLM响应处理失败: {str(e)}"}
 
+    async def handle_memory_consolidation(self, event, event_plugin_context=None):
+        """
+        处理记忆整理（在消息发送后执行）
+
+        Args:
+            event: 消息事件对象
+            event_plugin_context: 事件专用的PluginContext（可选）
+
+        Returns:
+            dict: 处理结果
+        """
+        # 等待系统准备就绪
+        if not self.init_manager.wait_until_ready(timeout=30):
+            self.logger.info("⏳ 系统正在初始化中，记忆整理将跳过")
+            return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
+
+        # 系统准备就绪，正常处理业务
+        return await self._process_memory_consolidation(event, event_plugin_context)
+
+    async def _process_memory_consolidation(self, event, event_plugin_context=None):
+        """
+        处理记忆整理的具体逻辑
+
+        Args:
+            event: 消息事件对象
+            event_plugin_context: 事件专用的PluginContext（可选）
+
+        Returns:
+            dict: 处理结果
+        """
+        self.logger.debug("开始执行 _process_memory_consolidation")
+        try:
+            # 优先使用主线程组件
+            deepmind = self.main_thread_components.get("deepmind")
+            if not deepmind:
+                components = self.background_initializer.get_initialized_components()
+                deepmind = components.get("deepmind")
+
+            if deepmind:
+                # 从event上下文中获取响应数据
+                if not hasattr(event, "angelmemory_context"):
+                    return {"status": "skipped", "message": "没有记忆上下文"}
+
+                try:
+                    import json
+
+                    context_data = json.loads(event.angelmemory_context)
+                    llm_response_data = context_data.get("llm_response")
+
+                    if not llm_response_data:
+                        return {"status": "skipped", "message": "没有LLM响应数据"}
+
+                    # 重构响应对象
+                    class SimpleResponse:
+                        def __init__(self, data):
+                            self.completion_text = data.get("completion_text", "")
+
+                    response = SimpleResponse(llm_response_data)
+
+                    # 调用异步分析方法
+                    await deepmind.async_analyze_and_update_memory(event, response)
+                    self.logger.debug("记忆整理执行完成")
+
+                    # 记忆整理完成后，检查是否需要睡眠
+                    try:
+                        sleep_interval = self.config.get("sleep_interval", 3600)
+                        slept = await deepmind.check_and_sleep_if_needed(sleep_interval)
+                        if slept:
+                            self.logger.info("睡眠（记忆巩固）已执行")
+                    except Exception as sleep_error:
+                        # 睡眠失败不影响记忆整理的成功状态
+                        self.logger.error(f"睡眠检查失败: {sleep_error}")
+
+                    return {
+                        "status": "success",
+                        "message": "记忆整理完成",
+                    }
+                except (json.JSONDecodeError, KeyError) as e:
+                    self.logger.error(f"解析记忆上下文失败: {e}")
+                    return {
+                        "status": "error",
+                        "message": f"解析记忆上下文失败: {str(e)}",
+                    }
+            else:
+                self.logger.warning("DeepMind组件尚未初始化完成")
+                return {"status": "waiting", "message": "DeepMind组件尚未初始化完成"}
+
+        except Exception as e:
+            self.logger.error(f"记忆整理失败: {e}")
+            return {"status": "error", "message": f"记忆整理失败: {str(e)}"}
+
     def get_initialized_components(self):
         """
         获取已初始化的组件（供主插件使用）

@@ -161,9 +161,9 @@ class CognitiveService:
             query, fresh_limit, consolidated_limit
         )
 
-    def consolidate_memories(self):
+    async def consolidate_memories(self):
         """执行记忆巩固过程（睡眠模式）"""
-        return self.memory_manager.consolidate_memories()
+        return await self.memory_manager.consolidate_memories()
 
     def chained_recall(
         self, query: str, per_type_limit: int = 7, final_limit: int = 7
@@ -174,7 +174,7 @@ class CognitiveService:
             query, per_type_limit, final_limit, memory_handlers
         )
 
-    def feedback(
+    async def feedback(
         self,
         useful_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
@@ -182,7 +182,7 @@ class CognitiveService:
     ) -> List[BaseMemory]:
         """统一反馈接口 - 处理回忆后的反馈（核心工作流）"""
         memory_handlers = self.memory_handler_factory.handlers
-        return self.memory_manager.process_feedback(
+        return await self.memory_manager.process_feedback(
             useful_memory_ids, new_memories, merge_groups, memory_handlers
         )
 
