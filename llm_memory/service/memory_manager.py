@@ -551,7 +551,7 @@ class MemoryManager:
 
                 # 任务记忆特殊状态管理：新任务记忆创建时，将之前最新的任务记忆转为已巩固状态
                 if mem_type == "task":
-                    self._consolidate_previous_task_memory(new_memory_object.id)
+                    await self._consolidate_previous_task_memory(new_memory_object.id)
 
         if created_ids:
             association_cache = self.association_manager.preload_memories(
