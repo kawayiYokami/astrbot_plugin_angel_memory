@@ -38,7 +38,7 @@ class MemoryHandler:
         self.store = vector_store
         self.logger = logger
 
-    def remember(self, judgment: str, reasoning: str, tags: List[str]) -> BaseMemory:
+    async def remember(self, judgment: str, reasoning: str, tags: List[str]) -> BaseMemory:
         """
         记住一条记忆。
 
@@ -56,10 +56,10 @@ class MemoryHandler:
             reasoning=reasoning,
             tags=tags,
         )
-        self.store.remember(self.collection, memory)
+        await self.store.remember(self.collection, memory)
         return memory
 
-    def recall(
+    async def recall(
         self,
         query: str,
         limit: int = 10,
@@ -81,7 +81,7 @@ class MemoryHandler:
         where_filter = {"memory_type": self.memory_type.value}
         if not include_consolidated:
             where_filter["is_consolidated"] = False
-        return self.store.recall(
+        return await self.store.recall(
             self.collection,
             query,
             limit,

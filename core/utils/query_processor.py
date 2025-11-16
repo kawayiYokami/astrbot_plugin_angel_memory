@@ -167,6 +167,15 @@ class QueryProcessor:
                 query = self._truncate_text(query, 500)
                 query = self._clean_text(query)
 
+            # 记录简化的查询词日志
+            if original_query != query:
+                truncated_original = original_query[:50] + "..." if len(original_query) > 50 else original_query
+                truncated_result = query[:50] + "..." if len(query) > 50 else query
+                self.logger.debug(f"查询词预处理: '{truncated_original}' -> '{truncated_result}'")
+            else:
+                truncated_result = query[:50] + "..." if len(query) > 50 else query
+                self.logger.debug(f"查询词预处理: '{truncated_result}'")
+
             return query
 
         except Exception as e:

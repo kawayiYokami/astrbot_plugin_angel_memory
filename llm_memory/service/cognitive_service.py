@@ -111,7 +111,7 @@ class CognitiveService:
 
     # ===== 记忆接口 =====
 
-    def remember(
+    async def remember(
         self, memory_type: str, judgment: str, reasoning: str, tags: List[str]
     ) -> str:
         """
@@ -127,9 +127,10 @@ class CognitiveService:
             创建的记忆ID
         """
         handler = self.memory_handler_factory.get_handler(memory_type)
-        return handler.remember(judgment, reasoning, tags)
+        memory = await handler.remember(judgment, reasoning, tags)
+        return memory.id
 
-    def recall(
+    async def recall(
         self,
         memory_type: str,
         query: str,
@@ -149,15 +150,15 @@ class CognitiveService:
             记忆列表
         """
         handler = self.memory_handler_factory.get_handler(memory_type)
-        return handler.recall(query, limit, include_consolidated)
+        return await handler.recall(query, limit, include_consolidated)
 
     # ===== 高级记忆功能 =====
 
-    def comprehensive_recall(
+    async def comprehensive_recall(
         self, query: str, fresh_limit: int = None, consolidated_limit: int = None
     ) -> List[BaseMemory]:
         """实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容"""
-        return self.memory_manager.comprehensive_recall(
+        return await self.memory_manager.comprehensive_recall(
             query, fresh_limit, consolidated_limit
         )
 
@@ -165,12 +166,12 @@ class CognitiveService:
         """执行记忆巩固过程（睡眠模式）"""
         return await self.memory_manager.consolidate_memories()
 
-    def chained_recall(
+    async def chained_recall(
         self, query: str, per_type_limit: int = 7, final_limit: int = 7
     ) -> List[BaseMemory]:
         """链式多通道回忆 - 基于关联网络的多轮回忆"""
         memory_handlers = self.memory_handler_factory.handlers
-        return self.memory_manager.chained_recall(
+        return await self.memory_manager.chained_recall(
             query, per_type_limit, final_limit, memory_handlers
         )
 

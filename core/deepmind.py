@@ -213,11 +213,15 @@ class DeepMind:
         # 1. 使用链式召回从长期记忆检索相关记忆
         long_term_memories = []
         if self.memory_system:
-            long_term_memories = self.memory_system.chained_recall(
-                query=memory_query,
-                per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
-                final_limit=self.CHAINED_RECALL_FINAL_LIMIT,
-            )
+            try:
+                long_term_memories = await self.memory_system.chained_recall(
+                    query=memory_query,
+                    per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
+                    final_limit=self.CHAINED_RECALL_FINAL_LIMIT,
+                )
+            except Exception as e:
+                self.logger.warning(f"链式召回失败，跳过记忆检索: {e}")
+                long_term_memories = []
 
         # 2. 获取 secretary_decision 信息
         secretary_decision = {}
@@ -543,7 +547,8 @@ class DeepMind:
 
         session_id = context_data["session_id"]
         query = context_data["query"]
-        self.logger.debug(f"处理会话 {session_id}，查询内容: {query}")
+        truncated_query = query[:50] + "..." if len(query) > 50 else query
+        self.logger.debug(f"处理会话 {session_id}，查询内容: {truncated_query}")
 
         # 检索长期记忆和候选笔记
         retrieval_data = await self._retrieve_memories_and_notes(event, query)

@@ -86,7 +86,7 @@ class MemoryManager:
             self.logger.error(f"记忆巩固过程失败: {str(e)}")
             raise
 
-    def reinforce_memories(self, memory_ids: List[str]):
+    async def reinforce_memories(self, memory_ids: List[str]):
         """
         强化记忆强度（清醒模式）。
 
@@ -102,7 +102,7 @@ class MemoryManager:
                 if current_meta:
                     current_strength = current_meta.get("strength", 1)
                     # 强度 +1
-                    self.store.update_memory(
+                    await self.store.update_memory(
                         self.collection, memory_id, {"strength": current_strength + 1}
                     )
             except Exception as e:
@@ -110,7 +110,7 @@ class MemoryManager:
 
     # ===== 高级回忆功能 =====
 
-    def comprehensive_recall(
+    async def comprehensive_recall(
         self,
         query: str,
         fresh_limit: int = None,
@@ -142,7 +142,7 @@ class MemoryManager:
             consolidated_limit = system_config.consolidated_recall_limit
 
         # 检索新鲜记忆
-        fresh_memories = self.store.recall(
+        fresh_memories = await self.store.recall(
             collection=self.collection,
             query=processed_query,
             limit=fresh_limit,
@@ -150,7 +150,7 @@ class MemoryManager:
         )
 
         # 检索已巩固记忆
-        consolidated_memories = self.store.recall(
+        consolidated_memories = await self.store.recall(
             collection=self.collection,
             query=processed_query,
             limit=consolidated_limit,
@@ -170,7 +170,7 @@ class MemoryManager:
 
         return unique_memories
 
-    def chained_recall(
+    async def chained_recall(
         self,
         query: str,
         per_type_limit: int = 7,
@@ -209,7 +209,7 @@ class MemoryManager:
 
         if not memory_handlers:
             self.logger.warning("未提供记忆处理器，使用简单回忆")
-            return self.comprehensive_recall(
+            return await self.comprehensive_recall(
                 processed_query,
                 fresh_limit=final_limit,
                 consolidated_limit=final_limit,
@@ -234,7 +234,7 @@ class MemoryManager:
             if not handler:
                 continue  # 排除未提供的处理器
 
-            memories = handler.recall(
+            memories = await handler.recall(
                 processed_query, limit=per_type_limit, include_consolidated=True
             )
             if memories:
@@ -359,7 +359,7 @@ class MemoryManager:
 
     # ===== 记忆合并功能 =====
 
-    def merge_memories(
+    async def merge_memories(
         self,
         memories_to_merge_ids: List[str],
         new_judgment: str,
@@ -447,7 +447,7 @@ class MemoryManager:
         )
 
         # 步骤 3: 存储新记忆
-        self.store.remember(self.collection, new_memory)
+        await self.store.remember(self.collection, new_memory)
 
         # 步骤 4: 删除所有旧记忆
         self.collection.delete(ids=memories_to_merge_ids)
@@ -507,7 +507,7 @@ class MemoryManager:
             )
         if useful_memory_ids:
             # 强化记忆强度
-            self.reinforce_memories(useful_memory_ids)
+            await self.reinforce_memories(useful_memory_ids)
 
             # 有用回忆之间两两建立关联（双向、去重、累加）
             for i in range(len(useful_memory_ids)):
@@ -541,7 +541,7 @@ class MemoryManager:
             new_memory_object = None
             handler = memory_handlers.get(mem_type)
             if handler:
-                new_memory_object = handler.remember(judgment, reasoning, tags)
+                new_memory_object = await handler.remember(judgment, reasoning, tags)
             else:
                 self.logger.warning(f"未找到记忆类型 {mem_type} 的处理器，跳过创建")
 
@@ -587,7 +587,7 @@ class MemoryManager:
                 if first_mem and first_mem["metadatas"]:
                     metadata = first_mem["metadatas"][0]
                     # 使用第一个记忆的数据作为合并后的内容
-                    self.merge_memories(
+                    await self.merge_memories(
                         memories_to_merge_ids=group,
                         new_judgment=metadata.get("judgment", "合并记忆"),
                         new_reasoning=metadata.get("reasoning", "合并多个相似记忆"),
@@ -598,7 +598,7 @@ class MemoryManager:
 
         return created_memories  # 返回新创建的记忆对象列表
 
-    def _consolidate_previous_task_memory(self, current_task_id: str):
+    async def _consolidate_previous_task_memory(self, current_task_id: str):
         """
         任务记忆特殊状态管理：创建新任务记忆时，将之前最新的任务记忆转为已巩固状态
 
@@ -629,7 +629,7 @@ class MemoryManager:
 
             # 将之前的新鲜任务记忆转为已巩固状态
             for task_id in previous_task_ids:
-                self.store.update_memory(
+                await self.store.update_memory(
                     self.collection, task_id, {"is_consolidated": True}
                 )
 
