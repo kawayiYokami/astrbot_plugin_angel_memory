@@ -194,7 +194,7 @@ class DeepMind:
             self.logger.warning(f"Failed to parse memory context: {e}")
             return None
 
-    def _retrieve_memories_and_notes(
+    async def _retrieve_memories_and_notes(
         self, event: AstrMessageEvent, query: str
     ) -> Dict[str, Any]:
         """
@@ -238,7 +238,7 @@ class DeepMind:
         # 4. 获取候选笔记（用于小模型的选择）
         candidate_notes = []
         if self.note_service:
-            candidate_notes = self.note_service.search_notes_by_token_limit(
+            candidate_notes = await self.note_service.search_notes_by_token_limit(
                 query=note_query,
                 max_tokens=self.small_model_note_budget,
                 recall_count=self.NOTE_CANDIDATE_COUNT,
@@ -546,7 +546,7 @@ class DeepMind:
         self.logger.debug(f"处理会话 {session_id}，查询内容: {query}")
 
         # 检索长期记忆和候选笔记
-        retrieval_data = self._retrieve_memories_and_notes(event, query)
+        retrieval_data = await self._retrieve_memories_and_notes(event, query)
         long_term_memories = retrieval_data["long_term_memories"]
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]

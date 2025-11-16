@@ -149,7 +149,7 @@ class NoteService:
             self._initialize_collections()
         return True
 
-    def search_notes(
+    async def search_notes(
         self,
         query: str,
         max_results: int = 10,
@@ -172,14 +172,14 @@ class NoteService:
             # 确保服务已准备就绪
             self.ensure_ready()
             # 使用两阶段混合检索策略，传递阈值参数
-            results = self._hybrid_search(query, max_results, threshold=threshold)
+            results = await self._hybrid_search(query, max_results, threshold=threshold)
             return results
 
         except Exception as e:
             self.logger.error(f"搜索笔记失败: {e}")
             return []
 
-    def search_notes_by_token_limit(
+    async def search_notes_by_token_limit(
         self,
         query: str,
         max_tokens: int = 10000,
@@ -200,7 +200,7 @@ class NoteService:
         """
         try:
             # 使用现有的混合检索算法获取高质量排序结果
-            candidates = self._hybrid_search(
+            candidates = await self._hybrid_search(
                 query, recall_count=recall_count, max_results=recall_count
             )
 
@@ -240,7 +240,7 @@ class NoteService:
             self.logger.error(f"基于token限制搜索笔记失败: {e}")
             return []
 
-    def _hybrid_search(
+    async def _hybrid_search(
         self,
         query: str,
         max_results: int = 10,
@@ -262,7 +262,7 @@ class NoteService:
 
         # 1. 第一阶段：过滤 (Filtering)
         # 使用 VectorStore 的笔记专用检索方法进行向量搜索
-        recall_results = self.vector_store.search_notes(
+        recall_results = await self.vector_store.search_notes(
             collection=self.main_collection, query=query, limit=recall_count
         )
 
@@ -303,7 +303,7 @@ class NoteService:
         # 2. 第二阶段：重排 (Reranking)
         # 使用轻量级方法查询副集合（只获取标签相关性分数）
         # 副集合不存储 metadata，所以不能使用 search_notes
-        tag_scores = self.vector_store._search_vector_scores(
+        tag_scores = await self.vector_store._search_vector_scores(
             collection=self.sub_collection, query=query, limit=len(all_recalled_notes)
         )
 
