@@ -788,49 +788,36 @@ class EmbeddingProviderFactory:
         Args:
             provider_id: API提供商ID，如果为空则使用本地模型
             local_model_name: 本地模型名称
+            enable_local_embedding: 是否启用本地嵌入模型
 
         Returns:
             嵌入提供商实例
         """
-        # 检查是否启用本地模型
-        if not enable_local_embedding:
-            self.logger.warning("本地嵌入模型已禁用，使用API模式")
-            provider_id = provider_id or ""  # 强制使用API模式
-
-        # 如果没有提供商ID，直接使用本地模型
-        if not provider_id:
-            self.logger.info("未指定API提供商，使用本地嵌入模型")
+        # 启用本地模型时直接返回
+        if enable_local_embedding:
+            self.logger.info("使用本地嵌入模型")
             return LocalEmbeddingProvider(local_model_name)
+
+        # API模式下必须提供provider_id
+        if not provider_id:
+            raise ValueError(
+                "API模式下必须指定 provider_id，或将 enable_local_embedding 设置为 True"
+            )
 
         # 尝试使用API提供商
-        if self.context:
-            try:
-                provider = self.context.get_provider_by_id(provider_id)
-                if provider:
-                    api_provider = APIEmbeddingProvider(provider, provider_id)
+        if not self.context:
+            raise Exception("无上下文信息，无法获取API提供商")
 
-                    # 异步测试API可用性
-                    if await api_provider.check_availability():
-                        self.logger.info(f"成功使用API嵌入提供商: {provider_id}")
-                        return api_provider
-                    else:
-                        self.logger.warning(
-                            f"API提供商不可用，降级到本地模型: {provider_id}"
-                        )
-                        return LocalEmbeddingProvider(local_model_name)
-                else:
-                    self.logger.warning(
-                        f"未找到API提供商，降级到本地模型: {provider_id}"
-                    )
-                    return LocalEmbeddingProvider(local_model_name)
-            except Exception as e:
-                self.logger.error(
-                    f"API提供商测试失败，降级到本地模型: {provider_id}, 错误: {e}"
-                )
-                return LocalEmbeddingProvider(local_model_name)
-        else:
-            self.logger.warning("无上下文信息，使用本地嵌入模型")
-            return LocalEmbeddingProvider(local_model_name)
+        provider = self.context.get_provider_by_id(provider_id)
+        if not provider:
+            raise Exception(f"未找到API提供商: {provider_id}")
+
+        api_provider = APIEmbeddingProvider(provider, provider_id)
+        if not await api_provider.check_availability():
+            raise Exception(f"API提供商不可用: {provider_id}")
+
+        self.logger.info(f"成功使用API嵌入提供商: {provider_id}")
+        return api_provider
 
     def get_available_providers(self) -> List[Dict[str, Any]]:
         """

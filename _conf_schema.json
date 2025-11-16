@@ -53,6 +53,6 @@
     "title": "嵌入式模型提供商ID",
     "description": "用于向量化的嵌入式模型提供商ID，优先使用官方API",
     "default": "",
-    "hint": "留空则使用本地模型，填写提供商ID则使用官方API，API不可用时自动降级到本地模型"
+    "hint": "留空则使用本地模型，填写提供商ID则使用官方API（enable_local_embedding=true时使用本地模型，=false时使用API）"
   }
 }

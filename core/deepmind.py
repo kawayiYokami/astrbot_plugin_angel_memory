@@ -874,7 +874,7 @@ class DeepMind:
         # 停止记忆整理任务
         from .utils.feedback_queue import stop_feedback_queue
 
-        stop_feedback_queue(timeout=5)
+        stop_feedback_queue()
 
         self.logger.info("AI潜意识已休息，下次再见！")
 
