@@ -405,10 +405,14 @@ class SQLiteDatabaseManager(ABC):
             return 0
 
         # SQLite threadsafety=3 保证线程安全，不需要额外的 Python 层锁
-        cursor = self._conn.cursor()
-        cursor.executemany(query, params_list)
-        self._conn.commit()
-        return cursor.rowcount
+        try:
+            cursor = self._conn.cursor()
+            cursor.executemany(query, params_list)
+            self._conn.commit()
+            return cursor.rowcount
+        except sqlite3.Error as e:
+            self.logger.error(f"[{caller}] 批量删除操作失败: {e}")
+            raise DatabaseError(f"批量删除操作失败: {e}") from e
 
     def _return_connection(self, conn: sqlite3.Connection):
         """

@@ -246,7 +246,7 @@ class AngelMemoryPlugin(Star):
                     }
                     event.angelmemory_context = json.dumps(context_data)
                     self.logger.debug("LLM响应数据已存储到event上下文")
-                except (json.JSONDecodeError, AttributeError) as e:
+                except (json.JSONDecodeError, AttributeError, TypeError) as e:
                     self.logger.warning(f"存储响应数据失败: {e}")
 
         except Exception as e:

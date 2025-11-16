@@ -14,9 +14,9 @@ class ConfigValidator:
     @staticmethod
     def validate_positive_int(value: Any, field_name: str, max_value: int = None) -> int:
         """验证正整数"""
-        if not isinstance(value, int) or value < 1:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError(f"{field_name} must be a positive integer, got: {value}")
-        if max_value and value > max_value:
+        if max_value is not None and value > max_value:
             raise ValueError(f"{field_name} too large (max {max_value}), got: {value}")
         return value
 
@@ -25,11 +25,11 @@ class ConfigValidator:
         value: Any, field_name: str, max_value: int = None
     ) -> int:
         """验证非负整数"""
-        if not isinstance(value, int) or value < 0:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError(
                 f"{field_name} must be a non-negative integer, got: {value}"
             )
-        if max_value and value > max_value:
+        if max_value is not None and value > max_value:
             raise ValueError(f"{field_name} too large (max {max_value}), got: {value}")
         return value
 
@@ -38,9 +38,9 @@ class ConfigValidator:
         value: Any, field_name: str, max_value: Union[int, float] = None
     ) -> float:
         """验证正数（整数或浮点数）"""
-        if not isinstance(value, (int, float)) or value <= 0:
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
             raise ValueError(f"{field_name} must be a positive number, got: {value}")
-        if max_value and value > max_value:
+        if max_value is not None and value > max_value:
             raise ValueError(f"{field_name} too large (max {max_value}), got: {value}")
         return float(value)
 

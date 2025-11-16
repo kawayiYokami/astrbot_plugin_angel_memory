@@ -414,13 +414,14 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         if not self.is_available():
             raise RuntimeError("本地模型不可用")
 
-        # 如果缓存已禁用，直接处理
-        if not self._cache_enabled or not self._cache:
+        # 如果缓存已禁用，直接处理（使用局部变量避免并发问题）
+        cache = self._cache
+        if not self._cache_enabled or not cache:
             embeddings = self._model.encode(texts, convert_to_numpy=True)
             return embeddings.tolist()
 
         # 1. 尝试从缓存获取
-        cached_results, missing_indices = self._cache.get_batch(texts)
+        cached_results, missing_indices = cache.get_batch(texts)
 
         # 2. 如果全部命中缓存，直接返回
         if not missing_indices:
@@ -438,7 +439,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         new_embeddings_list = new_embeddings.tolist()
 
         # 4. 将新向量存入缓存
-        self._cache.put_batch(missing_texts, new_embeddings_list)
+        cache.put_batch(missing_texts, new_embeddings_list)
 
         # 5. 合并结果：组装完整的嵌入列表
         result = []
@@ -495,16 +496,18 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     def clear_and_disable_cache(self) -> None:
         """清理并禁用缓存（初始化完成后调用以节省内存）"""
-        if self._cache:
-            stats = self._cache.get_stats()
-            self._cache.clear()
-            self._cache = None
-            self._cache_enabled = False
-            self.logger.info(
-                f"本地提供商 {self.model_name} 缓存已清理并禁用 "
-                f"(命中率: {stats.get('hit_rate', 0):.1%}, "
-                f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
-            )
+        cache = self._cache
+        if cache:
+            with cache._lock:
+                stats = cache.get_stats()
+                cache.clear()
+                self._cache_enabled = False
+                self._cache = None
+                self.logger.info(
+                    f"本地提供商 {self.model_name} 缓存已清理并禁用 "
+                    f"(命中率: {stats.get('hit_rate', 0):.1%}, "
+                    f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
+                )
 
     def shutdown(self):
         """关闭本地提供商"""
@@ -571,14 +574,15 @@ class APIEmbeddingProvider(EmbeddingProvider):
         if not self.is_available():
             raise RuntimeError(f"API提供商不可用: {self.provider_id}")
 
-        # 如果缓存已禁用，直接处理
-        if not self._cache_enabled or not self._cache:
+        # 如果缓存已禁用，直接处理（使用局部变量避免并发问题）
+        cache = self._cache
+        if not self._cache_enabled or not cache:
             unique_texts, original_to_unique, unique_to_original = self._deduplicate_texts(texts)
             unique_embeddings = await self._get_embeddings_with_batch(unique_texts, self.batch_size)
             return self._map_embeddings_back(unique_embeddings, unique_to_original, len(texts))
 
         # 1. 尝试从缓存获取
-        cached_results, missing_indices = self._cache.get_batch(texts)
+        cached_results, missing_indices = cache.get_batch(texts)
 
         # 2. 如果全部命中缓存，直接返回
         if not missing_indices:
@@ -604,7 +608,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         )
 
         # 7. 将去重后的向量存入缓存
-        self._cache.put_batch(unique_texts, unique_embeddings)
+        cache.put_batch(unique_texts, unique_embeddings)
 
         # 8. 合并结果：组装完整的嵌入列表
         result = []
@@ -739,16 +743,18 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     def clear_and_disable_cache(self) -> None:
         """清理并禁用缓存（初始化完成后调用以节省内存）"""
-        if self._cache:
-            stats = self._cache.get_stats()
-            self._cache.clear()
-            self._cache = None
-            self._cache_enabled = False
-            self.logger.info(
-                f"API提供商 {self.provider_id} 缓存已清理并禁用 "
-                f"(命中率: {stats.get('hit_rate', 0):.1%}, "
-                f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
-            )
+        cache = self._cache
+        if cache:
+            with cache._lock:
+                stats = cache.get_stats()
+                cache.clear()
+                self._cache_enabled = False
+                self._cache = None
+                self.logger.info(
+                    f"API提供商 {self.provider_id} 缓存已清理并禁用 "
+                    f"(命中率: {stats.get('hit_rate', 0):.1%}, "
+                    f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
+                )
 
     def shutdown(self):
         """关闭API提供商，释放资源"""

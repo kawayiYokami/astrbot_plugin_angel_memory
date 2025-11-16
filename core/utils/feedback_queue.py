@@ -23,16 +23,11 @@ FeedbackTask = Union[Dict[str, Any], None]
 class FeedbackQueue:
     """异步反馈处理器（无后台线程）。"""
 
-    def __init__(
-        self,
-        worker_name: str = "MemoryFeedbackWorker",
-        flush_interval: float = 0.2,
-        batch_threshold: int = 50,
-    ):
-        # 保留参数以兼容旧代码，但不再使用
+    def __init__(self):
+        """初始化异步反馈处理器（无后台线程）"""
         logger.info("反馈处理器已初始化（异步模式，无后台线程）")
 
-    async def submit(self, task: FeedbackTask):
+    async def submit(self, task: FeedbackTask) -> Optional[Any]:
         """直接异步处理任务（无队列，无缓冲）"""
         if task is None:
             logger.warning("反馈处理器收到空任务，拒绝处理")
@@ -62,7 +57,7 @@ class FeedbackQueue:
             )
             return None
 
-    def stop(self, timeout: Optional[float] = 5.0) -> None:
+    def stop(self) -> None:
         """停止处理器（异步模式无需停止操作）"""
         logger.info("反馈处理器已停止（异步模式）")
 
@@ -80,9 +75,9 @@ def get_feedback_queue() -> FeedbackQueue:
     return _queue_instance
 
 
-def stop_feedback_queue(timeout: Optional[float] = 5.0) -> None:
+def stop_feedback_queue() -> None:
     global _queue_instance
     with _instance_lock:
         if _queue_instance is not None:
-            _queue_instance.stop(timeout=timeout)
+            _queue_instance.stop()
             _queue_instance = None
