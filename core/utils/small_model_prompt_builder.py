@@ -77,6 +77,17 @@ class SmallModelPromptBuilder:
         for msg in chat_records:
             role = msg.get("role")
 
+            # 过滤掉toolcall相关消息
+            if msg.get("is_structured_toolcall"):
+                continue  # 跳过结构化toolcall消息
+
+            # 检查内容中是否包含toolcall关键词
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                toolcall_keywords = ["调用", "tool_call", "function", "工具调用结果："]
+                if any(keyword in content for keyword in toolcall_keywords):
+                    continue  # 跳过包含toolcall关键词的消息
+
             if role == "user":
                 sender_name = msg.get("sender_name", "成员")
                 sender_id = msg.get("sender_id", "Unknown")

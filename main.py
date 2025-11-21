@@ -7,7 +7,7 @@ AstrBot Angel Memory Plugin
 采用新的懒加载+后台预初始化架构，实现极速启动和智能提供商等待。
 """
 
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, register
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.star.star_tools import StarTools
@@ -71,6 +71,13 @@ def _upgrade_chromadb():
         raise
 
 
+@register(
+    "astrbot_plugin_angel_memory",
+    "kawayiYokami",
+    "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
+    "0.3.0",
+    "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
+)
 class AngelMemoryPlugin(Star):
     """天使记忆插件主类
 
