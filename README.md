@@ -294,7 +294,7 @@ A: 考虑使用官方 API 提供商提高处理速度
 
 ## 📄 许可证
 
-本项目采用 [MIT 许可证](LICENSE)。
+本项目采用 [GNU General Public License v3.0](LICENSE)。
 
 ## 🙏 致谢
 
