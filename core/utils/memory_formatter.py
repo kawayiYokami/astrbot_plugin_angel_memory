@@ -144,9 +144,9 @@ class MemoryFormatter:
         return deduplicated
 
     @staticmethod
-    def format_fifo_memories(memories: List[MemoryItem]) -> str:
+    def format_session_memories(memories: List[MemoryItem]) -> str:
         """
-        专门格式化来自FIFO短期记忆的列表，无过滤，但会去重。
+        格式化会话短期记忆列表，无过滤，但会去重。
 
         Args:
             memories: 记忆列表

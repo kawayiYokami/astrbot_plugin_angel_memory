@@ -290,11 +290,15 @@ class VectorStore:
         # 将结果转换为记忆对象,并计算相似度分数进行过滤
         vector_results = []
         if results and results["metadatas"] and len(results["metadatas"]) > 0:
+            ids = results.get("ids", [[]])[0]
             distances = results.get("distances", [[]])[0]
             metadatas = results["metadatas"][0]
 
             for idx, meta in enumerate(metadatas):
-                if meta and idx < len(distances):
+                if meta and idx < len(distances) and idx < len(ids):
+                    # 将真实ID添加到meta中
+                    meta["id"] = ids[idx]
+
                     # 计算相似度分数
                     distance = distances[idx]
                     similarity = max(0.0, 1.0 - (distance / 2.0))
@@ -364,11 +368,15 @@ class VectorStore:
         # 将结果转换为记忆对象,并计算相似度分数进行过滤
         vector_results = []
         if results and results["metadatas"] and len(results["metadatas"]) > 0:
+            ids = results.get("ids", [[]])[0]
             distances = results.get("distances", [[]])[0]
             metadatas = results["metadatas"][0]
 
             for idx, meta in enumerate(metadatas):
-                if meta and idx < len(distances):
+                if meta and idx < len(distances) and idx < len(ids):
+                    # 将真实ID添加到meta中
+                    meta["id"] = ids[idx]
+
                     # 计算相似度分数
                     distance = distances[idx]
                     similarity = max(0.0, 1.0 - (distance / 2.0))
@@ -394,46 +402,101 @@ class VectorStore:
 
         return final_results
 
-    async def update_memory(self, collection, memory_id: str, updates: dict):
+    async def update_memory(self, collection, memory_id, updates: dict = None):
         """
-        更新记忆的元数据.
+        更新记忆的元数据（支持单个或批量更新）.
 
         Args:
             collection: 目标 ChromaDB 集合.
-            memory_id: 要更新的记忆ID
-            updates: 要更新的字段字典 (e.g., {"is_consolidated": True, "strength": 5})
+            memory_id: 单个记忆ID（str）或批量更新列表（List[Dict]）
+                - 单个: memory_id="id123", updates={"strength": 5}
+                - 批量: memory_id=[{"id": "id1", "updates": {...}}, {"id": "id2", "updates": {...}}]
+            updates: 单个更新时的字段字典 (e.g., {"is_consolidated": True, "strength": 5})
         """
-        try:
-            # 获取当前记忆的完整信息
-            current_data = collection.get(ids=[memory_id])
-            if not current_data or not current_data["metadatas"]:
-                raise ValueError(f"Memory with id {memory_id} not found")
+        # 批量更新
+        if isinstance(memory_id, list):
+            try:
+                ids = [item["id"] for item in memory_id]
+                current_data = collection.get(ids=ids)
 
-            current_meta = current_data["metadatas"][0]
-            current_document = (
-                current_data["documents"][0] if current_data["documents"] else ""
-            )
+                if not current_data or not current_data["metadatas"]:
+                    raise ValueError("No memories found for batch update")
 
-            # 从元数据中重新构造语义核心用于向量化
-            semantic_core = (
-                current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
-            )
+                # 构建 ID 到数据的映射（collection.get 返回顺序不保证与输入一致）
+                id_to_data = {}
+                for i, mem_id in enumerate(current_data["ids"]):
+                    id_to_data[mem_id] = {
+                        "metadata": current_data["metadatas"][i],
+                        "document": current_data["documents"][i] if current_data["documents"] and i < len(current_data["documents"]) else ""
+                    }
 
-            # 应用更新
-            current_meta.update(updates)
+                updated_ids = []
+                updated_embeddings = []
+                updated_documents = []
+                updated_metadatas = []
 
-            # 使用异步方法重新存储
-            await self.upsert_documents(
-                collection=collection,
-                ids=memory_id,
-                embedding_texts=semantic_core,
-                documents=current_document,
-                metadatas=current_meta,
-            )
+                for item in memory_id:
+                    mem_id = item["id"]
+                    mem_updates = item["updates"]
 
-        except Exception as e:
-            self.logger.error(f"更新记忆 {memory_id} 失败: {str(e)}")
-            raise
+                    # 用 ID 查找对应的数据
+                    if mem_id not in id_to_data:
+                        self.logger.warning(f"跳过记忆 {mem_id} 的批量更新：未找到数据")
+                        continue
+
+                    current_meta = id_to_data[mem_id]["metadata"]
+                    current_document = id_to_data[mem_id]["document"]
+
+                    semantic_core = current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
+                    current_meta.update(mem_updates)
+
+                    updated_ids.append(mem_id)
+                    updated_embeddings.append(semantic_core)
+                    updated_documents.append(current_document)
+                    updated_metadatas.append(current_meta)
+
+                if updated_ids:
+                    await self.upsert_documents(
+                        collection=collection,
+                        ids=updated_ids,
+                        embedding_texts=updated_embeddings,
+                        documents=updated_documents,
+                        metadatas=updated_metadatas,
+                    )
+
+            except Exception as e:
+                self.logger.error(f"批量更新记忆失败: {str(e)}")
+                raise
+
+        # 单个更新（向后兼容）
+        else:
+            try:
+                current_data = collection.get(ids=[memory_id])
+                if not current_data or not current_data["metadatas"]:
+                    raise ValueError(f"Memory with id {memory_id} not found")
+
+                current_meta = current_data["metadatas"][0]
+                current_document = (
+                    current_data["documents"][0] if current_data["documents"] else ""
+                )
+
+                semantic_core = (
+                    current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
+                )
+
+                current_meta.update(updates)
+
+                await self.upsert_documents(
+                    collection=collection,
+                    ids=memory_id,
+                    embedding_texts=semantic_core,
+                    documents=current_document,
+                    metadatas=current_meta,
+                )
+
+            except Exception as e:
+                self.logger.error(f"更新记忆 {memory_id} 失败: {str(e)}")
+                raise
 
     def delete_memories(
         self, collection, where_filter: dict, exclude_associations: bool = False

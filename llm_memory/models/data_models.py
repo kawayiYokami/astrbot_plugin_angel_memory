@@ -73,9 +73,10 @@ class BaseMemory:
         tags: List[str],
         id: str = None,
         strength: int = 1,
-        is_consolidated: bool = False,
+        is_active: bool = False,
         associations: dict = None,
         created_at: float = None,
+        is_consolidated: bool = None,  # 废弃字段，仅保留兼容性
     ):
         self.id = id or str(uuid.uuid4())
         self.memory_type = memory_type
@@ -83,7 +84,7 @@ class BaseMemory:
         self.reasoning = reasoning
         self.tags = tags if isinstance(tags, list) else []
         self.strength = strength
-        self.is_consolidated = is_consolidated
+        self.is_active = is_active  # True=主动记忆(不衰减), False=被动记忆(会衰减)
         self.associations = associations or {}  # 记忆关联字段：{memory_id: strength}
         self.created_at = created_at or time.time()  # 自动记录创建时间
         self.similarity = 0.0  # 相似度分数（仅用于检索时传递，不存储到数据库）
@@ -110,7 +111,7 @@ class BaseMemory:
             "reasoning": self.reasoning,
             "tags": tags_str,
             "strength": self.strength,
-            "is_consolidated": self.is_consolidated,
+            "is_active": self.is_active,
             "associations": associations_str,
             "created_at": self.created_at,
         }
@@ -179,7 +180,7 @@ class BaseMemory:
                 tags=tags,
                 id=data.get("id", str(uuid.uuid4())),
                 strength=data.get("strength", 1),
-                is_consolidated=data.get("is_consolidated", False),
+                is_active=data.get("is_active", False),
                 associations=cls._parse_associations(data.get("associations", {})),
                 created_at=data.get("created_at", time.time()),
             )

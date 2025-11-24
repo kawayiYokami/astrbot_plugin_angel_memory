@@ -225,21 +225,15 @@ class DeepMind:
                     handlers = getattr(self.memory_system.memory_handler_factory, 'handlers', None)
                 
                 # 调用新的 chained_recall
-                recall_result = await self.memory_system.chained_recall(
+                long_term_memories = await self.memory_system.chained_recall(
                     query=memory_query,
-                    entities=entities,  # 传入实体
+                    entities=entities,
                     per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
                     final_limit=self.CHAINED_RECALL_FINAL_LIMIT,
-                    memory_handlers=handlers, # 传入 handlers
-                    event=event,  # 传递event，便于chained_recall内部使用query_processor
-                    vector=memory_vector,  # 传递预计算向量
+                    memory_handlers=handlers,
+                    event=event,
+                    vector=memory_vector,
                 )
-                # 从结果中分别获取实体记忆和常规记忆
-                entity_memories = recall_result.get("entity_memories", [])
-                regular_memories = recall_result.get("regular_memories", [])
-
-                # 最终合并，实体记忆在前
-                long_term_memories = entity_memories + regular_memories
 
             except Exception as e:
                 self.logger.error(f"链式召回失败，跳过记忆检索: {e}")
@@ -315,7 +309,7 @@ class DeepMind:
             session_id
         )
 
-        memory_context = self.memory_injector.format_fifo_memories_for_prompt(
+        memory_context = self.memory_injector.format_session_memories_for_prompt(
             short_term_memories
         )
 
@@ -528,53 +522,11 @@ class DeepMind:
 
 
         try:
-            # 直接将检索到的长期记忆填入短期记忆的空槽位
+            # 直接将检索到的长期记忆填入短期记忆，由session_memory按生命值淘汰
             if long_term_memories and self.memory_system:
-                # 检查短期记忆是否还有空位，有空位时才填入新记忆
-                current_session_memories = (
-                    self.session_memory_manager.get_session_memories(session_id)
+                self.session_memory_manager.add_memories_to_session(
+                    session_id, long_term_memories
                 )
-                # 获取各类型记忆的容量配置
-                capacity_config = self.session_memory_manager.capacity_config
-                capacity_multiplier = self.session_memory_manager.capacity_multiplier
-
-                # 按类型统计当前记忆数量
-                memory_count_by_type = {}
-                for memory in current_session_memories:
-                    memory_type = memory.memory_type
-                    memory_count_by_type[memory_type] = (
-                        memory_count_by_type.get(memory_type, 0) + 1
-                    )
-
-                # 筛选出还有空位的记忆类型并填入
-                memories_to_add = []
-                for memory in long_term_memories:
-                    memory_type_str = (
-                        memory.memory_type.value
-                        if hasattr(memory.memory_type, "value")
-                        else str(memory.memory_type)
-                    )
-                    memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(
-                        memory_type_str, memory_type_str.lower()
-                    )
-
-                    # 获取该类型的记忆容量
-                    base_capacity = getattr(capacity_config, memory_type_key, 0)
-                    capacity = int(base_capacity * capacity_multiplier)
-
-                    # 检查是否还有空位
-                    current_count = memory_count_by_type.get(memory_type_key, 0)
-                    if current_count < capacity:
-                        memories_to_add.append(memory)
-                        memory_count_by_type[memory_type_key] = current_count + 1
-
-                # 将筛选后的记忆添加到短期记忆中
-                if memories_to_add:
-                    self.session_memory_manager.add_memories_to_session(
-                        session_id, memories_to_add
-                    )
-                else:
-                    pass
 
             # 直接注入原始笔记内容（不经过小模型筛选）
             note_context = ""

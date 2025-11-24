@@ -41,18 +41,17 @@ class MemoryInjector:
         )
 
     @staticmethod
-    def format_fifo_memories_for_prompt(session_memories: List[MemoryItem]) -> str:
+    def format_session_memories_for_prompt(session_memories: List[MemoryItem]) -> str:
         """
-        格式化FIFO记忆用于LLM提示词（按照设计，只从FIFO取）
+        格式化会话短期记忆用于LLM提示词
 
         Args:
-            session_memories: FIFO中的会话记忆列表
+            session_memories: 会话短期记忆列表
 
         Returns:
             格式化后的记忆上下文
         """
-        # 直接调用为FIFO设计的专用格式化方法
-        return MemoryFormatter.format_fifo_memories(memories=session_memories)
+        return MemoryFormatter.format_session_memories(memories=session_memories)
 
     @staticmethod
     def inject_into_system_prompt(system_prompt: str, memory_context: str) -> str:

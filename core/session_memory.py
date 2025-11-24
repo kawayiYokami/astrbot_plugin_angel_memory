@@ -2,7 +2,7 @@
 会话短期记忆管理模块
 
 负责管理所有会话的短期记忆，支持并发和线程安全。
-实现FIFO策略的记忆通道管理。
+实现基于生命值淘汰的短期记忆管理。
 """
 
 import threading
@@ -49,7 +49,7 @@ class SessionMemory:
         self.capacity_multiplier = capacity_multiplier
         self.lock = threading.Lock()
 
-        # 使用普通列表存储记忆（移除FIFO机制）
+        # 使用列表存储记忆，按生命值和时间戳淘汰
         self.memories = []  # List[MemoryItem]
 
         # 记忆ID到记忆项的映射（用于快速查找）
@@ -174,8 +174,8 @@ class SessionMemory:
         # 计算每个用户的剩余容量
         user_remaining_capacity = self._calculate_user_remaining_capacity(current_user_memories, total_capacity)
 
-        # 按强度排序记忆
-        user_info_memories.sort(key=lambda x: (-x.strength, x.created_at))
+        # 按生命值排序记忆
+        user_info_memories.sort(key=lambda x: (-x.life_points, x.created_at))
 
         # 为每个用户分配记忆
         for memory in user_info_memories:
@@ -209,14 +209,15 @@ class SessionMemory:
             total_capacity: 总容量
 
         Returns:
-            每个用户的剩余容量字典
+            每个用户的剩余容量字典（使用defaultdict为新用户分配初始容量）
         """
-        num_users = len(current_user_memories)
-        if num_users == 0:
-            return {}
+        from collections import defaultdict
 
-        capacity_per_user = total_capacity // num_users if num_users > 0 else 0
-        remaining_capacity = {}
+        num_users = max(1, len(current_user_memories))  # 至少为1，确保新用户有容量
+        capacity_per_user = total_capacity // num_users
+
+        # 使用defaultdict为新用户自动分配初始容量
+        remaining_capacity = defaultdict(lambda: capacity_per_user)
 
         for user_id, memories in current_user_memories.items():
             used = len(memories)
@@ -383,8 +384,8 @@ class SessionMemory:
 
         # 为每个用户清理记忆
         for user_id, memories in user_groups.items():
-            # 按强度排序，优先保留高强度记忆
-            memories.sort(key=lambda x: (-x.strength, x.created_at))
+            # 按生命值排序，优先保留高生命值记忆
+            memories.sort(key=lambda x: (-x.life_points, x.created_at))
 
             # 删除超出的记忆
             for memory in memories[capacity_per_user:]:

@@ -6,7 +6,6 @@
 """
 
 from typing import List, Optional, Dict, Any
-import random
 import logging
 from collections import defaultdict
 
@@ -54,36 +53,34 @@ class MemoryManager:
 
     async def consolidate_memories(self):
         """
-        执行记忆巩固过程（睡眠模式）。
+        执行记忆清理过程（睡眠模式）。
 
-        这个方法模拟大脑的睡眠巩固，将新鲜记忆转变为已巩固记忆。
-
-        设计原则：
-        - 记忆永不丢失（过目不忘），只会通过merge_memories主动合并
-        - 关联永不删除，"忘记"的本质是无法召回而非不存在
-        - 在正确的情景下，弱关联的记忆仍然可以被回忆起来
+        清理规则：
+        - 删除被动记忆中强度 ≤ 0 的记忆
+        - 主动记忆永不删除（不受强度影响）
+        - 清理弱关联
         """
-        self.logger.debug("开始记忆巩固过程...")
+        self.logger.debug("开始记忆清理过程...")
 
         try:
-            # 将所有新鲜记忆转变为已巩固记忆
-            fresh_results = self.collection.get(where={"is_consolidated": False})
-            consolidated_count = 0
-            if fresh_results and fresh_results["ids"]:
-                for memory_id in fresh_results["ids"]:
-                    await self.store.update_memory(
-                        self.collection, memory_id, {"is_consolidated": True}
-                    )
-                    consolidated_count += 1
-                self.logger.debug(f"已巩固 {consolidated_count} 条新鲜记忆")
+            # 删除被动记忆中强度 ≤ 0 的记忆
+            weak_results = self.collection.get(
+                where={"$and": [{"strength": {"$lte": 0}}, {"is_active": False}]},
+                include=["metadatas"]
+            )
+            deleted_count = 0
+            if weak_results and weak_results["ids"]:
+                self.collection.delete(ids=weak_results["ids"])
+                deleted_count = len(weak_results["ids"])
+                self.logger.debug(f"已删除 {deleted_count} 条被动记忆（强度≤0）")
 
             # 清理弱关联
             await self.association_manager.cleanup_weak_associations()
 
-            self.logger.debug("记忆巩固过程完成（记忆和关联永不丢失）")
+            self.logger.debug(f"记忆清理完成: 删除{deleted_count}条被动记忆")
 
         except Exception as e:
-            self.logger.error(f"记忆巩固过程失败: {str(e)}")
+            self.logger.error(f"记忆清理过程失败: {str(e)}")
             raise
 
     async def reinforce_memories(self, memory_ids: List[str]):
@@ -97,13 +94,16 @@ class MemoryManager:
         """
         for memory_id in memory_ids:
             try:
-                # 获取当前记忆的强度
-                current_meta = self.collection.get(ids=[memory_id])["metadatas"][0]
-                if current_meta:
+                # 根据 metadata 中的 id 查找记忆
+                result = self.collection.get(where={"id": memory_id}, limit=1)
+                if result and result["metadatas"] and result["ids"]:
+                    current_meta = result["metadatas"][0]
                     current_strength = current_meta.get("strength", 1)
-                    # 强度 +1
+                    # 获取 ChromaDB 的文档 ID
+                    chroma_doc_id = result["ids"][0]
+                    # 使用 ChromaDB 文档 ID 进行更新
                     await self.store.update_memory(
-                        self.collection, memory_id, {"strength": current_strength + 1}
+                        self.collection, chroma_doc_id, {"strength": current_strength + 3}
                     )
             except Exception as e:
                 self.logger.error(f"强化记忆 {memory_id} 失败: {str(e)}")
@@ -113,319 +113,151 @@ class MemoryManager:
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: int = None,
-        consolidated_limit: int = None,
+        limit: int = None,
         event=None,
         vector: Optional[List[float]] = None,
     ) -> List[BaseMemory]:
         """
-        实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容。
+        统一记忆检索 - 使用混合检索获取所有相关记忆。
 
         Args:
             query: 搜索查询字符串
-            fresh_limit: 新鲜记忆的最大返回数量
-            consolidated_limit: 已巩固记忆的最大返回数量
+            limit: 最大返回数量
             event: 消息事件（用于查询词预处理）
             vector: 可选的预计算向量，如果提供则直接使用
 
         Returns:
-            合并后的记忆列表，新鲜记忆优先
+            记忆列表（相似度 >= 0.5）
         """
-        # 预处理查询词（如果有查询处理器）
+        # 预处理查询词
         processed_query = query
         if self.query_processor and event:
             processed_query = self.query_processor.process_query_for_memory(
                 query, event
             )
 
-        if fresh_limit is None:
-            fresh_limit = system_config.fresh_recall_limit
-        if consolidated_limit is None:
-            consolidated_limit = system_config.consolidated_recall_limit
+        if limit is None:
+            limit = system_config.fresh_recall_limit
 
-        # 如果提供了预计算向量，使用向量检索；否则使用文本检索
+        # 直接使用混合检索，相似度阈值0.5
         if vector is not None:
-            # 使用预计算向量检索新鲜记忆
-            fresh_memories = await self.store.recall_with_vector(
+            memories = await self.store.recall_with_vector(
                 collection=self.collection,
                 vector=vector,
-                limit=fresh_limit,
-                where_filter={"is_consolidated": False},
-                query=processed_query,  # 传递查询文本
-            )
-
-            # 使用预计算向量检索已巩固记忆
-            consolidated_memories = await self.store.recall_with_vector(
-                collection=self.collection,
-                vector=vector,
-                limit=consolidated_limit,
-                where_filter={"is_consolidated": True},
-                query=processed_query,  # 传递查询文本
+                query=processed_query,
+                limit=limit,
+                where_filter=None,
+                similarity_threshold=0.5,
             )
         else:
-            # 检索新鲜记忆
-            fresh_memories = await self.store.recall(
+            memories = await self.store.recall(
                 collection=self.collection,
                 query=processed_query,
-                limit=fresh_limit,
-                where_filter={"is_consolidated": False},
+                limit=limit,
+                where_filter=None,
+                similarity_threshold=0.5,
             )
 
-            # 检索已巩固记忆
-            consolidated_memories = await self.store.recall(
-                collection=self.collection,
-                query=processed_query,
-                limit=consolidated_limit,
-                where_filter={"is_consolidated": True},
-            )
+        # 数据迁移：补充 is_active 字段，删除 is_consolidated 字段
+        batch_updates = []
+        for mem in memories:
+            updates = {}
 
-        # 合并结果：新鲜记忆在前，已巩固记忆在后
-        all_memories = fresh_memories + consolidated_memories
+            # 如果缺少 is_active，添加默认值 False（被动记忆）
+            if not hasattr(mem, "is_active") or mem.is_active is None:
+                updates["is_active"] = False
+                mem.is_active = False
 
-        # 去重（以防有重复的记忆）
-        seen_ids = set()
-        unique_memories = []
-        for memory in all_memories:
-            if memory.id not in seen_ids:
-                seen_ids.add(memory.id)
-                unique_memories.append(memory)
+            # 删除废弃的 is_consolidated 字段（如果存在）
+            updates["is_consolidated"] = None
 
-        return unique_memories
+            if updates:
+                batch_updates.append({"id": mem.id, "updates": updates})
+
+        # 批量更新
+        if batch_updates:
+            await self.store.update_memory(self.collection, batch_updates)
+
+        return memories
 
     async def chained_recall(
         self,
         query: str,
-        entities: List[str],  # 新增: 核心实体列表
+        entities: List[str],
         per_type_limit: int = 7,
         final_limit: int = 7,
         memory_handlers: Dict[str, Any] = None,
         event=None,
         vector: Optional[List[float]] = None,
-    ) -> Dict[str, List[BaseMemory]]:  # 返回值修改为字典
+    ) -> List[BaseMemory]:
         """
-        链式多通道回忆 - 基于关联网络的多轮回忆（中文核心概念）
+        链式回忆 - 混合检索 + 实体优先 + 类型分组
 
         Args:
             query: 搜索查询字符串
-            entities: 核心实体列表，用于优先检索相关记忆。
-            per_type_limit: 每种类型第一轮最多召回数量（默认7）
-            final_limit: 最终返回的记忆数量（默认7）
-            memory_handlers: 记忆处理器字典，用于分类型召回
-            event: 消息事件（用于查询词预处理）
-            vector: 可选的预计算向量，如果提供则直接使用
+            entities: 核心实体列表
+            per_type_limit: 每种类型最多召回数量（默认7）
+            final_limit: 候选池大小（默认7，实际使用50）
+            memory_handlers: 未使用（保留兼容性）
+            event: 消息事件
+            vector: 预计算向量
 
         Returns:
-            包含 "entity_memories" 和 "regular_memories" 的字典。
+            所有相关记忆列表
         """
-        self.logger.debug(f"Chained Recall - Query: '{query}', Entities: {entities}")
-
-        # 预处理查询词（如果有查询处理器）
+        # 预处理查询词
         processed_query = query
         if self.query_processor and event:
-            processed_query = self.query_processor.process_query_for_memory(
-                query, event
-            )
+            processed_query = self.query_processor.process_query_for_memory(query, event)
 
-        # ==========================================
-        #  新增：第零轮 - 实体优先通道 (按强度)
-        # ==========================================
-        entity_memories = []
-        if entities:
-            # 调用新的辅助方法来完成这个逻辑
-            # 每个实体召回的记忆数量可以配置，这里暂定为3
-            entity_memories = await self._recall_entities_by_strength(
-                entities, per_entity_limit=3
-            )
-            self.logger.debug(f"实体优先通道召回了 {len(entity_memories)} 条记忆。")
-
-        # 获取已经找到的实体记忆的ID，用于后续去重
-        seen_ids = {mem.id for mem in entity_memories}
-
-        if not memory_handlers:
-            self.logger.warning("未提供记忆处理器，使用简单回忆")
-            # 如果没有处理器，直接使用 comprehensive_recall
-            # 此时 entity_memories 已经获取，这里获取的是常规记忆
-            regular_memories_candidates = await self.comprehensive_recall(
-                processed_query,
-                fresh_limit=final_limit,
-                consolidated_limit=final_limit,
-                event=event,
-                vector=vector,
-            )
-            # 从常规记忆中移除已在实体记忆中的ID
-            regular_memories = [mem for mem in regular_memories_candidates if mem.id not in seen_ids]
-
-            return {
-                "entity_memories": entity_memories,
-                "regular_memories": regular_memories[:final_limit],  # 确保不超过最终限制
-            }
-
-        # 存储所有召回的记忆，按类型分组
-        recalled_by_type = {}
-        all_recalled_ids = set()
-
-        # 第一轮：分类型召回
-        for memory_type, handler in memory_handlers.items():
-            if not handler:
-                continue
-
-            memories = await handler.recall(
-                processed_query, limit=per_type_limit, include_consolidated=True
-            )
-            # 从分类型召回的结果中移除已在实体记忆中的ID
-            filtered_memories = [mem for mem in memories if mem.id not in seen_ids]
-            if filtered_memories:
-                recalled_by_type[memory_type] = filtered_memories
-                all_recalled_ids.update([m.id for m in filtered_memories])
-
-        # 第二轮：从关联中补充记忆
-        for memory_type, memories in list(recalled_by_type.items()):
-            for memory in memories:
-                if not memory.associations:
-                    continue
-
-                for assoc_id, assoc_strength in memory.associations.items():
-                    # 确保关联记忆不在已见ID中（包括实体记忆和第一轮召回的记忆）
-                    if assoc_id in all_recalled_ids or assoc_id in seen_ids:
-                        continue
-
-                    try:
-                        assoc_results = self.collection.get(ids=[assoc_id])
-                        if not assoc_results["metadatas"]:
-                            continue
-
-                        metadata = assoc_results["metadatas"][0]
-                        assoc_type = metadata.get("memory_type", "知识记忆")
-
-                        assoc_memory = self._build_memory_from_metadata(
-                            assoc_id,
-                            metadata,
-                            assoc_results["documents"][0]
-                            if assoc_results["documents"]
-                            else "",
-                        )
-
-                        if assoc_memory:
-                            if assoc_type not in recalled_by_type:
-                                recalled_by_type[assoc_type] = []
-
-                            recalled_by_type[assoc_type].append(assoc_memory)
-                            all_recalled_ids.add(assoc_id)
-
-                    except Exception as e:
-                        self.logger.warning(f"获取关联记忆 {assoc_id} 失败: {str(e)}")
-                        continue
-
-        # 统计权重：出现次数 × 强度
-        memory_count = defaultdict(int)
-        memory_obj_map = {}
-
-        # 统计出现次数
-        for memory_type, memories in recalled_by_type.items():
-            for memory in memories:
-                memory_count[memory.id] += 1
-                memory_obj_map[memory.id] = memory
-
-        # 计算权重
-        weights = {}
-        for memory_id, count in memory_count.items():
-            memory = memory_obj_map[memory_id]
-            weights[memory_id] = count * memory.strength
-
-        # 加权随机抽取常规记忆
-        regular_memories = []
-        remaining_ids = list(weights.keys())
-
-        for _ in range(min(final_limit, len(remaining_ids))):
-            if not remaining_ids:
-                break
-            total_weight = sum(weights[mid] for mid in remaining_ids)
-            if total_weight == 0:  # 避免除以零
-                break
-
-            rand = random.uniform(0, total_weight)
-            cumulative = 0
-            selected_id = None
-
-            for mid in remaining_ids:
-                cumulative += weights[mid]
-                if cumulative >= rand:
-                    selected_id = mid
-                    break
-
-            if selected_id:
-                regular_memories.append(memory_obj_map[selected_id])
-                remaining_ids.remove(selected_id)
-                del weights[selected_id]  # 移除已选择的记忆权重
-
-        return {
-            "entity_memories": entity_memories,
-            "regular_memories": regular_memories,
-        }
-
-    async def _recall_entities_by_strength(
-        self, entities: List[str], per_entity_limit: int
-    ) -> List[BaseMemory]:
-        """
-        为每个实体检索出强度最高的N条记忆。
-        使用 get() + 内存过滤的方式，并按强度排序。
-        """
-        all_results = []
-        seen_ids = set()
-
-        # 1. 获取一个足够大的候选集（例如最新或全部的记忆，根据实际情况调整）
-        # 这里为了避免过度消耗内存和时间，我们获取最新的一部分记忆作为候选。
-        # 实际生产环境中，这个 limit 可能需要根据数据库大小和性能进行优化。
-        # 如果需要检索所有记忆，可以分批获取或者调整 ChromaDB 配置。
-        candidate_results = self.collection.get(
-            limit=1000,  # 获取最新的1000条记忆作为筛选池，确保覆盖面
-            include=["metadatas", "documents"],
+        # 步骤1: 混合检索获取候选池（相似度≥0.5的所有记忆）
+        candidate_pool = await self.comprehensive_recall(
+            query=processed_query,
+            limit=100,  # 足够大的限制，让相似度阈值0.5来过滤
+            event=event,
+            vector=vector,
         )
 
-        if not candidate_results or not candidate_results["ids"]:
-            self.logger.debug("实体直召：未从长期记忆获取到任何候选记忆。")
-            return []
+        # 步骤2: 从候选池提取实体记忆（每个实体最多3条）
+        entity_memories = []
+        seen_ids = set()
 
-        # 将原始数据转换为 BaseMemory 对象
-        candidate_memories = []
-        for i, mem_id in enumerate(candidate_results["ids"]):
-            metadata = candidate_results["metadatas"][i]
-            document = (
-                candidate_results["documents"][i]
-                if candidate_results["documents"]
-                else ""
-            )
-            memory_obj = self._build_memory_from_metadata(mem_id, metadata, document)
-            if memory_obj:
-                candidate_memories.append(memory_obj)
+        for entity in entities:
+            entity_count = 0
+            for mem in candidate_pool:
+                if entity in mem.tags and mem.id not in seen_ids:
+                    entity_memories.append(mem)
+                    seen_ids.add(mem.id)
+                    entity_count += 1
+                    if entity_count >= 3:  # 每个实体最多3条
+                        break
 
-        if not candidate_memories:
-            self.logger.debug("实体直召：从候选数据中未构建出有效记忆。")
-            return []
+        # 步骤3: 从候选池按类型提取记忆（每类最多7条）
+        type_memories = defaultdict(list)
 
-        # 2. 为每个实体进行筛选和排序
-        for entity_name in entities:
-            # a. 筛选出所有包含该实体tag的记忆
-            # 注意：这里我们假设 memory.tags 是一个列表，直接使用 'in' 操作
-            memories_for_entity = [
-                mem
-                for mem in candidate_memories
-                if hasattr(mem, "tags")
-                and isinstance(mem.tags, list)
-                and entity_name in mem.tags
-                and mem.id not in seen_ids
-            ]
+        for mem in candidate_pool:
+            if mem.id in seen_ids:
+                continue
+            mem_type = mem.memory_type.value if hasattr(mem.memory_type, "value") else str(mem.memory_type)
+            if len(type_memories[mem_type]) < per_type_limit:
+                type_memories[mem_type].append(mem)
+                seen_ids.add(mem.id)
 
-            # b. 按强度降序排序
-            memories_for_entity.sort(key=lambda x: x.strength, reverse=True)
+        # 步骤4: 合并所有记忆
+        all_memories = entity_memories + [mem for mems in type_memories.values() for mem in mems]
 
-            # c. 取强度最高的N条
-            top_memories = memories_for_entity[:per_entity_limit]
+        # 步骤5: 被动记忆衰减（强度-1，最低为0）
+        for mem in all_memories:
+            if not mem.is_active:  # 只对被动记忆衰减
+                new_strength = max(0, mem.strength - 1)
+                await self.store.update_memory(
+                    self.collection, mem.id, {"strength": new_strength}
+                )
 
-            all_results.extend(top_memories)
-            seen_ids.update(mem.id for mem in top_memories)  # 更新已见ID，避免重复添加
+        self.logger.debug(f"链式回忆: 实体记忆={len(entity_memories)}, 类型记忆={sum(len(v) for v in type_memories.values())}, 总计={len(all_memories)}")
 
-        return all_results
+        return all_memories
+
 
     def _build_memory_from_metadata(
         self, memory_id: str, metadata: dict, document: str
@@ -447,7 +279,7 @@ class MemoryManager:
                 tags=BaseMemory._parse_tags(metadata.get("tags", [])),
                 id=memory_id,
                 strength=metadata.get("strength", 1),
-                is_consolidated=metadata.get("is_consolidated", False),
+                is_active=metadata.get("is_active", False),
                 associations=BaseMemory._parse_associations(
                     metadata.get("associations", {})
                 ),
@@ -680,20 +512,27 @@ class MemoryManager:
 
         # 5. 合并重复记忆
         for group in merge_groups:
-            if len(group) >= 2:
-                # 获取第一个记忆作为模板
-                first_mem = self.collection.get(ids=[group[0]])
-                if first_mem and first_mem["metadatas"]:
-                    metadata = first_mem["metadatas"][0]
-                    # 使用第一个记忆的数据作为合并后的内容
-                    await self.merge_memories(
-                        memories_to_merge_ids=group,
-                        new_judgment=metadata.get("judgment", "合并记忆"),
-                        new_reasoning=metadata.get("reasoning", "合并多个相似记忆"),
-                        new_tags=metadata.get("tags", "").split(", ")
-                        if metadata.get("tags")
-                        else [],
-                    )
+            # 验证格式：必须是列表且至少包含2个元素
+            if not isinstance(group, list):
+                self.logger.warning(f"跳过无效的merge_group（非列表）: {type(group)}")
+                continue
+            if len(group) < 2:
+                self.logger.warning(f"跳过无效的merge_group（少于2个ID）: {group}")
+                continue
+
+            # 获取第一个记忆作为模板
+            first_mem = self.collection.get(ids=[group[0]])
+            if first_mem and first_mem["metadatas"]:
+                metadata = first_mem["metadatas"][0]
+                # 使用第一个记忆的数据作为合并后的内容
+                await self.merge_memories(
+                    memories_to_merge_ids=group,
+                    new_judgment=metadata.get("judgment", "合并记忆"),
+                    new_reasoning=metadata.get("reasoning", "合并多个相似记忆"),
+                    new_tags=metadata.get("tags", "").split(", ")
+                    if metadata.get("tags")
+                    else [],
+                )
 
         return created_memories  # 返回新创建的记忆对象列表
 

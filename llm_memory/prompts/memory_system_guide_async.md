@@ -189,6 +189,9 @@
 - **`feedback_data.useful_memory_ids`**: 本次交互中引用或确认有用的已存在记忆ID
 
 - **`feedback_data.merge_groups`**: 将相似旧记忆合并，生成更完善的新记忆
+  - 格式：二维数组，每个内层数组包含需要合并的记忆ID列表（至少2个）
+  - 示例：`[["记忆id1", "记忆id2"], ["记忆id3", "记忆id4", "记忆id5"]]`
+  - 如果不需要合并，请返回空数组：`[]`
 
 - **`feedback_data.new_memories`**: 从当前交互提取的全新记忆（五种类型）
 
