@@ -72,6 +72,7 @@ class ComponentFactory:
             # 1. 创建嵌入提供商
             embedding_provider = await self._create_embedding_provider()
             self._components["embedding_provider"] = embedding_provider
+            self.plugin_context.set_embedding_provider(embedding_provider)
 
             # 新增：检查嵌入提供商是否可用
             if not embedding_provider.is_available():
@@ -98,6 +99,7 @@ class ComponentFactory:
             # 2. 创建向量存储 (只有在 embedding_provider 可用时才会执行)
             vector_store = self._create_vector_store(embedding_provider)
             self._components["vector_store"] = vector_store
+            self.plugin_context.set_vector_store(vector_store)
 
             # 3. 创建认知服务
             cognitive_service = self._create_cognitive_service(vector_store)
@@ -224,6 +226,7 @@ class ComponentFactory:
             context=self.context,
             vector_store=vector_store,
             note_service=note_service,
+            plugin_context=self.plugin_context, # 传递plugin_context
             provider_id=llm_provider_id,
             cognitive_service=cognitive_service,  # 使用已创建的认知服务实例
         )

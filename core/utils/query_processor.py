@@ -7,7 +7,7 @@
 """
 
 import re
-from typing import Set
+from typing import Set, Tuple, Optional, List
 from astrbot.api.event import AstrMessageEvent
 import json
 
@@ -19,6 +19,36 @@ class QueryProcessor:
 
     def __init__(self):
         self.logger = logger
+
+    def _extract_rag_fields(self, event: AstrMessageEvent) -> dict:
+        """
+        从天使之心上下文中提取RAG字段
+
+        Args:
+            event: 消息事件
+
+        Returns:
+            包含entities, facts, keywords的字典
+        """
+        rag_fields = {"entities": [], "facts": [], "keywords": []}
+
+        try:
+            if hasattr(event, "angelheart_context") and event.angelheart_context:
+                angelheart_data = json.loads(event.angelheart_context)
+                secretary_decision = angelheart_data.get("secretary_decision", {})
+
+                # 提取RAG字段
+                for field in rag_fields.keys():
+                    field_value = secretary_decision.get(field, [])
+                    if isinstance(field_value, list):
+                        rag_fields[field] = [str(item).strip() for item in field_value if item and str(item).strip()]
+                    elif isinstance(field_value, str) and field_value.strip():
+                        rag_fields[field] = [field_value.strip()]
+
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            self.logger.debug(f"无法提取RAG字段: {e}")
+
+        return rag_fields
 
     def _extract_assistant_names(self, event: AstrMessageEvent) -> Set[str]:
         """
@@ -138,13 +168,37 @@ class QueryProcessor:
 
         return text.strip()
 
+    def _build_rag_query(self, rag_fields: dict) -> str:
+        """
+        基于RAG字段构建统一的检索词
+
+        Args:
+            rag_fields: 包含entities, facts, keywords的字典
+
+        Returns:
+            构建的检索词字符串
+        """
+        query_parts = []
+
+        # 按优先级组合字段：entities > facts > keywords
+        for field_name in ["entities", "facts", "keywords"]:
+            field_values = rag_fields.get(field_name, [])
+            if field_values:
+                query_parts.extend([str(value) for value in field_values if value and str(value).strip()])
+
+        # 用空格连接所有字段值
+        rag_query = " ".join(query_parts)
+
+        return rag_query.strip()
+
     def process_query(self, query: str, event: AstrMessageEvent) -> str:
         """
         统一处理检索词的预处理流程
+        优先使用RAG字段，如果不存在则使用原始查询
 
         Args:
             query: 原始查询字符串
-            event: 消息事件（用于提取助理信息）
+            event: 消息事件（用于提取RAG字段和助理信息）
 
         Returns:
             处理后的检索词字符串
@@ -156,37 +210,80 @@ class QueryProcessor:
         self.logger.debug(f"开始处理查询词: '{query}'")
 
         try:
-            # 步骤1: 提取助理名字并过滤
+            # 步骤1: 提取RAG字段并构建检索词
+            rag_fields = self._extract_rag_fields(event)
+            rag_query = self._build_rag_query(rag_fields)
+
+            # 步骤2: 优先使用RAG查询，如果为空则使用原始查询
+            final_query = rag_query if rag_query else original_query
+
+            # 步骤3: 过滤助理名字
             assistant_names = self._extract_assistant_names(event)
             if assistant_names:
-                query = self._filter_assistant_names(query, assistant_names)
-                query = self._clean_text(query)
+                final_query = self._filter_assistant_names(final_query, assistant_names)
+                final_query = self._clean_text(final_query)
 
-            # 步骤2: 从后往前保留500token
-            if query.strip():
-                query = self._truncate_text(query, 500)
-                query = self._clean_text(query)
+            # 步骤4: 从后往前保留500token
+            if final_query.strip():
+                final_query = self._truncate_text(final_query, 500)
+                final_query = self._clean_text(final_query)
 
-            # 记录简化的查询词日志
-            if original_query != query:
+            # 记录查询词处理日志
+            if original_query != final_query:
                 truncated_original = original_query[:50] + "..." if len(original_query) > 50 else original_query
-                truncated_result = query[:50] + "..." if len(query) > 50 else query
-                self.logger.debug(f"查询词预处理: '{truncated_original}' -> '{truncated_result}'")
+                truncated_result = final_query[:50] + "..." if len(final_query) > 50 else final_query
+                rag_info = f"RAG: {rag_query[:30]}..." if len(rag_query) > 30 else f"RAG: {rag_query}" if rag_query else "RAG: 空"
+                self.logger.debug(f"查询词预处理: '{truncated_original}' -> '{truncated_result}' ({rag_info})")
             else:
-                truncated_result = query[:50] + "..." if len(query) > 50 else query
+                truncated_result = final_query[:50] + "..." if len(final_query) > 50 else final_query
                 self.logger.debug(f"查询词预处理: '{truncated_result}'")
 
-            return query
+            return final_query
 
         except Exception as e:
             self.logger.error(f"查询词预处理失败: {e}")
             # 返回原查询作为降级方案
             return original_query
 
+    async def _precompute_rag_vector(self, rag_query: str, event: AstrMessageEvent) -> Optional[List[float]]:
+        """
+        预计算RAG查询的向量
+
+        Args:
+            rag_query: RAG查询字符串
+            event: 消息事件
+
+        Returns:
+            预计算的向量，如果失败返回None
+        """
+        if not rag_query.strip():
+            return None
+
+        # 从event中获取plugin_context
+        # 假设event中包含plugin_context
+        from ..plugin_context import PluginContext
+        plugin_context: Optional[PluginContext] = getattr(event, 'plugin_context', None)
+
+        if plugin_context is None:
+            self.logger.debug("无法从事件中获取plugin_context，跳过RAG向量预计算")
+            return None
+
+        vector_store = plugin_context.get_vector_store()
+        if vector_store is None:
+            self.logger.debug("plugin_context中未找到有效的vector_store，跳过RAG向量预计算")
+            return None
+
+        try:
+            # 使用embed_single_document方法进行向量化
+            vector = await vector_store.embed_single_document(rag_query, is_query=True)
+            return vector
+        except Exception as e:
+            self.logger.debug(f"RAG向量预计算失败: {e}")
+            return None
+
     def process_query_for_memory(self, query: str, event: AstrMessageEvent) -> str:
         """
-        专门为记忆检索优化的查询词处理
-        比通用处理更保守，保留更多上下文
+        记忆检索的查询词处理
 
         Args:
             query: 原始查询字符串
@@ -195,14 +292,12 @@ class QueryProcessor:
         Returns:
             处理后的查询词
         """
-        # 对于记忆检索，过滤更保守一些
-        # 主要过滤助理名字，但保留更多语义信息
+        # 记忆检索使用统一的RAG字段处理逻辑
         return self.process_query(query, event)
 
     def process_query_for_notes(self, query: str, event: AstrMessageEvent) -> str:
         """
-        专门为笔记检索优化的查询词处理
-        更积极的过滤以提高检索精确性
+        笔记检索的查询词处理
 
         Args:
             query: 原始查询字符串
@@ -211,8 +306,38 @@ class QueryProcessor:
         Returns:
             处理后的查询词
         """
-        # 对于笔记检索，可以更积极地过滤
+        # 笔记检索也使用统一的RAG字段处理逻辑
         return self.process_query(query, event)
+
+    async def process_query_for_memory_with_vector(self, query: str, event: AstrMessageEvent) -> Tuple[str, Optional[List[float]]]:
+        """
+        记忆检索的查询词处理（带向量预计算）
+
+        Args:
+            query: 原始查询字符串
+            event: 消息事件
+
+        Returns:
+            (处理后的查询词, 预计算的向量)
+        """
+        processed_query = self.process_query_for_memory(query, event)
+        vector = await self._precompute_rag_vector(processed_query, event)
+        return processed_query, vector
+
+    async def process_query_for_notes_with_vector(self, query: str, event: AstrMessageEvent) -> Tuple[str, Optional[List[float]]]:
+        """
+        笔记检索的查询词处理（带向量预计算）
+
+        Args:
+            query: 原始查询字符串
+            event: 消息事件
+
+        Returns:
+            (处理后的查询词, 预计算的向量)
+        """
+        processed_query = self.process_query_for_notes(query, event)
+        vector = await self._precompute_rag_vector(processed_query, event)
+        return processed_query, vector
 
 
 # 全局单例实例

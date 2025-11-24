@@ -5,7 +5,7 @@
 为每种记忆类型提供专门的接口，同时支持跨记忆类型的复杂查询。
 """
 
-from typing import List
+from typing import List, Optional
 
 # 导入日志记录器
 try:
@@ -167,12 +167,19 @@ class CognitiveService:
         return await self.memory_manager.consolidate_memories()
 
     async def chained_recall(
-        self, query: str, per_type_limit: int = 7, final_limit: int = 7
+        self, query: str, per_type_limit: int = 7, final_limit: int = 7, vector: Optional[List[float]] = None
     ) -> List[BaseMemory]:
-        """链式多通道回忆 - 基于关联网络的多轮回忆"""
+        """链式多通道回忆 - 基于关联网络的多轮回忆
+
+        Args:
+            query: 查询字符串
+            per_type_limit: 每种记忆类型的限制
+            final_limit: 最终结果限制
+            vector: 预计算的查询向量（可选）
+        """
         memory_handlers = self.memory_handler_factory.handlers
         return await self.memory_manager.chained_recall(
-            query, per_type_limit, final_limit, memory_handlers
+            query, per_type_limit, final_limit, memory_handlers, vector=vector
         )
 
     async def feedback(

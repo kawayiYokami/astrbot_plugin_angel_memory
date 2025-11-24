@@ -5,7 +5,7 @@
 让下游服务只需要依赖PluginContext即可获得所有必要资源。
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 try:
@@ -16,6 +16,8 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 from ..llm_memory.utils.path_manager import PathManager
+from ..llm_memory.components.vector_store import VectorStore
+from ..llm_memory.components.embedding_provider import EmbeddingProvider
 
 
 class PluginContext:
@@ -44,6 +46,12 @@ class PluginContext:
         self.config = config or {}
         self.base_data_dir = base_data_dir
         self.logger = logger
+
+        # 同步资源
+        self.path_manager: PathManager = None
+        # 异步资源，由ComponentFactory创建后设置
+        self.embedding_provider: EmbeddingProvider = None
+        self.vector_store: VectorStore = None
 
         # 初始化插件资源
         self._setup_plugin_resources()
@@ -152,6 +160,22 @@ class PluginContext:
     def get_current_provider(self) -> str:
         """获取当前供应商ID"""
         return self.path_manager.get_current_provider()
+
+    def get_embedding_provider(self) -> Optional[EmbeddingProvider]:
+        """获取由ComponentFactory创建的嵌入提供商实例"""
+        return self.embedding_provider
+
+    def get_vector_store(self) -> Optional[VectorStore]:
+        """获取由ComponentFactory创建的向量存储实例"""
+        return self.vector_store
+
+    def set_embedding_provider(self, provider: EmbeddingProvider):
+        """由ComponentFactory设置嵌入提供商实例"""
+        self.embedding_provider = provider
+
+    def set_vector_store(self, store: VectorStore):
+        """由ComponentFactory设置向量存储实例"""
+        self.vector_store = store
 
     # === 验证方法 ===
 

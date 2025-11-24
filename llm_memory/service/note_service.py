@@ -7,7 +7,7 @@
 
 import asyncio
 import concurrent.futures
-from typing import List, Dict
+from typing import List, Dict, Optional
 from pathlib import Path
 
 from ..models.note_models import NoteData
@@ -185,6 +185,7 @@ class NoteService:
         max_tokens: int = 10000,
         recall_count: int = 100,
         tag_filter: List[str] = None,
+        vector: Optional[List[float]] = None,
     ) -> List[Dict]:
         """
         基于token数量限制搜索笔记
@@ -194,6 +195,7 @@ class NoteService:
             max_tokens: 最大token数限制
             recall_count: 候选结果数量
             tag_filter: 标签过滤
+            vector: 预计算的向量（可选）
 
         Returns:
             搜索结果列表（保持相关性排序，按token限制动态截取）
@@ -201,7 +203,7 @@ class NoteService:
         try:
             # 使用现有的混合检索算法获取高质量排序结果
             candidates = await self._hybrid_search(
-                query, recall_count=recall_count, max_results=recall_count
+                query, recall_count=recall_count, max_results=recall_count, vector=vector
             )
 
             # 如果候选结果为空，直接返回
@@ -246,6 +248,7 @@ class NoteService:
         max_results: int = 10,
         recall_count: int = 100,
         threshold: float = 0.5,
+        vector: Optional[List[float]] = None,
     ) -> List[Dict]:
         """
         两阶段混合检索: 先过滤，后重排。
@@ -255,6 +258,7 @@ class NoteService:
             max_results: 最大结果数
             recall_count: 第一阶段召回数量
             threshold: 内容相似度过滤阈值
+            vector: 预计算的向量（可选）
 
         Returns:
             搜索结果列表
@@ -262,9 +266,19 @@ class NoteService:
 
         # 1. 第一阶段：过滤 (Filtering)
         # 使用 VectorStore 的笔记专用检索方法进行向量搜索
-        recall_results = await self.vector_store.search_notes(
-            collection=self.main_collection, query=query, limit=recall_count
-        )
+        if vector is not None:
+            # 使用预计算的向量
+            recall_results = await self.vector_store.search_notes_with_vector(
+                collection=self.main_collection,
+                vector=vector,
+                query=query,
+                limit=recall_count,
+            )
+        else:
+            # 使用文本查询
+            recall_results = await self.vector_store.search_notes(
+                collection=self.main_collection, query=query, limit=recall_count
+            )
 
         # 处理无结果情况
         if not recall_results:

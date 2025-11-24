@@ -116,6 +116,7 @@ class MemoryManager:
         fresh_limit: int = None,
         consolidated_limit: int = None,
         event=None,
+        vector: Optional[List[float]] = None,
     ) -> List[BaseMemory]:
         """
         实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容。
@@ -125,6 +126,7 @@ class MemoryManager:
             fresh_limit: 新鲜记忆的最大返回数量
             consolidated_limit: 已巩固记忆的最大返回数量
             event: 消息事件（用于查询词预处理）
+            vector: 可选的预计算向量，如果提供则直接使用
 
         Returns:
             合并后的记忆列表，新鲜记忆优先
@@ -141,21 +143,41 @@ class MemoryManager:
         if consolidated_limit is None:
             consolidated_limit = system_config.consolidated_recall_limit
 
-        # 检索新鲜记忆
-        fresh_memories = await self.store.recall(
-            collection=self.collection,
-            query=processed_query,
-            limit=fresh_limit,
-            where_filter={"is_consolidated": False},
-        )
+        # 如果提供了预计算向量，使用向量检索；否则使用文本检索
+        if vector is not None:
+            # 使用预计算向量检索新鲜记忆
+            fresh_memories = await self.store.recall_with_vector(
+                collection=self.collection,
+                vector=vector,
+                limit=fresh_limit,
+                where_filter={"is_consolidated": False},
+                query=processed_query,  # 传递查询文本
+            )
 
-        # 检索已巩固记忆
-        consolidated_memories = await self.store.recall(
-            collection=self.collection,
-            query=processed_query,
-            limit=consolidated_limit,
-            where_filter={"is_consolidated": True},
-        )
+            # 使用预计算向量检索已巩固记忆
+            consolidated_memories = await self.store.recall_with_vector(
+                collection=self.collection,
+                vector=vector,
+                limit=consolidated_limit,
+                where_filter={"is_consolidated": True},
+                query=processed_query,  # 传递查询文本
+            )
+        else:
+            # 检索新鲜记忆
+            fresh_memories = await self.store.recall(
+                collection=self.collection,
+                query=processed_query,
+                limit=fresh_limit,
+                where_filter={"is_consolidated": False},
+            )
+
+            # 检索已巩固记忆
+            consolidated_memories = await self.store.recall(
+                collection=self.collection,
+                query=processed_query,
+                limit=consolidated_limit,
+                where_filter={"is_consolidated": True},
+            )
 
         # 合并结果：新鲜记忆在前，已巩固记忆在后
         all_memories = fresh_memories + consolidated_memories
@@ -177,6 +199,7 @@ class MemoryManager:
         final_limit: int = 7,
         memory_handlers: Dict[str, object] = None,
         event=None,
+        vector: Optional[List[float]] = None,
     ) -> List[BaseMemory]:
         """
         链式多通道回忆 - 基于关联网络的多轮回忆（中文核心概念）
@@ -196,6 +219,7 @@ class MemoryManager:
             final_limit: 最终返回的记忆数量（默认7）
             memory_handlers: 记忆处理器字典，用于分类型召回
             event: 消息事件（用于查询词预处理）
+            vector: 可选的预计算向量，如果提供则直接使用
 
         Returns:
             加权随机抽取后的记忆列表（最多 final_limit 个）
@@ -214,6 +238,7 @@ class MemoryManager:
                 fresh_limit=final_limit,
                 consolidated_limit=final_limit,
                 event=event,
+                vector=vector,  # 传递向量参数
             )
 
         # 第一轮：分类型召回

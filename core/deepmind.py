@@ -57,6 +57,7 @@ class DeepMind:
         context,
         vector_store,
         note_service,
+        plugin_context, # 新增
         provider_id: str = "",
         cognitive_service=None,
     ):
@@ -68,6 +69,7 @@ class DeepMind:
             context: 聊天机器人的大脑（主意识）
             vector_store: 记忆数据库（存所有长期记忆的地方）
             note_service: 笔记管理器（重要信息专门存放处）
+            plugin_context: 插件上下文（新增）
             provider_id: AI助手的ID，没有的话潜意识就睡觉不干活
             cognitive_service: 记忆管理服务（可选，如果外面已经有了就直接用）
         """
@@ -79,6 +81,8 @@ class DeepMind:
         self.context = context
         self.vector_store = vector_store
         self.provider_id = provider_id
+        self.plugin_context = plugin_context # 保存引用
+
         # 从全局容器获取logger
         self.logger = logger
         self.json_parser = JsonParser()
@@ -195,7 +199,7 @@ class DeepMind:
             return None
 
     async def _retrieve_memories_and_notes(
-        self, event: AstrMessageEvent, query: str
+        self, event: AstrMessageEvent, query: str, precompute_vectors: bool = False
     ) -> Dict[str, Any]:
         """
         检索长期记忆和候选笔记
@@ -203,12 +207,17 @@ class DeepMind:
         Args:
             event: 消息事件
             query: 查询字符串
+            precompute_vectors: 是否预计算向量
 
         Returns:
             包含 long_term_memories, candidate_notes, note_id_mapping, secretary_decision 的字典
         """
         # 1. 预处理记忆检索查询词
-        memory_query = self.query_processor.process_query_for_memory(query, event)
+        if precompute_vectors:
+            memory_query, memory_vector = await self.query_processor.process_query_for_memory_with_vector(query, event)
+        else:
+            memory_query = self.query_processor.process_query_for_memory(query, event)
+            memory_vector = None
 
         # 1. 使用链式召回从长期记忆检索相关记忆
         long_term_memories = []
@@ -218,6 +227,7 @@ class DeepMind:
                     query=memory_query,
                     per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
                     final_limit=self.CHAINED_RECALL_FINAL_LIMIT,
+                    vector=memory_vector  # 传递预计算向量
                 )
             except Exception as e:
                 self.logger.warning(f"链式召回失败，跳过记忆检索: {e}")
@@ -232,12 +242,13 @@ class DeepMind:
         except (json.JSONDecodeError, KeyError):
             self.logger.debug("无法获取 secretary_decision 信息")
 
-        # 3. 优先使用天使之心核心话题进行笔记检索
-        core_topic = self._extract_core_topic(event)
-        note_query = core_topic if core_topic and core_topic.strip() else query
-
-        # 应用统一的检索词预处理
-        note_query = self.query_processor.process_query_for_notes(note_query, event)
+        # 3. 使用统一的RAG字段进行笔记检索
+        # 直接使用原始query，让QueryProcessor统一处理RAG字段
+        if precompute_vectors:
+            note_query, note_vector = await self.query_processor.process_query_for_notes_with_vector(query, event)
+        else:
+            note_query = self.query_processor.process_query_for_notes(query, event)
+            note_vector = None
 
         # 4. 获取候选笔记（用于小模型的选择）
         candidate_notes = []
@@ -246,6 +257,7 @@ class DeepMind:
                 query=note_query,
                 max_tokens=self.small_model_note_budget,
                 recall_count=self.NOTE_CANDIDATE_COUNT,
+                vector=note_vector  # 传递预计算向量
             )
 
         # 5. 创建短ID到完整ID的映射（用于后续上下文扩展）
@@ -269,7 +281,7 @@ class DeepMind:
             "note_id_mapping": note_id_mapping,
             "memory_id_mapping": memory_id_mapping,
             "secretary_decision": secretary_decision,
-            "core_topic": core_topic,
+            "core_topic": secretary_decision.get("topic", ""),
         }
 
 
@@ -435,29 +447,6 @@ class DeepMind:
 
         self.logger.debug("[feedback_queue] session=%s 反馈任务完成", session_id)
 
-    def _extract_core_topic(self, event: AstrMessageEvent) -> str:
-        """
-        从天使之心上下文中提取核心话题
-
-        Args:
-            event: 消息事件
-
-        Returns:
-            核心话题字符串，如果没有则返回空字符串
-        """
-        try:
-            if hasattr(event, "angelheart_context"):
-                angelheart_data = json.loads(event.angelheart_context)
-                secretary_decision = angelheart_data.get("secretary_decision", {})
-                core_topic = secretary_decision.get("topic", "")
-
-                if core_topic and core_topic.strip():
-                    return core_topic.strip()
-        except (json.JSONDecodeError, KeyError) as e:
-            self.logger.debug(f"无法提取核心话题: {e}")
-
-        return ""
-
     def _clean_note_content(self, content: str) -> str:
         """
         清理笔记内容，保留单个换行符，去除双换行符
@@ -550,8 +539,11 @@ class DeepMind:
         truncated_query = query[:50] + "..." if len(query) > 50 else query
         self.logger.debug(f"处理会话 {session_id}，查询内容: {truncated_query}")
 
+        # 核心修复：将 plugin_context 附加到 event 对象
+        event.plugin_context = self.plugin_context
+
         # 检索长期记忆和候选笔记
-        retrieval_data = await self._retrieve_memories_and_notes(event, query)
+        retrieval_data = await self._retrieve_memories_and_notes(event, query, precompute_vectors=True)
         long_term_memories = retrieval_data["long_term_memories"]
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]

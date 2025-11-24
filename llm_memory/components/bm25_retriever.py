@@ -62,6 +62,11 @@ def rerank_with_bm25(
     """
     if not candidates:
         return []
+    
+    # 如果查询为空，直接返回空列表，避免不必要的计算
+    if not query or not query.strip():
+        logger.debug("查询为空，跳过 BM25 精排。")
+        return []
 
     try:
         # 1. 准备数据
@@ -83,7 +88,7 @@ def rerank_with_bm25(
         tokenized_query = _tokenize_text(query)
 
         if not tokenized_query:
-            logger.warning(f"查询 '{query}' 分词后为空，无法进行 BM25 精排。")
+            logger.debug(f"查询 '{query}' 分词后为空，跳过 BM25 精排。")
             return []
 
         # 3. 建立临时索引

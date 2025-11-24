@@ -8,7 +8,7 @@ import chromadb
 from typing import List, Optional, Tuple
 import traceback
 from pathlib import Path
-from .embedding_provider import EmbeddingProvider, LocalEmbeddingProvider
+from .embedding_provider import EmbeddingProvider
 from ..utils.path_manager import PathManager
 from .tag_manager import TagManager
 
@@ -59,14 +59,18 @@ class VectorStore:
 
         # 初始化嵌入提供商
         if embedding_provider is None:
-            self.logger.info("未指定嵌入提供商,使用默认本地模型")
-            self.embedding_provider = LocalEmbeddingProvider(
-                system_config.embedding_model
-            )
+            # 不再强制降级，而是抛出明确错误
+            self.logger.error("未指定嵌入提供商，无法初始化VectorStore")
+            raise ValueError("VectorStore初始化需要有效的embedding_provider参数")
         else:
             self.embedding_provider = embedding_provider
             provider_info = embedding_provider.get_model_info()
             self.logger.info(f"使用嵌入提供商: {provider_info}")
+
+            # 验证提供商的可用性
+            if not embedding_provider.is_available():
+                self.logger.error(f"指定的嵌入提供商不可用: {provider_info}")
+                raise ValueError(f"指定的嵌入提供商不可用: {provider_info.get('model_name', 'Unknown')}")
 
         # 根据提供商类型确定数据库路径
         if db_path is None:
@@ -268,6 +272,80 @@ class VectorStore:
         # 构建查询参数 - 获取更多候选结果用于阈值过滤
         query_params = {
             "query_embeddings": [query_embedding],
+            "n_results": limit * 3,  # 获取3倍候选结果进行过滤
+        }
+
+        # 如果提供了过滤器,则添加到查询参数
+        if where_filter:
+            if len(where_filter) == 1:
+                query_params["where"] = where_filter
+            else:
+                query_params["where"] = {
+                    "$and": [{k: v} for k, v in where_filter.items()]
+                }
+
+        # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
+        results = collection.query(**query_params)
+
+        # 将结果转换为记忆对象,并计算相似度分数进行过滤
+        vector_results = []
+        if results and results["metadatas"] and len(results["metadatas"]) > 0:
+            distances = results.get("distances", [[]])[0]
+            metadatas = results["metadatas"][0]
+
+            for idx, meta in enumerate(metadatas):
+                if meta and idx < len(distances):
+                    # 计算相似度分数
+                    distance = distances[idx]
+                    similarity = max(0.0, 1.0 - (distance / 2.0))
+
+                    # 应用相似度阈值过滤
+                    if similarity >= similarity_threshold:
+                        memory = BaseMemory.from_dict(meta)
+                        memory.similarity = similarity  # 设置相似度属性
+                        vector_results.append(memory)
+
+                        # 只记录前3个结果的调试信息
+                        if len(vector_results) <= 3:
+                            self.logger.debug(
+                                f"记忆{len(vector_results) - 1}: distance={distance:.4f}, similarity={similarity:.4f}"
+                            )
+
+                    # 达到所需数量时停止
+                    if len(vector_results) >= limit:
+                        break
+
+        # 混合检索:为记忆系统提供BM25精排(强制启用)
+        final_results = self._rerank_with_bm25(query, vector_results, collection, limit)
+
+        return final_results
+
+    async def recall_with_vector(
+        self,
+        collection,
+        vector: List[float],
+        query: str,
+        limit: int = 10,
+        where_filter: Optional[dict] = None,
+        similarity_threshold: float = 0.6,
+    ) -> List[BaseMemory]:
+        """
+        使用预计算的向量回忆相关记忆,支持复杂的元数据过滤.
+
+        Args:
+            collection: 目标 ChromaDB 集合.
+            vector: 预计算的查询向量
+            query: 原始查询文本，用于BM25精排
+            limit: 返回结果的最大数量
+            where_filter: 可选的元数据过滤器字典 (e.g., {"memory_type": "EventMemory", "is_consolidated": False})
+            similarity_threshold: 相似度阈值(0.0-1.0),低于此阈值的结果将被过滤
+
+        Returns:
+            相关的记忆对象列表(BaseMemory 的子类)
+        """
+        # 构建查询参数 - 获取更多候选结果用于阈值过滤
+        query_params = {
+            "query_embeddings": [vector],
             "n_results": limit * 3,  # 获取3倍候选结果进行过滤
         }
 
@@ -607,6 +685,39 @@ class VectorStore:
         if embeddings:
             return embeddings[0]
         return None
+
+    async def embed_text_direct(self, text: str, is_query: bool = False, timeout: int = 3) -> Optional[List[float]]:
+        """
+        直接向量化文本，不经过复杂处理和缓存
+
+        Args:
+            text: 需要向量化的文本
+            is_query: 是否为查询场景，影响超时和重试策略
+            timeout: 查询场景下的超时时间(秒)
+
+        Returns:
+            文本的向量表示，失败时返回None
+        """
+        if not text or not text.strip():
+            return None
+
+        # 直接调用底层的嵌入提供商，避免额外处理
+        try:
+            if is_query:
+                # 查询场景：使用超时控制
+                import asyncio
+                embeddings = await asyncio.wait_for(
+                    self.embedding_provider.embed_documents([text]),
+                    timeout=timeout
+                )
+                return embeddings[0] if embeddings else None
+            else:
+                # 存储场景：直接调用
+                embeddings = await self.embedding_provider.embed_documents([text])
+                return embeddings[0] if embeddings else None
+        except Exception as e:
+            self.logger.debug(f"直接向量化失败: {e}")
+            return None
 
 
 
@@ -988,12 +1099,83 @@ class VectorStore:
 
         # 笔记使用无状态BM25精排,不需要预先建立索引
 
+    async def search_notes_with_vector(
+        self,
+        collection,
+        vector: List[float],
+        query: str,
+        limit: int = 10,
+        where_filter: Optional[dict] = None,
+    ) -> List[NoteData]:
+        """
+        使用预计算的向量搜索笔记,返回 NoteData 对象列表.
+
+        Args:
+            collection: 目标 ChromaDB 集合
+            vector: 预计算的查询向量
+            query: 原始查询文本，用于BM25精排
+            limit: 返回结果的最大数量
+            where_filter: 可选的元数据过滤器
+
+        Returns:
+            相关的笔记对象列表(NoteData)
+        """
+        # 构建查询参数
+        query_params = {"query_embeddings": [vector], "n_results": limit}
+
+        # 如果提供了过滤器,则添加到查询参数
+        if where_filter:
+            if len(where_filter) == 1:
+                query_params["where"] = where_filter
+            else:
+                query_params["where"] = {
+                    "$and": [{k: v} for k, v in where_filter.items()]
+                }
+
+        # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
+        results = collection.query(**query_params)
+
+        # 将结果转换为笔记对象,并保留相似度分数
+        vector_results = []
+        if results and results["metadatas"] and len(results["metadatas"]) > 0:
+            distances = results.get("distances", [[]])[0]
+            metadatas = results["metadatas"][0]
+
+            for idx, meta in enumerate(metadatas):
+                if meta:
+                    try:
+                        note = NoteData.from_dict(meta)
+                        # 将距离转换为相似度分数
+                        if idx < len(distances):
+                            distance = distances[idx]
+                            similarity = max(0.0, 1.0 - (distance / 2.0))
+                            if idx < 3:
+                                self.logger.debug(
+                                    f"笔记{idx}: distance={distance:.4f}, similarity={similarity:.4f}"
+                                )
+                            note.similarity = similarity
+                        else:
+                            note.similarity = 0.0
+                        vector_results.append(note)
+                    except Exception as e:
+                        self.logger.warning(f"无法创建笔记对象,跳过: {e}")
+                        self.logger.error(f"导致创建失败的原始 metadata: {meta}")
+                        continue
+
+        # 混合检索:结合BM25结果(强制启用)
+        final_results = self._rerank_notes_with_bm25(
+            query, vector_results, collection, limit
+        )
+
+        return final_results
+
     async def search_notes(
         self,
         collection,
         query: str,
         limit: int = 10,
         where_filter: Optional[dict] = None,
+        vector: Optional[List[float]] = None,
     ) -> List[NoteData]:
         """
         搜索笔记,返回 NoteData 对象列表.
@@ -1003,10 +1185,21 @@ class VectorStore:
             query: 搜索查询字符串
             limit: 返回结果的最大数量
             where_filter: 可选的元数据过滤器
+            vector: 可选的预计算向量,如果提供则直接使用,否则向量化查询文本
 
         Returns:
             相关的笔记对象列表(NoteData)
         """
+        # 如果提供了预计算向量,直接使用向量搜索
+        if vector is not None:
+            return await self.search_notes_with_vector(
+                collection=collection,
+                vector=vector,
+                limit=limit,
+                where_filter=where_filter,
+                query=query,  # 传递原始查询文本
+            )
+
         # 显式生成查询向量(异步调用)，指明这是查询场景
         query_embedding = await self.embed_single_document(query, is_query=True)
 
