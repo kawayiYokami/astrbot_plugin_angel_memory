@@ -801,7 +801,11 @@ class EmbeddingProviderFactory:
         # API模式下必须提供provider_id
         if not provider_id:
             raise ValueError(
-                "API模式下必须指定 provider_id，或将 enable_local_embedding 设置为 True"
+                "错误：嵌入模型提供商ID (provider_id) 为空，且本地嵌入已禁用 (enable_local_embedding=False)。\n"
+                "解决方案：\n"
+                "1. 在配置中设置 'astrbot_embedding_provider_id' 为有效的API提供商ID，或\n"
+                "2. 将 'enable_local_embedding' 设置为 True 以使用本地模型，或\n"
+                "3. 在系统中注册嵌入提供商并配置其ID。"
             )
 
         # 尝试使用API提供商

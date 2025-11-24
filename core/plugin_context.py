@@ -48,10 +48,10 @@ class PluginContext:
         self.logger = logger
 
         # 同步资源
-        self.path_manager: PathManager = None
+        self.path_manager: Optional[PathManager] = None
         # 异步资源，由ComponentFactory创建后设置
-        self.embedding_provider: EmbeddingProvider = None
-        self.vector_store: VectorStore = None
+        self.embedding_provider: Optional[EmbeddingProvider] = None
+        self.vector_store: Optional[VectorStore] = None
 
         # 初始化插件资源
         self._setup_plugin_resources()

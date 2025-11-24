@@ -217,6 +217,23 @@ class QueryProcessor:
             # 步骤2: 优先使用RAG查询，如果为空则使用原始查询
             final_query = rag_query if rag_query else original_query
 
+            # --- 新增的逻辑：根据长度决定是否进行进一步预处理 ---
+            # 定义一个阈值，如果查询词已经很短，就不需要进一步过滤和截断
+            # 这个阈值需要根据实际情况调整。考虑到RAG查询通常是高度精炼的关键词和实体，
+            # 短于该阈值的RAG查询，我们认为它已经足够精准，无需额外处理。
+            PREPROCESS_THRESHOLD_CHARACTERS = 100 # 例如100个字符，可调整
+
+            # 只有当rag_query非空且其长度小于阈值时，才跳过后续预处理
+            if rag_query and len(final_query.strip()) <= PREPROCESS_THRESHOLD_CHARACTERS:
+                self.logger.debug(f"RAG查询词 '{final_query[:50]}...' 长度({len(final_query.strip())})小于阈值({PREPROCESS_THRESHOLD_CHARACTERS})，跳过名字过滤和截断。")
+                # 直接记录日志并返回
+                truncated_original = original_query[:50] + "..." if len(original_query) > 50 else original_query
+                truncated_result = final_query[:50] + "..." if len(final_query) > 50 else final_query
+                rag_info = f"RAG: {rag_query[:30]}..." if len(rag_query) > 30 else f"RAG: {rag_query}" if rag_query else "RAG: 空"
+                self.logger.debug(f"查询词预处理: '{truncated_original}' -> '{truncated_result}' ({rag_info})")
+                return final_query
+
+            # --- 原有的逻辑：继续进行预处理 ---
             # 步骤3: 过滤助理名字
             assistant_names = self._extract_assistant_names(event)
             if assistant_names:
