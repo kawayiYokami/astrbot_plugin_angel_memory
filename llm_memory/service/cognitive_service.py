@@ -5,7 +5,7 @@
 为每种记忆类型提供专门的接口，同时支持跨记忆类型的复杂查询。
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 # 导入日志记录器
 try:
@@ -167,19 +167,31 @@ class CognitiveService:
         return await self.memory_manager.consolidate_memories()
 
     async def chained_recall(
-        self, query: str, per_type_limit: int = 7, final_limit: int = 7, vector: Optional[List[float]] = None
-    ) -> List[BaseMemory]:
+        self, query: str, entities: List[str], per_type_limit: int = 7, final_limit: int = 7, vector: Optional[List[float]] = None, event=None, memory_handlers: Dict[str, Any] = None
+    ) -> Dict[str, List[BaseMemory]]:
         """链式多通道回忆 - 基于关联网络的多轮回忆
 
         Args:
             query: 查询字符串
+            entities: 核心实体列表
             per_type_limit: 每种记忆类型的限制
             final_limit: 最终结果限制
             vector: 预计算的查询向量（可选）
+            event: 消息事件
+            memory_handlers: 记忆处理器字典
         """
-        memory_handlers = self.memory_handler_factory.handlers
+        # 如果 memory_handlers 没有显式传入，则从 factory 获取
+        if memory_handlers is None:
+            memory_handlers = self.memory_handler_factory.handlers
+            
         return await self.memory_manager.chained_recall(
-            query, per_type_limit, final_limit, memory_handlers, vector=vector
+            query=query, 
+            entities=entities, 
+            per_type_limit=per_type_limit, 
+            final_limit=final_limit, 
+            memory_handlers=memory_handlers, 
+            vector=vector,
+            event=event
         )
 
     async def feedback(

@@ -20,7 +20,7 @@ class QueryProcessor:
     def __init__(self):
         self.logger = logger
 
-    def _extract_rag_fields(self, event: AstrMessageEvent) -> dict:
+    def extract_rag_fields(self, event: AstrMessageEvent) -> dict:
         """
         从天使之心上下文中提取RAG字段
 
@@ -211,7 +211,7 @@ class QueryProcessor:
 
         try:
             # 步骤1: 提取RAG字段并构建检索词
-            rag_fields = self._extract_rag_fields(event)
+            rag_fields = self.extract_rag_fields(event)
             rag_query = self._build_rag_query(rag_fields)
 
             # 步骤2: 优先使用RAG查询，如果为空则使用原始查询

@@ -116,16 +116,14 @@ class DeepMind:
         """初始化记忆系统"""
         # 如果已经有了注入的认知服务，直接使用
         if self.memory_system is not None:
-            self.logger.info("Using injected CognitiveService instance")
             return
 
         # 否则创建新的认知服务实例（向后兼容）
         try:
             self.memory_system = CognitiveService(vector_store=self.vector_store)
-            self.logger.info("Memory system initialized successfully")
 
         except Exception as e:
-            self.logger.error(f"Memory system initialization failed: {e}")
+            self.logger.error(f"记忆系统初始化失败: {e}")
             self.memory_system = None
 
     def is_enabled(self) -> bool:
@@ -143,27 +141,21 @@ class DeepMind:
             True=值得记住，False=不用记
         """
         if not self.is_enabled():
-            self.logger.debug("消息被过滤: 记忆系统未启用")
             return False
 
         # 从事件中提取消息文本
         message_text = self._extract_message_text(event)
         if not message_text:
-            self.logger.debug("消息被过滤: 文本为空")
             return False
 
         message_text = message_text.strip()
 
         # 检查最小消息长度
         if len(message_text) < self.min_message_length:
-            self.logger.debug(
-                f"消息被过滤: 长度过短 ({len(message_text)} < {self.min_message_length})"
-            )
             return False
 
         # 忽略纯指令消息（以/开头）
         if message_text.startswith("/"):
-            self.logger.debug("消息被过滤: 以'/'开头")
             return False
 
         return True
@@ -195,7 +187,7 @@ class DeepMind:
                 "core_topic": context_data.get("core_topic", ""),
             }
         except (json.JSONDecodeError, KeyError) as e:
-            self.logger.warning(f"Failed to parse memory context: {e}")
+            self.logger.warning(f"解析记忆上下文失败: {e}")
             return None
 
     async def _retrieve_memories_and_notes(
@@ -223,14 +215,34 @@ class DeepMind:
         long_term_memories = []
         if self.memory_system:
             try:
-                long_term_memories = await self.memory_system.chained_recall(
+                # 从 angelheart_context 获取实体列表 (通过 QueryProcessor)
+                rag_fields = self.query_processor.extract_rag_fields(event)
+                entities = rag_fields.get("entities", [])
+
+                # 安全获取 handlers
+                handlers = None
+                if hasattr(self.memory_system, 'memory_handler_factory') and self.memory_system.memory_handler_factory:
+                    handlers = getattr(self.memory_system.memory_handler_factory, 'handlers', None)
+                
+                # 调用新的 chained_recall
+                recall_result = await self.memory_system.chained_recall(
                     query=memory_query,
+                    entities=entities,  # 传入实体
                     per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
                     final_limit=self.CHAINED_RECALL_FINAL_LIMIT,
-                    vector=memory_vector  # 传递预计算向量
+                    memory_handlers=handlers, # 传入 handlers
+                    event=event,  # 传递event，便于chained_recall内部使用query_processor
+                    vector=memory_vector,  # 传递预计算向量
                 )
+                # 从结果中分别获取实体记忆和常规记忆
+                entity_memories = recall_result.get("entity_memories", [])
+                regular_memories = recall_result.get("regular_memories", [])
+
+                # 最终合并，实体记忆在前
+                long_term_memories = entity_memories + regular_memories
+
             except Exception as e:
-                self.logger.warning(f"链式召回失败，跳过记忆检索: {e}")
+                self.logger.error(f"链式召回失败，跳过记忆检索: {e}")
                 long_term_memories = []
 
         # 2. 获取 secretary_decision 信息
@@ -240,7 +252,7 @@ class DeepMind:
                 angelheart_data = json.loads(event.angelheart_context)
                 secretary_decision = angelheart_data.get("secretary_decision", {})
         except (json.JSONDecodeError, KeyError):
-            self.logger.debug("无法获取 secretary_decision 信息")
+            self.logger.error("无法获取 secretary_decision 信息")
 
         # 3. 使用统一的RAG字段进行笔记检索
         # 直接使用原始query，让QueryProcessor统一处理RAG字段
@@ -297,18 +309,15 @@ class DeepMind:
             session_id: 会话ID
             note_context: 笔记上下文
         """
-        self.logger.debug(f"开始注入记忆到请求中，会话ID: {session_id}")
 
         # 1. 从短期记忆推送给主意识（潜意识筛选后的精选记忆）
         short_term_memories = self.session_memory_manager.get_session_memories(
             session_id
         )
-        self.logger.debug(f"从短期记忆中获取到 {len(short_term_memories)} 条记忆")
 
         memory_context = self.memory_injector.format_fifo_memories_for_prompt(
             short_term_memories
         )
-        self.logger.debug(f"格式化后的记忆上下文长度: {len(memory_context)} 字符")
 
         # 2. 合并记忆和笔记上下文
         if memory_context or note_context:
@@ -326,9 +335,8 @@ class DeepMind:
                     "content": f"[RAG-笔记] 相关笔记参考:\n{note_context}"
                 })
 
-            self.logger.debug("记忆和笔记已成功注入到请求上下文中")
         else:
-            self.logger.debug("没有记忆或笔记上下文需要注入")
+            pass
 
     async def _update_memory_system(
         self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
@@ -383,23 +391,6 @@ class DeepMind:
             session_id, new_memory_objects, useful_memory_ids
         )
 
-        total_memories = len(useful_long_term_memories) + len(new_memory_objects)
-        self.logger.info(
-            "记忆更新： %d 条记忆进入短期记忆 (有用旧记忆: %d, 新生成记忆: %d)",
-            total_memories,
-            len(useful_long_term_memories),
-            len(new_memory_objects),
-        )
-
-        # 4. 新增的INFO日志逻辑
-        if new_memory_objects:
-            self.logger.info("后台分析生成了 %d 条新记忆：", len(new_memory_objects))
-            for mem in new_memory_objects:
-                # 只记录新记忆的类型和论断，保持INFO级别的日志简洁
-                self.logger.info(
-                    f"  - [新记忆: {mem.memory_type.value}] {mem.judgment}"
-                )
-
         # 5. 后台异步处理长期记忆反馈
         merge_groups = MemoryIDResolver.normalize_merge_groups_format(merge_groups_raw)
 
@@ -416,7 +407,7 @@ class DeepMind:
             }
             await get_feedback_queue().submit(task_payload)
         else:
-            self.logger.debug("记忆反馈无待处理内容，跳过")
+            pass
 
     async def _execute_feedback_task(
         self,
@@ -426,13 +417,6 @@ class DeepMind:
         session_id: str,
     ) -> None:
         """异步执行的长期记忆反馈。"""
-        self.logger.debug(
-            "[feedback_queue] session=%s 开始处理反馈: useful=%d new=%d merge=%d",
-            session_id,
-            len(useful_memory_ids),
-            len(new_memories),
-            len(merge_groups),
-        )
 
         # 检查 memory_system 是否可用
         if self.memory_system is not None:
@@ -443,9 +427,7 @@ class DeepMind:
                 merge_groups=merge_groups,
             )
         else:
-            self.logger.warning("Memory system is not available, skipping feedback")
-
-        self.logger.debug("[feedback_queue] session=%s 反馈任务完成", session_id)
+            self.logger.error("记忆系统不可用，跳过反馈")
 
     def _clean_note_content(self, content: str) -> str:
         """
@@ -491,8 +473,8 @@ class DeepMind:
                 angelheart_data = json.loads(event.angelheart_context)
                 chat_records = angelheart_data.get("chat_records", [])
             except (json.JSONDecodeError, KeyError):
-                self.logger.warning(
-                    f"Failed to parse angelheart_context for session {session_id}"
+                self.logger.error(
+                    f"为会话 {session_id} 解析 angelheart_context 失败"
                 )
 
         # 初始化 user_list 为空列表
@@ -525,19 +507,15 @@ class DeepMind:
 
         # 如果未配置 provider_id，跳过记忆整理
         if not self.provider_id:
-            self.logger.debug("未配置 provider_id，跳过记忆整理")
             return
 
         # 解析记忆上下文数据
         context_data = self._parse_memory_context(event)
         if not context_data:
-            self.logger.debug("无法解析记忆上下文数据，跳过记忆整理")
             return
 
         session_id = context_data["session_id"]
         query = context_data["query"]
-        truncated_query = query[:50] + "..." if len(query) > 50 else query
-        self.logger.debug(f"处理会话 {session_id}，查询内容: {truncated_query}")
 
         # 核心修复：将 plugin_context 附加到 event 对象
         event.plugin_context = self.plugin_context
@@ -548,9 +526,6 @@ class DeepMind:
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
 
-        self.logger.debug(
-            f"检索到 {len(long_term_memories)} 条长期记忆和 {len(candidate_notes)} 条候选笔记"
-        )
 
         try:
             # 直接将检索到的长期记忆填入短期记忆的空槽位
@@ -598,11 +573,8 @@ class DeepMind:
                     self.session_memory_manager.add_memories_to_session(
                         session_id, memories_to_add
                     )
-                    self.logger.debug(
-                        "潜意识筛选：%d条有用记忆进入短期记忆", len(memories_to_add)
-                    )
                 else:
-                    self.logger.debug("没有空位可填入新的长期记忆")
+                    pass
 
             # 直接注入原始笔记内容（不经过小模型筛选）
             note_context = ""
@@ -647,9 +619,6 @@ class DeepMind:
                     # 合并所有笔记，只在开头添加一次时效性提醒
                     time_warning = "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n"
                     note_context = time_warning + "\n\n".join(note_context_parts)
-                    self.logger.debug(
-                        f"构建了包含 {len(selected_notes)} 条笔记的上下文，共 {current_tokens} tokens"
-                    )
 
             # 生成并传递ID映射表
 
@@ -679,46 +648,19 @@ class DeepMind:
                 angelmemory_context["memory_id_mapping"] = memory_id_mapping
                 angelmemory_context["note_id_mapping"] = note_id_mapping
                 event.angelmemory_context = json.dumps(angelmemory_context)
-                self.logger.debug("原始上下文数据已存入 event.angelmemory_context")
-
-                # 添加调试日志：记录存储的原始上下文数据
-                self.logger.debug(
-                    f"[注入阶段] 存储的原始上下文数据 - 会话ID: {session_id}"
-                )
-                self.logger.debug(
-                    f"  原始记忆数: {len(angelmemory_context.get('raw_memories', []))}"
-                )
-                self.logger.debug(
-                    f"  原始笔记数: {len(angelmemory_context.get('raw_notes', []))}"
-                )
-                self.logger.debug(
-                    f"  核心话题: {angelmemory_context.get('core_topic', '')}"
-                )
-
-                # 添加更详细的笔记信息日志
-                if angelmemory_context.get("raw_notes"):
-                    notes_info = []
-                    for i, note in enumerate(
-                        angelmemory_context["raw_notes"][:3]
-                    ):  # 只显示前3个笔记
-                        notes_info.append(
-                            f"笔记{i + 1}: ID={note.get('id', 'N/A')}, 标签={note.get('tags', [])}, 内容长度={len(note.get('content', ''))}"
-                        )
-                    self.logger.debug(f"  前几个笔记信息: {notes_info}")
             except Exception as e:
-                self.logger.warning(f"保存原始上下文数据失败: {e}")
+                self.logger.error(f"保存原始上下文数据失败: {e}")
 
             # 注入记忆到请求（从短期记忆中读取并注入）
             self._inject_memories_to_request(request, session_id, note_context)
-            self.logger.debug("记忆已注入到请求中")
 
         except Exception as e:
             import traceback
 
             self.logger.error(
-                f"Memory organization failed for session {session_id}: {e}"
+                f"会话 {session_id} 的记忆组织失败: {e}"
             )
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            self.logger.error(f"错误详情: {traceback.format_exc()}")
 
     def _extract_message_text(self, event: AstrMessageEvent) -> Optional[str]:
         """
@@ -734,7 +676,7 @@ class DeepMind:
             # 参照 AngelHeart 的正确实现
             return event.get_message_outline()
         except Exception as e:
-            self.logger.warning(f"Deep思维: 调用 event.get_message_outline() 失败: {e}")
+            self.logger.error(f"潜意识: 调用 event.get_message_outline() 失败: {e}")
             return None
 
     def _get_session_id(self, event: AstrMessageEvent) -> str:
@@ -800,7 +742,6 @@ class DeepMind:
         """
         # 如果睡眠间隔为0，表示禁用睡眠
         if sleep_interval <= 0:
-            self.logger.debug("睡眠功能已禁用 (sleep_interval=0)")
             return False
 
         import time
@@ -809,30 +750,20 @@ class DeepMind:
 
         # 首次运行，立即睡眠
         if self.last_sleep_time is None:
-            self.logger.info("🌙 首次运行，立即触发睡眠（记忆巩固）")
             await self._sleep()
             self.last_sleep_time = current_time
             return True
 
         # 计算距离上次睡眠的时间
         time_since_last_sleep = current_time - self.last_sleep_time
-        time_until_next_sleep = sleep_interval - time_since_last_sleep
 
         # 检查是否到达睡眠间隔
         if time_since_last_sleep >= sleep_interval:
-            hours = time_since_last_sleep / 3600
-            self.logger.info(
-                f"🌙 距离上次睡眠已过 {hours:.1f} 小时，触发睡眠（记忆巩固）"
-            )
             await self._sleep()
             self.last_sleep_time = current_time
             return True
         else:
             # 未到睡眠时间
-            hours_until_next = time_until_next_sleep / 3600
-            self.logger.debug(
-                f"距离下次睡眠还有 {hours_until_next:.1f} 小时，跳过睡眠"
-            )
             return False
 
     async def _sleep(self):
@@ -843,32 +774,27 @@ class DeepMind:
         import time
 
         start_time = time.time()
-        self.logger.info("💤 开始睡眠（记忆巩固）...")
 
         try:
             # 检查 memory_system 是否可用
             if self.memory_system is not None:
                 await self.memory_system.consolidate_memories()
                 elapsed_time = time.time() - start_time
-                self.logger.info(f"✅ 记忆巩固完成，耗时 {elapsed_time:.2f} 秒")
             else:
-                self.logger.warning(
-                    "Memory system is not available, skipping consolidation"
+                self.logger.error(
+                    "记忆系统不可用，跳过巩固"
                 )
         except Exception as e:
             elapsed_time = time.time() - start_time
-            self.logger.error(f"❌ 记忆巩固失败（耗时 {elapsed_time:.2f} 秒）: {e}")
+            self.logger.error(f"记忆巩固失败（耗时 {elapsed_time:.2f} 秒）: {e}")
 
     def shutdown(self):
         """关闭潜意识系统，让AI好好休息"""
-        self.logger.info("正在关闭AI的潜意识...")
 
         # 停止记忆整理任务
         from .utils.feedback_queue import stop_feedback_queue
 
         stop_feedback_queue()
-
-        self.logger.info("AI潜意识已休息，下次再见！")
 
     async def async_analyze_and_update_memory(self, event: AstrMessageEvent, response):
         """
@@ -880,8 +806,6 @@ class DeepMind:
         """
         # 获取会话ID
         session_id = self._get_session_id(event)
-
-        self.logger.info(f"[异步分析] 任务提交 - 会话ID: {session_id}")
 
         # 直接将任务提交到后台队列，不等待LLM响应
         task_payload = {
@@ -901,8 +825,6 @@ class DeepMind:
 
         # 提交到反馈队列后台执行
         await get_feedback_queue().submit(task_payload)
-
-        self.logger.debug(f"异步记忆分析任务已提交到后台队列，会话ID: {session_id}")
 
     def _serialize_event_data(self, event: AstrMessageEvent) -> Dict:
         """序列化事件数据以便在后台线程中使用"""
@@ -924,7 +846,7 @@ class DeepMind:
 
             return event_data
         except Exception as e:
-            self.logger.warning(f"序列化事件数据失败: {e}")
+            self.logger.error(f"序列化事件数据失败: {e}")
             return {}
 
     def _serialize_response_data(self, response) -> Dict:
@@ -938,7 +860,7 @@ class DeepMind:
             }
             return response_data
         except Exception as e:
-            self.logger.warning(f"序列化响应数据失败: {e}")
+            self.logger.error(f"序列化响应数据失败: {e}")
             return {"completion_text": ""}
 
     async def _execute_async_analysis_task(
@@ -953,8 +875,6 @@ class DeepMind:
             session_id: 会话ID
         """
         try:
-            self.logger.info(f"[异步分析] 后台任务执行开始 - 会话ID: {session_id}")
-
             # 重构事件对象的部分数据用于处理
             class SimpleEvent:
                 def __init__(self, data):
@@ -967,9 +887,6 @@ class DeepMind:
             # 获取原始上下文数据
             context_data = self._parse_memory_context(event)
             if not context_data:
-                self.logger.debug(
-                    f"[后台任务] 无法解析记忆上下文数据，会话ID: {session_id}"
-                )
                 return
 
             query = context_data["query"]
@@ -979,9 +896,6 @@ class DeepMind:
             raw_notes_data = context_data.get("raw_notes", [])
             core_topic = context_data.get("core_topic", "")
 
-            self.logger.debug(
-                f"[后台任务] 解析上下文数据完成，会话ID: {session_id}, 查询: {query[:50]}..., 记忆数: {len(raw_memories_data)}, 笔记数: {len(raw_notes_data)}"
-            )
 
             # 将原始数据转换为记忆对象
             from ..llm_memory.models.data_models import BaseMemory
@@ -993,12 +907,11 @@ class DeepMind:
                     if memory:
                         long_term_memories.append(memory)
                 except Exception as e:
-                    self.logger.warning(f"转换记忆对象失败: {e}")
+                    self.logger.error(f"转换记忆对象失败: {e}")
 
             # 获取主LLM的最终回答
             response_text = response_data.get("completion_text", "")
 
-            self.logger.debug(f"[后台任务] 准备构建提示词，会话ID: {session_id}")
 
             # 从上下文数据中获取ID映射表
             memory_id_mapping = context_data.get("memory_id_mapping", {})
@@ -1016,40 +929,26 @@ class DeepMind:
                 config=self.config,
             )
 
-            self.logger.debug(
-                f"[后台任务] 提示词构建完成，会话ID: {session_id}，提示词长度: {len(prompt)}"
-            )
-
-            # 添加更详细的笔记信息日志
-            if raw_notes_data:
-                notes_info = []
-                for i, note in enumerate(raw_notes_data[:3]):  # 只显示前3个笔记
-                    notes_info.append(
-                        f"笔记{i + 1}: ID={note.get('id', 'N/A')}, 标签={note.get('tags', [])}, 内容长度={len(note.get('content', ''))}"
-                    )
-                self.logger.debug(f"  前几个笔记信息: {notes_info}")
 
             # 调用小模型进行分析（在后台线程中同步调用）
             provider = self.context.get_provider_by_id(self.provider_id)
             if not provider:
                 self.logger.error(
-                    f"Provider not found: {self.provider_id} for session {session_id}"
+                    f"找不到提供者: {self.provider_id}，会话: {session_id}"
                 )
                 return
 
             try:
-                self.logger.info(f"[异步分析] 开始调用分析LLM - 会话ID: {session_id}")
                 # 直接异步调用，无需检查
                 llm_response = await provider.text_chat(prompt=prompt)
-                self.logger.debug(f"[后台任务] LLM调用完成，会话ID: {session_id}")
             except Exception as e:
-                self.logger.warning(
-                    f"⏱️ LLM调用失败 for session {session_id}，跳过记忆整理: {e}"
+                self.logger.error(
+                    f"会话 {session_id} 的LLM调用失败，跳过记忆整理: {e}"
                 )
                 return
 
             if not llm_response or not getattr(llm_response, "completion_text", ""):
-                self.logger.error(f"LLM API call failed for session {session_id}")
+                self.logger.error(f"会话 {session_id} 的LLM API调用失败")
                 return
 
             # 提取响应文本
@@ -1057,11 +956,10 @@ class DeepMind:
 
             # 解析完整的结构化输出
             full_json_data = self.json_parser.extract_json(response_text)
-            self.logger.debug(f"Parsed full_json_data: {full_json_data}")
 
             if not isinstance(full_json_data, dict):
                 self.logger.error(
-                    f"JSON parsing failed or did not return a dict for session {session_id}"
+                    f"会话 {session_id} 的JSON解析失败或未返回字典"
                 )
                 return
 
@@ -1080,13 +978,13 @@ class DeepMind:
                 ]
                 feedback_data["useful_memory_ids"] = long_ids
             else:
-                self.logger.warning(
-                    "🔍 [DEBUG] feedback_data中没有useful_memory_ids字段"
+                self.logger.error(
+                    "feedback_data中没有useful_memory_ids字段"
                 )
 
             if not isinstance(feedback_data, dict):
                 self.logger.error(
-                    f"feedback_data is not a dict, it's {type(feedback_data)}: {feedback_data}"
+                    f"feedback_data不是字典类型，实际类型: {type(feedback_data)}，内容: {feedback_data}"
                 )
                 feedback_data = {}  # 安全降级
 
@@ -1128,19 +1026,9 @@ class DeepMind:
                 self.session_memory_manager.add_memories_to_session(
                     session_id, memories_for_session
                 )
-                self.logger.info(
-                    "记忆更新： %d 条记忆进入短期记忆 (有用旧记忆: %d, 新生成记忆: %d)",
-                    len(memories_for_session),
-                    len(useful_long_term_memories),
-                    len(newly_created_memories),
-                )
-
-            self.logger.info(
-                f"[异步分析] 长期记忆更新指令已发送 - 会话ID: {session_id}"
-            )
 
         except Exception as e:
             import traceback
 
-            self.logger.error(f"异步记忆分析失败 - session={session_id}: {e}")
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            self.logger.error(f"异步记忆分析失败 - 会话={session_id}: {e}")
+            self.logger.error(f"错误详情: {traceback.format_exc()}")

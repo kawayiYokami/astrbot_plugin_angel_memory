@@ -5,7 +5,7 @@
 链式回忆、记忆合并等复杂操作。
 """
 
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import random
 import logging
 from collections import defaultdict
@@ -195,26 +195,19 @@ class MemoryManager:
     async def chained_recall(
         self,
         query: str,
+        entities: List[str],  # 新增: 核心实体列表
         per_type_limit: int = 7,
         final_limit: int = 7,
-        memory_handlers: Dict[str, object] = None,
+        memory_handlers: Dict[str, Any] = None,
         event=None,
         vector: Optional[List[float]] = None,
-    ) -> List[BaseMemory]:
+    ) -> Dict[str, List[BaseMemory]]:  # 返回值修改为字典
         """
         链式多通道回忆 - 基于关联网络的多轮回忆（中文核心概念）
 
-        中文定义：第一轮从各类型记忆中召回相关内容，第二轮通过关联网络补充，最终按权重随机抽取
-        英文翻译：Chained multi-channel recall through association networks with weighted random sampling
-
-        回忆流程：
-        1. 第一轮：每种类型最多召回 per_type_limit 个记忆（情景、语义、情绪、技能等）
-        2. 第二轮：从已召回记忆的 associations 中补充关联记忆到对应类型
-        3. 权重计算：出现次数 × 记忆强度
-        4. 加权随机抽取：不重复抽取直到 final_limit 个
-
         Args:
             query: 搜索查询字符串
+            entities: 核心实体列表，用于优先检索相关记忆。
             per_type_limit: 每种类型第一轮最多召回数量（默认7）
             final_limit: 最终返回的记忆数量（默认7）
             memory_handlers: 记忆处理器字典，用于分类型召回
@@ -222,8 +215,10 @@ class MemoryManager:
             vector: 可选的预计算向量，如果提供则直接使用
 
         Returns:
-            加权随机抽取后的记忆列表（最多 final_limit 个）
+            包含 "entity_memories" 和 "regular_memories" 的字典。
         """
+        self.logger.debug(f"Chained Recall - Query: '{query}', Entities: {entities}")
+
         # 预处理查询词（如果有查询处理器）
         processed_query = query
         if self.query_processor and event:
@@ -231,40 +226,57 @@ class MemoryManager:
                 query, event
             )
 
+        # ==========================================
+        #  新增：第零轮 - 实体优先通道 (按强度)
+        # ==========================================
+        entity_memories = []
+        if entities:
+            # 调用新的辅助方法来完成这个逻辑
+            # 每个实体召回的记忆数量可以配置，这里暂定为3
+            entity_memories = await self._recall_entities_by_strength(
+                entities, per_entity_limit=3
+            )
+            self.logger.debug(f"实体优先通道召回了 {len(entity_memories)} 条记忆。")
+
+        # 获取已经找到的实体记忆的ID，用于后续去重
+        seen_ids = {mem.id for mem in entity_memories}
+
         if not memory_handlers:
             self.logger.warning("未提供记忆处理器，使用简单回忆")
-            return await self.comprehensive_recall(
+            # 如果没有处理器，直接使用 comprehensive_recall
+            # 此时 entity_memories 已经获取，这里获取的是常规记忆
+            regular_memories_candidates = await self.comprehensive_recall(
                 processed_query,
                 fresh_limit=final_limit,
                 consolidated_limit=final_limit,
                 event=event,
-                vector=vector,  # 传递向量参数
+                vector=vector,
             )
+            # 从常规记忆中移除已在实体记忆中的ID
+            regular_memories = [mem for mem in regular_memories_candidates if mem.id not in seen_ids]
 
-        # 第一轮：分类型召回
-        memory_types = [
-            ("事件记忆", memory_handlers.get("event")),
-            ("知识记忆", memory_handlers.get("knowledge")),
-            ("技能记忆", memory_handlers.get("skill")),
-            ("情感记忆", memory_handlers.get("emotional")),
-            ("任务记忆", memory_handlers.get("task")),
-        ]
+            return {
+                "entity_memories": entity_memories,
+                "regular_memories": regular_memories[:final_limit],  # 确保不超过最终限制
+            }
 
         # 存储所有召回的记忆，按类型分组
         recalled_by_type = {}
         all_recalled_ids = set()
 
         # 第一轮：分类型召回
-        for memory_type, handler in memory_types:
+        for memory_type, handler in memory_handlers.items():
             if not handler:
-                continue  # 排除未提供的处理器
+                continue
 
             memories = await handler.recall(
                 processed_query, limit=per_type_limit, include_consolidated=True
             )
-            if memories:
-                recalled_by_type[memory_type] = memories
-                all_recalled_ids.update([m.id for m in memories])
+            # 从分类型召回的结果中移除已在实体记忆中的ID
+            filtered_memories = [mem for mem in memories if mem.id not in seen_ids]
+            if filtered_memories:
+                recalled_by_type[memory_type] = filtered_memories
+                all_recalled_ids.update([m.id for m in filtered_memories])
 
         # 第二轮：从关联中补充记忆
         for memory_type, memories in list(recalled_by_type.items()):
@@ -272,12 +284,11 @@ class MemoryManager:
                 if not memory.associations:
                     continue
 
-                # 遍历所有关联
                 for assoc_id, assoc_strength in memory.associations.items():
-                    if assoc_id in all_recalled_ids:
-                        continue  # 已经召回过了
+                    # 确保关联记忆不在已见ID中（包括实体记忆和第一轮召回的记忆）
+                    if assoc_id in all_recalled_ids or assoc_id in seen_ids:
+                        continue
 
-                    # 获取关联记忆
                     try:
                         assoc_results = self.collection.get(ids=[assoc_id])
                         if not assoc_results["metadatas"]:
@@ -286,7 +297,6 @@ class MemoryManager:
                         metadata = assoc_results["metadatas"][0]
                         assoc_type = metadata.get("memory_type", "知识记忆")
 
-                        # 根据类型构建记忆对象
                         assoc_memory = self._build_memory_from_metadata(
                             assoc_id,
                             metadata,
@@ -299,7 +309,6 @@ class MemoryManager:
                             if assoc_type not in recalled_by_type:
                                 recalled_by_type[assoc_type] = []
 
-                            # 检查是否超过每类型限制（第二轮不限制，或者可以设置更宽松的限制）
                             recalled_by_type[assoc_type].append(assoc_memory)
                             all_recalled_ids.add(assoc_id)
 
@@ -308,8 +317,8 @@ class MemoryManager:
                         continue
 
         # 统计权重：出现次数 × 强度
-        memory_count = defaultdict(int)  # 记忆ID -> 出现次数
-        memory_obj_map = {}  # 记忆ID -> 记忆对象
+        memory_count = defaultdict(int)
+        memory_obj_map = {}
 
         # 统计出现次数
         for memory_type, memories in recalled_by_type.items():
@@ -323,19 +332,17 @@ class MemoryManager:
             memory = memory_obj_map[memory_id]
             weights[memory_id] = count * memory.strength
 
-        # 加权随机抽取
-
-        if not weights:
-            return []
-
-        selected_memories = []
+        # 加权随机抽取常规记忆
+        regular_memories = []
         remaining_ids = list(weights.keys())
 
         for _ in range(min(final_limit, len(remaining_ids))):
-            # 计算总权重
+            if not remaining_ids:
+                break
             total_weight = sum(weights[mid] for mid in remaining_ids)
+            if total_weight == 0:  # 避免除以零
+                break
 
-            # 加权随机选择
             rand = random.uniform(0, total_weight)
             cumulative = 0
             selected_id = None
@@ -347,17 +354,84 @@ class MemoryManager:
                     break
 
             if selected_id:
-                selected_memories.append(memory_obj_map[selected_id])
+                regular_memories.append(memory_obj_map[selected_id])
                 remaining_ids.remove(selected_id)
+                del weights[selected_id]  # 移除已选择的记忆权重
 
-        return selected_memories
+        return {
+            "entity_memories": entity_memories,
+            "regular_memories": regular_memories,
+        }
+
+    async def _recall_entities_by_strength(
+        self, entities: List[str], per_entity_limit: int
+    ) -> List[BaseMemory]:
+        """
+        为每个实体检索出强度最高的N条记忆。
+        使用 get() + 内存过滤的方式，并按强度排序。
+        """
+        all_results = []
+        seen_ids = set()
+
+        # 1. 获取一个足够大的候选集（例如最新或全部的记忆，根据实际情况调整）
+        # 这里为了避免过度消耗内存和时间，我们获取最新的一部分记忆作为候选。
+        # 实际生产环境中，这个 limit 可能需要根据数据库大小和性能进行优化。
+        # 如果需要检索所有记忆，可以分批获取或者调整 ChromaDB 配置。
+        candidate_results = self.collection.get(
+            limit=1000,  # 获取最新的1000条记忆作为筛选池，确保覆盖面
+            include=["metadatas", "documents"],
+        )
+
+        if not candidate_results or not candidate_results["ids"]:
+            self.logger.debug("实体直召：未从长期记忆获取到任何候选记忆。")
+            return []
+
+        # 将原始数据转换为 BaseMemory 对象
+        candidate_memories = []
+        for i, mem_id in enumerate(candidate_results["ids"]):
+            metadata = candidate_results["metadatas"][i]
+            document = (
+                candidate_results["documents"][i]
+                if candidate_results["documents"]
+                else ""
+            )
+            memory_obj = self._build_memory_from_metadata(mem_id, metadata, document)
+            if memory_obj:
+                candidate_memories.append(memory_obj)
+
+        if not candidate_memories:
+            self.logger.debug("实体直召：从候选数据中未构建出有效记忆。")
+            return []
+
+        # 2. 为每个实体进行筛选和排序
+        for entity_name in entities:
+            # a. 筛选出所有包含该实体tag的记忆
+            # 注意：这里我们假设 memory.tags 是一个列表，直接使用 'in' 操作
+            memories_for_entity = [
+                mem
+                for mem in candidate_memories
+                if hasattr(mem, "tags")
+                and isinstance(mem.tags, list)
+                and entity_name in mem.tags
+                and mem.id not in seen_ids
+            ]
+
+            # b. 按强度降序排序
+            memories_for_entity.sort(key=lambda x: x.strength, reverse=True)
+
+            # c. 取强度最高的N条
+            top_memories = memories_for_entity[:per_entity_limit]
+
+            all_results.extend(top_memories)
+            seen_ids.update(mem.id for mem in top_memories)  # 更新已见ID，避免重复添加
+
+        return all_results
 
     def _build_memory_from_metadata(
         self, memory_id: str, metadata: dict, document: str
     ) -> Optional[BaseMemory]:
         """从元数据构建记忆对象的辅助方法"""
         memory_type_str = metadata.get("memory_type", "知识记忆")
-
         try:
             # 解析记忆类型
             try:
