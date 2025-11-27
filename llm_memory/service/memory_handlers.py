@@ -5,7 +5,7 @@
 所有记忆类型使用相同的三元组结构（judgment, reasoning, tags）。
 """
 
-from typing import List
+from typing import List, Optional # 导入 Optional
 
 # 导入日志记录器
 try:
@@ -37,8 +37,11 @@ class MemoryHandler:
         self.collection = main_collection
         self.store = vector_store
         self.logger = logger
+        from ..config.system_config import system_config as global_system_config # 导入全局配置
+        self.system_config = global_system_config
 
-    async def remember(self, judgment: str, reasoning: str, tags: List[str]) -> BaseMemory:
+
+    async def remember(self, judgment: str, reasoning: str, tags: List[str], is_active: bool = False, strength: Optional[int] = None) -> BaseMemory:
         """
         记住一条记忆。
 
@@ -46,15 +49,21 @@ class MemoryHandler:
             judgment: 论断
             reasoning: 解释
             tags: 标签列表
+            is_active: 是否为主动记忆，主动记忆永不衰减。
+            strength: 记忆强度（可选），如果未提供则使用被动记忆默认强度。
 
         Returns:
             创建的记忆对象
         """
+        actual_strength = strength if strength is not None else self.system_config.default_passive_strength # 获取实际强度
+        
         memory = BaseMemory(
             memory_type=self.memory_type,
             judgment=judgment,
             reasoning=reasoning,
             tags=tags,
+            is_active=is_active,
+            strength=actual_strength, # 将实际强度传递给 BaseMemory 构造函数
         )
         await self.store.remember(self.collection, memory)
         return memory

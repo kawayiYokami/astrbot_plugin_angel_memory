@@ -27,6 +27,8 @@ import pkg_resources
 # 导入核心模块
 from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
+from .tools.core_memory_remember import CoreMemoryRememberTool
+from .tools.core_memory_recall import CoreMemoryRecallTool
 
 
 def ensure_chromadb_version():
@@ -54,9 +56,9 @@ def ensure_chromadb_version():
             f"chromadb 未安装，将安装最新版本（不低于 {MINIMUM_CHROMADB_VERSION}）。"
         )
         _upgrade_chromadb()
-    except (ImportError, OSError, subprocess.SubprocessError) as e:
+    except Exception as e:
         logger.error(f"检查 chromadb 版本时出错: {e}")
-
+        logger.warning("无法验证 chromadb 版本，插件可能无法正常工作")
 
 def _upgrade_chromadb():
     """升级 chromadb 到最新版本"""
@@ -124,7 +126,19 @@ class AngelMemoryPlugin(Star):
         # 4. 初始化插件管理器（极速启动）- 只传递PluginContext
         self.plugin_manager = PluginManager(self.plugin_context)
 
-        # 记录数据路径以验证配置
+        # 5. 注册LLM工具
+        self.llm_tools_enabled = True  # 标记LLM工具是否启用
+        try:
+            self.context.add_llm_tools(CoreMemoryRememberTool(), CoreMemoryRecallTool())
+            self.logger.info("✅ 已注册 core_memory_remember 和 core_memory_recall 工具。")
+        except AttributeError as e:
+            self.llm_tools_enabled = False
+            self.logger.error(f"❌ 注册LLM工具失败，context可能不支持add_llm_tools方法: {e}", exc_info=True)
+            self.logger.warning("⚠️ LLM工具功能已禁用，插件将继续以基础模式运行")
+        except Exception as e:
+            self.llm_tools_enabled = False
+            self.logger.error(f"❌ 注册LLM工具时发生异常: {e}", exc_info=True)
+            self.logger.warning("⚠️ LLM工具功能已禁用，插件将继续以基础模式运行")
         self.logger.info(
             f"天使记忆数据路径设置为: {self.plugin_context.get_index_dir().resolve()}"
         )
@@ -172,6 +186,9 @@ class AngelMemoryPlugin(Star):
                 self.plugin_manager.background_initializer.get_component_factory()
             )
 
+            # 设置ComponentFactory引用到PluginContext
+            self.plugin_context.set_component_factory(component_factory)
+
             # 获取所有组件
             components = component_factory.get_components()
 
@@ -203,6 +220,11 @@ class AngelMemoryPlugin(Star):
         """
         self.logger.debug("开始执行 on_llm_request")
         try:
+            # 检查LLM工具是否可用
+            if not self.are_llm_tools_enabled():
+                self.logger.debug("LLM工具未启用，跳过LLM请求处理")
+                return
+
             # 更新组件引用
             self.update_components()
             self.logger.debug("组件引用已更新")
@@ -269,6 +291,11 @@ class AngelMemoryPlugin(Star):
         """
         self.logger.debug("开始执行 after_message_sent - 记忆整理")
         try:
+            # 检查LLM工具是否可用
+            if not self.are_llm_tools_enabled():
+                self.logger.debug("LLM工具未启用，跳过记忆整理")
+                return
+
             # 更新组件引用
             self.update_components()
 
@@ -337,6 +364,7 @@ class AngelMemoryPlugin(Star):
                     "index_dir": str(self.plugin_context.get_index_dir()),
                     "embedding_provider_id": self.plugin_context.get_embedding_provider_id(),
                     "llm_provider_id": self.plugin_context.get_llm_provider_id(),
+                    "llm_tools_enabled": self.are_llm_tools_enabled(),
                 }
             }
         )
@@ -350,3 +378,12 @@ class AngelMemoryPlugin(Star):
             PluginContext: 插件上下文实例
         """
         return self.plugin_context
+
+    def are_llm_tools_enabled(self):
+        """
+        检查LLM工具是否已成功启用
+
+        Returns:
+            bool: 如果LLM工具已启用返回True，否则返回False
+        """
+        return getattr(self, 'llm_tools_enabled', False)

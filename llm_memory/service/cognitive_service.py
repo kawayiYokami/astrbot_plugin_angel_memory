@@ -112,7 +112,7 @@ class CognitiveService:
     # ===== 记忆接口 =====
 
     async def remember(
-        self, memory_type: str, judgment: str, reasoning: str, tags: List[str]
+        self, memory_type: str, judgment: str, reasoning: str, tags: List[str], is_active: bool = False, strength: Optional[int] = None
     ) -> str:
         """
         记住一条记忆。
@@ -122,12 +122,14 @@ class CognitiveService:
             judgment: 论断
             reasoning: 解释
             tags: 标签列表
+            is_active: 是否为主动记忆，主动记忆永不衰减。
+            strength: 记忆强度（可选），如果未提供则使用被动记忆默认强度。
 
         Returns:
             创建的记忆ID
         """
         handler = self.memory_handler_factory.get_handler(memory_type)
-        memory = await handler.remember(judgment, reasoning, tags)
+        memory = await handler.remember(judgment, reasoning, tags, is_active, strength)
         return memory.id
 
     async def recall(

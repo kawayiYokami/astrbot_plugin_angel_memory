@@ -78,6 +78,11 @@ class MemorySystemConfig:
         )
     )
 
+    # 被动记忆默认强度
+    default_passive_strength: int = field(
+        default_factory=lambda: int(os.getenv("MEMORY_DEFAULT_PASSIVE_STRENGTH", "10"))
+    )
+
     def __post_init__(self):
         """初始化后处理"""
         # 确保路径是Path对象

@@ -1,58 +1,56 @@
 {
-  "enable_local_embedding": {
-    "type": "bool",
-    "title": "启用本地嵌入模型",
-    "description": "启用本地嵌入模型支持（需要安装重量级依赖torch+sentence-transformers）",
-    "default": false,
-    "hint": "默认关闭以减小安装体积，开启后首次使用时将自动安装本地模型依赖（约800MB）"
-  },
-  "min_message_length": {
-    "type": "int",
-    "title": "最小消息长度",
-    "description": "触发记忆处理的最小消息字符数",
-    "default": 5,
-    "hint": "过滤过短的消息，提高记忆质量"
-  },
-  "short_term_memory_capacity": {
-    "type": "int",
-    "title": "短期记忆容量倍数",
-    "description": "短期记忆通道的容量倍数",
-    "default": 1,
-    "hint": "设置为2则容量翻倍，设置为3则容量变为3倍"
-  },
-  "sleep_interval": {
-    "type": "int",
-    "title": "睡眠间隔",
-    "description": "记忆巩固（睡眠）的执行间隔，单位为秒",
-    "default": 3600,
-    "hint": "默认1小时执行一次记忆巩固，设置为0则禁用定期睡眠"
-  },
   "provider_id": {
     "type": "string",
-    "title": "记忆整理LLM提供商ID",
-    "description": "用于记忆整理的LLM提供商ID，建议为拥有思考能力的模型",
+    "description": "[核心模型设置] 用于记忆整理的LLM提供商ID",
     "default": "",
-    "hint": "留空则只使用本地模型"
-  },
-  "small_model_note_budget": {
-    "type": "int",
-    "title": "潜意识模型Token预算",
-    "description": "小模型用于笔记选择的Token预算",
-    "default": 5000,
-    "hint": "建议设为4000-8000之间"
-  },
-  "large_model_note_budget": {
-    "type": "int",
-    "title": "应答模型Token预算",
-    "description": "大模型用于笔记上下文的Token预算",
-    "default": 50000,
-    "hint": "建议设为8000-160000之间"
+    "hint": "建议为拥有思考能力的模型。留空则只使用基础记忆功能。"
   },
   "astrbot_embedding_provider_id": {
     "type": "string",
-    "title": "嵌入式模型提供商ID",
-    "description": "用于向量化的嵌入式模型提供商ID，优先使用官方API",
+    "description": "[核心模型设置] 用于向量化的嵌入模型提供商ID",
     "default": "",
-    "hint": "留空则使用本地模型，填写提供商ID则使用官方API（enable_local_embedding=true时使用本地模型，=false时使用API）"
+    "hint": "优先使用官方API。留空则使用本地模型。"
+  },
+  "enable_local_embedding": {
+    "type": "bool",
+    "description": "[核心模型设置] 启用本地嵌入模型支持",
+    "default": false,
+    "hint": "开启后首次使用时将自动安装本地模型依赖（约800MB）。"
+  },
+  "default_passive_strength": {
+    "type": "int",
+    "description": "[记忆行为参数] 设置被动记忆的初始强度值",
+    "default": 10,
+    "hint": "此数值影响被动记忆在遗忘过程中的存活能力，推荐范围10-50。主动记忆不受此影响。"
+  },
+  "min_message_length": {
+    "type": "int",
+    "description": "[记忆行为参数] 触发记忆处理的最小消息字符数",
+    "default": 5,
+    "hint": "过滤过短的消息，以提高记忆质量。"
+  },
+  "short_term_memory_capacity": {
+    "type": "int",
+    "description": "[记忆行为参数] 短期记忆通道的容量倍数",
+    "default": 1,
+    "hint": "设置为2则容量翻倍，设置为3则容量变为3倍。"
+  },
+  "sleep_interval": {
+    "type": "int",
+    "description": "[记忆行为参数] 记忆巩固（睡眠）的执行间隔（秒）",
+    "default": 3600,
+    "hint": "默认1小时执行一次。设置为0则禁用定期睡眠。"
+  },
+  "small_model_note_budget": {
+    "type": "int",
+    "description": "[Token预算] 潜意识模型用于笔记选择的令牌预算",
+    "default": 5000,
+    "hint": "建议设为4000-8000之间。参考：1个英文字符 ≈ 0.3个令牌，1个中文字符 ≈ 0.6个令牌。"
+  },
+  "large_model_note_budget": {
+    "type": "int",
+    "description": "[Token预算] 应答模型用于笔记上下文的令牌预算",
+    "default": 16000,
+    "hint": "建议设为8000-160000之间。参考：1个英文字符 ≈ 0.3个令牌，1个中文字符 ≈ 0.6个令牌。"
   }
 }

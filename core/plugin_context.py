@@ -52,6 +52,8 @@ class PluginContext:
         # 异步资源，由ComponentFactory创建后设置
         self.embedding_provider: Optional[EmbeddingProvider] = None
         self.vector_store: Optional[VectorStore] = None
+        # ComponentFactory 引用，用于获取组件
+        self._component_factory = None
 
         # 初始化插件资源
         self._setup_plugin_resources()
@@ -176,6 +178,17 @@ class PluginContext:
     def set_vector_store(self, store: VectorStore):
         """由ComponentFactory设置向量存储实例"""
         self.vector_store = store
+
+    def set_component_factory(self, component_factory):
+        """设置ComponentFactory引用"""
+        self._component_factory = component_factory
+
+    def get_component(self, component_name: str):
+        """获取ComponentFactory中的组件"""
+        if self._component_factory is None:
+            return None
+        components = self._component_factory.get_components()
+        return components.get(component_name)
 
     # === 验证方法 ===
 

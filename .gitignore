@@ -164,3 +164,7 @@ cython_debug/
 
 storage/
 data/
+
+CLAUDE.md
+GEMINI.md
+AGNET.md

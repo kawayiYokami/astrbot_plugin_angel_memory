@@ -207,7 +207,6 @@ class QueryProcessor:
             return query
 
         original_query = query
-        self.logger.debug(f"开始处理查询词: '{query}'")
 
         try:
             # 步骤1: 提取RAG字段并构建检索词
@@ -225,12 +224,6 @@ class QueryProcessor:
 
             # 只有当rag_query非空且其长度小于阈值时，才跳过后续预处理
             if rag_query and len(final_query.strip()) <= PREPROCESS_THRESHOLD_CHARACTERS:
-                self.logger.debug(f"RAG查询词 '{final_query[:50]}...' 长度({len(final_query.strip())})小于阈值({PREPROCESS_THRESHOLD_CHARACTERS})，跳过名字过滤和截断。")
-                # 直接记录日志并返回
-                truncated_original = original_query[:50] + "..." if len(original_query) > 50 else original_query
-                truncated_result = final_query[:50] + "..." if len(final_query) > 50 else final_query
-                rag_info = f"RAG: {rag_query[:30]}..." if len(rag_query) > 30 else f"RAG: {rag_query}" if rag_query else "RAG: 空"
-                self.logger.debug(f"查询词预处理: '{truncated_original}' -> '{truncated_result}' ({rag_info})")
                 return final_query
 
             # --- 原有的逻辑：继续进行预处理 ---
@@ -244,16 +237,6 @@ class QueryProcessor:
             if final_query.strip():
                 final_query = self._truncate_text(final_query, 500)
                 final_query = self._clean_text(final_query)
-
-            # 记录查询词处理日志
-            if original_query != final_query:
-                truncated_original = original_query[:50] + "..." if len(original_query) > 50 else original_query
-                truncated_result = final_query[:50] + "..." if len(final_query) > 50 else final_query
-                rag_info = f"RAG: {rag_query[:30]}..." if len(rag_query) > 30 else f"RAG: {rag_query}" if rag_query else "RAG: 空"
-                self.logger.debug(f"查询词预处理: '{truncated_original}' -> '{truncated_result}' ({rag_info})")
-            else:
-                truncated_result = final_query[:50] + "..." if len(final_query) > 50 else final_query
-                self.logger.debug(f"查询词预处理: '{truncated_result}'")
 
             return final_query
 
