@@ -159,6 +159,7 @@ class MemoryConfig:
             max_value=64000,
         )
         self._enable_local_embedding = config_get("enable_local_embedding", False)
+        self._enable_flashrank = config_get("enable_flashrank", False)
 
         # 灵魂参数配置
         self._soul_recall_depth_min = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_min", 3), "soul_recall_depth_min")
@@ -216,6 +217,11 @@ class MemoryConfig:
         """是否启用本地嵌入模型"""
         return self._enable_local_embedding
 
+    @property
+    def enable_flashrank(self) -> bool:
+        """是否启用 FlashRank 重排"""
+        return self._enable_flashrank
+
     # 灵魂参数属性
     @property
     def soul_recall_depth_min(self) -> int: return self._soul_recall_depth_min
@@ -265,6 +271,7 @@ class MemoryConfig:
             "short_term_memory_capacity": self.short_term_memory_capacity,
             "sleep_interval": self.sleep_interval,
             "enable_local_embedding": self.enable_local_embedding,
+            "enable_flashrank": self.enable_flashrank,
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "small_model_note_budget": self.small_model_note_budget,

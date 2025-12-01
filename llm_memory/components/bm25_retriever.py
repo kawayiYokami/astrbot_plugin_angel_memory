@@ -1,14 +1,11 @@
 """
-BM25文本检索组件。
+BM25文本检索组件（已废弃）。
 
-提供BM25算法的无状态精排功能，与向量检索形成互补。
+保留此文件仅为了兼容性，新版已建议迁移至 FlashRank。
+如果必须使用 BM25S，请确保安装了相关依赖。
 """
 
 from typing import List, Dict, Tuple
-
-# 导入BM25S库作为主要实现
-import bm25s
-import jieba
 
 # 导入日志记录器
 try:
@@ -17,6 +14,18 @@ except ImportError:
     import logging
 
     logger = logging.getLogger(__name__)
+
+# 抑制 jieba 的日志输出
+import logging
+logging.getLogger("jieba").setLevel(logging.ERROR)
+
+try:
+    # 导入BM25S库作为主要实现
+    import bm25s
+    import jieba
+    HAS_BM25S = True
+except ImportError:
+    HAS_BM25S = False
 
 
 def _tokenize_text(text: str) -> List[str]:
@@ -61,6 +70,10 @@ def rerank_with_bm25(
         精排后的结果列表，元素为 (doc_id, score) 元组，按分数降序排列。
     """
     if not candidates:
+        return []
+
+    if not HAS_BM25S:
+        logger.warning("未安装 BM25S 或 Jieba，无法执行 BM25 精排。")
         return []
 
     # 如果查询为空，直接返回空列表，避免不必要的计算

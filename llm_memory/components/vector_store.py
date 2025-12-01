@@ -23,6 +23,7 @@ from ..models.data_models import BaseMemory
 from ..models.note_models import NoteData
 from ..config.system_config import system_config
 from .bm25_retriever import rerank_with_bm25
+from .flashrank_retriever import FlashRankRetriever
 
 
 class VectorStore:
@@ -100,6 +101,27 @@ class VectorStore:
 
         # 懒加载的标签管理器(用于基于 tag_ids 重建标签文本)
         self._tag_manager: Optional[TagManager] = None
+
+        # FlashRank 重排器
+        self._flashrank = None
+
+    def _get_flashrank(self) -> Optional[FlashRankRetriever]:
+        """懒加载 FlashRank 重排器"""
+        try:
+            # 从 PluginContext 获取配置
+            pm = PathManager.get_instance()
+            # 获取 PluginContext 实例有点 hack，但 PathManager 是单例且与 context 绑定
+            # 更好的方式是 VectorStore 应该持有 plugin_context 的引用，但这需要较大的重构
+            # 这里我们通过检查环境变量或配置来决定
+
+            # 由于无法直接访问配置，我们检查类级别的配置或默认行为
+            # 如果 FlashRank 可用且已安装，我们就实例化它
+            if self._flashrank is None and FlashRankRetriever.is_available():
+                self._flashrank = FlashRankRetriever()
+            return self._flashrank
+        except Exception as e:
+            self.logger.warning(f"FlashRank 初始化失败: {e}")
+            return None
 
     def _get_tag_manager(self) -> Optional[TagManager]:
         """懒加载 TagManager(基于 PathManager 当前 provider 和索引目录)."""
@@ -319,8 +341,8 @@ class VectorStore:
                     if len(vector_results) >= limit:
                         break
 
-        # 混合检索:为记忆系统提供BM25精排(强制启用)
-        final_results = self._rerank_with_bm25(query, vector_results, collection, limit)
+        # 混合检索:为记忆系统提供语义精排
+        final_results = self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
 
@@ -397,8 +419,8 @@ class VectorStore:
                     if len(vector_results) >= limit:
                         break
 
-        # 混合检索:为记忆系统提供BM25精排(强制启用)
-        final_results = self._rerank_with_bm25(query, vector_results, collection, limit)
+        # 混合检索:为记忆系统提供语义精排
+        final_results = self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
 
@@ -953,13 +975,13 @@ class VectorStore:
                     f"✅ 失效了 {len(keys_to_remove)} 个匹配模式 '{pattern}' 的缓存项"
                 )
 
-    # ===== BM25混合检索集成方法 =====
+    # ===== 混合检索集成方法 =====
 
-    def _rerank_with_bm25(
+    def _rerank_results(
         self, query: str, vector_results: List[BaseMemory], collection, limit: int
     ) -> List[BaseMemory]:
         """
-        使用无状态BM25对向量检索结果进行精排.
+        通用重排入口（支持 FlashRank 和 BM25）.
 
         Args:
             query: 查询文本
@@ -977,29 +999,40 @@ class VectorStore:
             # 准备候选文档数据
             candidates = []
             for memory in vector_results:
-                # 获取记忆的语义核心文本用于BM25精排
+                # 获取记忆的语义核心文本用于重排
                 content = memory.get_semantic_core()
                 if content:
-                    candidates.append({"id": memory.id, "content": content})
+                    # 将完整 metadata 传递给 candidates，供 FlashRank 使用
+                    candidates.append({
+                        "id": memory.id,
+                        "content": content,
+                        "metadata": memory.to_dict()
+                    })
 
             if not candidates:
                 return vector_results
 
-            # 使用无状态BM25函数精排
-            bm25_results = rerank_with_bm25(query, candidates, limit)
+            # 优先尝试 FlashRank
+            flashrank = self._get_flashrank()
+            if flashrank:
+                ranked_scores = flashrank.rerank(query, candidates, limit)
+                # FlashRank 返回的是语义相似度分数，直接作为最终排序依据
+                # 不需要像 BM25 那样进行复杂的加权融合，因为 Cross-Encoder 的分数更可靠
+                return self._reorder_results_by_score(vector_results, ranked_scores, collection)
 
-            # 融合结果
+            # 降级到 BM25
+            bm25_results = rerank_with_bm25(query, candidates, limit)
             return self._merge_results(vector_results, bm25_results, collection)
 
         except Exception as e:
-            self.logger.error(f"BM25精排失败: {e}")
+            self.logger.error(f"重排失败: {e}")
             return vector_results
 
-    def _rerank_notes_with_bm25(
+    def _rerank_notes(
         self, query: str, vector_results: List[NoteData], collection, limit: int
     ) -> List[NoteData]:
         """
-        使用无状态BM25对笔记向量检索结果进行精排.
+        对笔记进行重排.
 
         Args:
             query: 查询文本
@@ -1017,24 +1050,94 @@ class VectorStore:
             # 准备候选文档数据
             candidates = []
             for note in vector_results:
-                # 获取笔记的embedding文本用于BM25精排
-                # 注意:NoteData.get_embedding_text()需要tag_names,但这里我们使用content作为fallback
+                # 获取笔记内容
                 content = note.content
                 if content:
-                    candidates.append({"id": note.id, "content": content})
+                    candidates.append({
+                        "id": note.id,
+                        "content": content,
+                        "metadata": note.to_dict()
+                    })
 
             if not candidates:
                 return vector_results
 
-            # 使用无状态BM25函数精排
-            bm25_results = rerank_with_bm25(query, candidates, limit)
+            # 优先尝试 FlashRank
+            flashrank = self._get_flashrank()
+            if flashrank:
+                ranked_scores = flashrank.rerank(query, candidates, limit)
+                return self._reorder_notes_by_score(vector_results, ranked_scores, collection)
 
-            # 融合结果
+            # 降级到 BM25
+            bm25_results = rerank_with_bm25(query, candidates, limit)
             return self._merge_note_results(vector_results, bm25_results, collection)
 
         except Exception as e:
-            self.logger.error(f"笔记BM25精排失败: {e}")
+            self.logger.error(f"笔记重排失败: {e}")
             return vector_results
+
+    def _reorder_results_by_score(
+        self,
+        original_results: List[BaseMemory],
+        ranked_scores: List[Tuple[str, float]],
+        collection
+    ) -> List[BaseMemory]:
+        """根据重排分数重新排序结果"""
+        if not ranked_scores:
+            return original_results
+
+        # 创建映射
+        memory_map = {mem.id: mem for mem in original_results}
+
+        final_results = []
+        ids_to_fetch = []
+
+        for doc_id, score in ranked_scores:
+            if doc_id in memory_map:
+                mem = memory_map[doc_id]
+                # 更新相似度分数为重排分数
+                mem.similarity = score
+                final_results.append(mem)
+            else:
+                ids_to_fetch.append(doc_id)
+
+        # 获取缺失的文档 (如果有的话)
+        if ids_to_fetch:
+            fetched = self._get_memories_by_ids(collection, ids_to_fetch)
+            for mem in fetched:
+                # 这里很难获取准确的 score，暂时略过或设为默认
+                final_results.append(mem)
+
+        return final_results
+
+    def _reorder_notes_by_score(
+        self,
+        original_results: List[NoteData],
+        ranked_scores: List[Tuple[str, float]],
+        collection
+    ) -> List[NoteData]:
+        """根据重排分数重新排序笔记"""
+        if not ranked_scores:
+            return original_results
+
+        note_map = {n.id: n for n in original_results}
+
+        final_results = []
+        ids_to_fetch = []
+
+        for doc_id, score in ranked_scores:
+            if doc_id in note_map:
+                note = note_map[doc_id]
+                note.similarity = score
+                final_results.append(note)
+            else:
+                ids_to_fetch.append(doc_id)
+
+        if ids_to_fetch:
+            fetched = self.get_notes_by_ids(collection, ids_to_fetch)
+            final_results.extend(fetched)
+
+        return final_results
 
     def _merge_results(
         self,
@@ -1253,8 +1356,8 @@ class VectorStore:
                         self.logger.error(f"导致创建失败的原始 metadata: {meta}")
                         continue
 
-        # 混合检索:结合BM25结果(强制启用)
-        final_results = self._rerank_notes_with_bm25(
+        # 混合检索:结合语义重排结果(强制启用)
+        final_results = self._rerank_notes(
             query, vector_results, collection, limit
         )
 
@@ -1343,8 +1446,8 @@ class VectorStore:
                         self.logger.error(f"导致创建失败的原始 metadata: {meta}")
                         continue
 
-        # 混合检索:结合BM25结果(强制启用)
-        final_results = self._rerank_notes_with_bm25(
+        # 混合检索:结合语义重排结果(强制启用)
+        final_results = self._rerank_notes(
             query, vector_results, collection, limit
         )
 

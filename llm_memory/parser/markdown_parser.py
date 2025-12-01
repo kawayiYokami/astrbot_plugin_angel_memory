@@ -7,7 +7,8 @@ Markdown解析器
 import re
 import uuid
 from typing import List, Dict, Any, Set
-import jieba.posseg as pseg
+HAS_JIEBA = False
+
 from ..models.note_models import NoteData
 from ..components.tag_manager import TagManager
 from ..utils.token_utils import count_tokens
@@ -330,7 +331,8 @@ class MarkdownParser:
 
     def _extract_jieba_tags_from_tag(self, tag_text: str) -> List[str]:
         """
-        对单个标签文本进行jieba分词和过滤，提取有效的子标签
+        对单个标签文本进行过滤，提取有效的子标签
+        (已移除Jieba依赖，改为直接返回原始标签)
 
         Args:
             tag_text: 待分析的标签文本
@@ -338,31 +340,10 @@ class MarkdownParser:
         Returns:
             过滤后的子标签列表
         """
-        tags = []
-
-        # 使用jieba进行分词和词性标注
-        words_with_pos = list(pseg.cut(tag_text))
-
-        # 保留适合作为标签的词性（排除动词、数词、量词，只保留名词性内容）
-        keep_pos = {
-            "n",  # 普通名词
-            "nr",  # 人名
-            "ns",  # 地名
-            "nt",  # 机构团体名
-            "nz",  # 其他专有名词
-            "vn",  # 名动词（名词化的动词，如"发展"->发展）
-            "a",  # 形容词
-            "t",  # 时间词
-        }
-
-        for word, pos in words_with_pos:
-            # 跳过标点符号和单字符词
-            if len(word.strip()) >= 2 and pos in keep_pos:
-                # 应用标签规则检查
-                if self._can_be_tag(word):
-                    tags.append(word)
-
-        return tags
+        # 直接返回原始标签（如果符合基本规则）
+        if self._can_be_tag(tag_text):
+            return [tag_text]
+        return []
 
     def _split_section(self, section: Dict[str, Any]) -> List[Dict[str, Any]]:
         """

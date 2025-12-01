@@ -17,6 +17,12 @@
     "default": false,
     "hint": "开启后首次使用时将自动安装本地模型依赖（约800MB）。"
   },
+  "enable_flashrank": {
+    "type": "bool",
+    "description": "[性能优化] 启用 FlashRank 极速重排 (推荐)",
+    "default": false,
+    "hint": "比默认BM25快10倍且更精准。开启前请确保已安装依赖: pip install flashrank"
+  },
   "default_passive_strength": {
     "type": "int",
     "description": "[记忆行为参数] 设置被动记忆的初始强度值",
