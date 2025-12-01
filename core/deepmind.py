@@ -1,3 +1,4 @@
+from .soul.soul_state import SoulState
 """
 DeepMind潜意识核心模块
 
@@ -108,6 +109,13 @@ class DeepMind:
         self.prompt_builder = SmallModelPromptBuilder()
         self.memory_injector = MemoryInjector()
         self.query_processor = get_query_processor()
+
+        # 初始化灵魂状态管理器
+        try:
+            self.soul = SoulState(storage_path=self.plugin_context.get_data_dir() + "/soul_state.json")
+        except Exception as e:
+            self.logger.error(f"灵魂状态管理器初始化失败: {e}")
+            self.soul = None
 
         # 初始化记忆系统（如果没有通过依赖注入提供）
         self._init_memory_system()
@@ -223,17 +231,32 @@ class DeepMind:
                 handlers = None
                 if hasattr(self.memory_system, 'memory_handler_factory') and self.memory_system.memory_handler_factory:
                     handlers = getattr(self.memory_system.memory_handler_factory, 'handlers', None)
-                
+
+                # 动态获取检索上限
+                dynamic_limit = self.CHAINED_RECALL_PER_TYPE_LIMIT
+                if self.soul:
+                    try:
+                        dynamic_limit = self.soul.get_value("RecallDepth")
+                        self.logger.info(f"🧠 灵魂回忆深度: {dynamic_limit} (E={self.soul.energy['RecallDepth']:.1f})")
+                    except Exception as e:
+                        self.logger.warning(f"获取灵魂参数失败，使用默认值: {e}")
+
                 # 调用新的 chained_recall
                 long_term_memories = await self.memory_system.chained_recall(
                     query=memory_query,
                     entities=entities,
-                    per_type_limit=self.CHAINED_RECALL_PER_TYPE_LIMIT,
-                    final_limit=self.CHAINED_RECALL_FINAL_LIMIT,
+                    per_type_limit=int(dynamic_limit), # 动态控制
+                    final_limit=int(dynamic_limit * 1.5),
                     memory_handlers=handlers,
                     event=event,
                     vector=memory_vector,
                 )
+
+                # 情绪共鸣：旧记忆冲击当前状态
+                if self.soul:
+                    for mem in long_term_memories:
+                        if hasattr(mem, "state_snapshot"):
+                            self.soul.resonate(mem.state_snapshot)
 
             except Exception as e:
                 self.logger.error(f"链式召回失败，跳过记忆检索: {e}")
@@ -459,6 +482,30 @@ class DeepMind:
             request: 即将发给主意识的请求（我们要往里面塞记忆）
         """
         session_id = self._get_session_id(event)
+
+        # 0. 动态注入 LLM 参数 (基于灵魂状态)
+        if hasattr(self, "soul") and self.soul:
+            try:
+                # 获取动态参数
+                dynamic_temp = self.soul.get_value("Creativity")
+                dynamic_tokens = int(self.soul.get_value("ExpressionDesire"))
+
+                # 注入到请求中 (尝试使用 extension 字段，如果不存在则创建)
+                if not hasattr(request, "extension"):
+                    request.extension = {}
+
+                # 确保 extension 是字典
+                if request.extension is None:
+                    request.extension = {}
+
+                request.extension.update({
+                    "temperature": dynamic_temp,
+                    "max_tokens": dynamic_tokens
+                })
+
+                self.logger.info(f"👻 灵魂参数注入: Temp={dynamic_temp}, MaxTokens={dynamic_tokens}")
+            except Exception as e:
+                self.logger.warning(f"灵魂参数注入失败: {e}")
 
         # 1. 从 event.angelheart_context 中获取对话历史
         chat_records = []
@@ -918,6 +965,36 @@ class DeepMind:
             # 提取 feedback_data
             feedback_data = full_json_data.get("feedback_data", {})
 
+            # --- 灵魂状态更新 (Feedback Loop) ---
+            if hasattr(self, "soul") and self.soul and "soul_state_code" in full_json_data:
+                state_code = full_json_data.get("soul_state_code", "0000")
+                if len(state_code) == 4:
+                    try:
+                        # 解析4位代码
+                        is_recall, is_learn, is_talkative, is_creative = [int(c) for c in state_code]
+
+                        # 定义更新规则 (命中+1.0, 未命中-0.5, 自然衰减0.1)
+                        # 代码位对应: RecallDepth, ImpressionDepth, ExpressionDesire, Creativity
+                        # 注意：上面的解析顺序可能需要根据Prompt中的定义微调
+                        # 0000 颓废: 话少(Expression-), 死板(Creativity-), 不查历史(Recall-), 拒绝新知(Impression-)
+                        # 1111 觉醒: 话多(Expression+), 飞升(Creativity+), 查阅历史(Recall+), 吸收新知(Impression+)
+
+                        # 更新 RecallDepth (对应第1位: 查阅历史)
+                        self.soul.update_energy("RecallDepth", 1.0 if is_recall else -0.5, decay=0.1)
+
+                        # 更新 ImpressionDepth (对应第2位: 吸收新知)
+                        self.soul.update_energy("ImpressionDepth", 1.0 if is_learn else -0.5, decay=0.1)
+
+                        # 更新 ExpressionDesire (对应第3位: 话多)
+                        self.soul.update_energy("ExpressionDesire", 1.0 if is_talkative else -0.5, decay=0.1)
+
+                        # 更新 Creativity (对应第4位: 发散/逻辑飞升/不被束缚)
+                        self.soul.update_energy("Creativity", 1.0 if is_creative else -0.5, decay=0.1)
+
+                        self.logger.info(f"🧘 灵魂反思 ({state_code}): {self.soul.get_state_description()}")
+                    except ValueError:
+                        self.logger.warning(f"无效的灵魂状态代码: {state_code}")
+
             # ID解析：使用映射表将LLM返回的短ID翻译回长ID
             memory_id_mapping = context_data.get("memory_id_mapping", {})
             note_id_mapping = context_data.get("note_id_mapping", {})
@@ -951,6 +1028,22 @@ class DeepMind:
             new_memories_normalized = MemoryIDResolver.normalize_new_memories_format(
                 new_memories_raw, self.logger
             )
+
+            # --- 记忆生成限制 (基于灵魂 ImpressionDepth) ---
+            if hasattr(self, "soul") and self.soul and new_memories_normalized:
+                # 获取允许生成的最大数量
+                impression_limit = int(self.soul.get_value("ImpressionDepth"))
+                original_count = len(new_memories_normalized)
+
+                # 截断列表
+                if original_count > impression_limit:
+                    new_memories_normalized = new_memories_normalized[:impression_limit]
+                    self.logger.info(f"✂️ 记忆截断: 灵魂仅允许记录 {impression_limit} 条 (原 {original_count} 条)")
+
+                # 为每条新记忆注入当前的灵魂快照
+                snapshot = self.soul.get_snapshot()
+                for mem in new_memories_normalized:
+                    mem["state_snapshot"] = snapshot
 
             # --- 修正结束 ---
 

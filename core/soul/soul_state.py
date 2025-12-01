@@ -1,0 +1,190 @@
+import math
+import json
+import os
+import threading
+from typing import Dict, Any, Optional
+
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
+class SoulState:
+    """
+    灵魂状态管理器 (Soul State Manager)
+
+    管理 AI 的核心精神状态（4维能量槽），并通过橡皮筋算法（Tanh）将其映射为具体的行为参数。
+    实现了类似人类的“情绪惯性”和“创伤应激”机制。
+    """
+
+    def __init__(self, storage_path: str = None):
+        """
+        初始化灵魂状态
+
+        Args:
+            storage_path: 持久化存储路径 (json文件)
+        """
+        self.storage_path = storage_path
+        self._lock = threading.RLock() # 线程锁
+
+        # 能量池：累积历史刺激，初始为0（中庸），范围软限制 [-10, 10]
+        self.energy = {
+            "RecallDepth":      0.0, # 回忆量倾向：决定检索量 (RAG Top_K)
+            "ImpressionDepth":  0.0, # 记住量倾向：决定记忆生成数量 (Memory Generation Limit)
+            "ExpressionDesire": 0.0, # 发言长度倾向：决定发言长度 (Max Tokens)
+            "Creativity":       0.0  # 思维发散倾向：决定温度 (Temperature)
+        }
+
+        # 物理参数配置：定义每个维度的 [min, mid, max] 映射区间
+        self.config = {
+            "RecallDepth":      {"min": 3,   "mid": 7,   "max": 20},   # RAG Top_K
+            "ImpressionDepth":  {"min": 1,   "mid": 3,   "max": 10},   # 记忆生成数量上限
+            "ExpressionDesire": {"min": 100, "mid": 500, "max": 4000}, # Max Tokens
+            "Creativity":       {"min": 0.1, "mid": 0.7, "max": 1.5}   # Temperature
+        }
+
+        # 尝试加载历史状态
+        if self.storage_path and os.path.exists(self.storage_path):
+            self.load()
+
+    def get_value(self, dimension: str) -> float:
+        """
+        核心算法：橡皮筋阻尼映射 (Tanh)
+        将无界的状态能量值映射到有界的物理参数区间。
+
+        公式：
+        y = mid + (max - mid) * tanh(k * x)  if x >= 0
+        y = mid + (mid - min) * tanh(k * x)  if x < 0
+        """
+        if dimension not in self.energy or dimension not in self.config:
+            logger.warning(f"未知维度: {dimension}，返回默认值 0")
+            return 0.0
+
+        E = self.energy[dimension]
+        cfg = self.config[dimension]
+        k = 0.3  # 敏感度系数，决定了能量变化的响应速度
+
+        if E >= 0:
+            val = cfg['mid'] + (cfg['max'] - cfg['mid']) * math.tanh(k * E)
+        else:
+            val = cfg['mid'] + (cfg['mid'] - cfg['min']) * math.tanh(k * E)
+
+        # 强制截断在 min-max 范围内（虽然 tanh 不会越界，但浮点运算可能微小溢出）
+        val = max(cfg['min'], min(cfg['max'], val))
+
+        # 对于整数类型的参数（如Top_K, Tokens），进行取整
+        if dimension in ["RecallDepth", "ImpressionDepth", "ExpressionDesire"]:
+            return int(round(val))
+        return round(val, 2)
+
+    def update_energy(self, dimension: str, delta: float, decay: float = 0.0):
+        """
+        更新能量状态 (线程安全)
+
+        Args:
+            dimension: 维度名称
+            delta: 变化量（可正可负）
+            decay: 自然衰减系数 (0.0 - 1.0)，每轮更新前先让当前能量衰减
+        """
+        with self._lock:
+            if dimension not in self.energy:
+                return
+
+            original_val = self.energy[dimension]
+
+            # 1. 自然衰减 (回归中庸)
+            if decay > 0:
+                self.energy[dimension] *= (1.0 - decay)
+                # 如果能量非常小，直接归零，避免无限逼近
+                if abs(self.energy[dimension]) < 0.1:
+                    self.energy[dimension] = 0.0
+
+            # 2. 施加刺激
+            self.energy[dimension] += delta
+
+            # 3. 软限制 (可选，防止数值溢出，Tanh本身能处理大数值，但保持在[-10, 10]比较合理)
+            self.energy[dimension] = max(-20.0, min(20.0, self.energy[dimension]))
+
+            new_val = self.energy[dimension]
+            logger.debug(f"🔋 Soul Update [{dimension}]: {original_val:.2f} -> {new_val:.2f} (Delta={delta}, Decay={decay})")
+
+        # 4. 自动保存 (save方法内部也有锁，但这里为了逻辑清晰，放在锁外或锁内均可，save本身是安全的)
+        self.save()
+
+    def resonate(self, snapshot: Dict[str, float], intensity: float = 0.1):
+        """
+        共鸣机制：让旧记忆的状态快照冲击当前状态 (线程安全)
+
+        Args:
+            snapshot: 记忆中的状态快照 {"RecallDepth": 1.5, ...}
+            intensity: 共鸣强度系数 (0.0 - 1.0)
+        """
+        if not snapshot:
+            return
+
+        with self._lock:
+            changes = []
+            for dim, val in snapshot.items():
+                if dim in self.energy:
+                    original_val = self.energy[dim]
+                    # 简单累加共鸣
+                    delta = val * intensity
+                    self.energy[dim] += delta
+                    changes.append(f"{dim}: {original_val:.1f}->{self.energy[dim]:.1f}")
+
+            if changes:
+                logger.debug(f"🎼 Soul Resonate: {', '.join(changes)}")
+
+        self.save()
+
+    def get_snapshot(self) -> Dict[str, float]:
+        """获取当前状态快照（用于存入新记忆）"""
+        return self.energy.copy()
+
+    def get_state_description(self) -> str:
+        """获取当前状态的文本描述（用于调试或Prompt注入）"""
+        desc = []
+        desc.append(f"🧠 回忆倾向(Recall): {self.get_value('RecallDepth')}条 (E={self.energy['RecallDepth']:.1f})")
+        desc.append(f"📝 记住倾向(Impression): {self.get_value('ImpressionDepth')}条 (E={self.energy['ImpressionDepth']:.1f})")
+        desc.append(f"🗣️ 表达欲望(Expression): {self.get_value('ExpressionDesire')} Tokens (E={self.energy['ExpressionDesire']:.1f})")
+        desc.append(f"🎨 思维发散(Creativity): {self.get_value('Creativity')} Temp (E={self.energy['Creativity']:.1f})")
+        return " | ".join(desc)
+
+    def save(self):
+        """持久化保存"""
+        if not self.storage_path:
+            return
+        try:
+            dir_path = os.path.dirname(self.storage_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
+            # 使用临时文件写入，避免写入过程中断导致文件损坏
+            temp_path = self.storage_path + ".tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                # 只有在持有锁的时候才dump，确保数据一致性
+                with self._lock:
+                     json.dump(self.energy, f, indent=2)
+
+            # 原子性重命名
+            if os.path.exists(self.storage_path):
+                os.remove(self.storage_path)
+            os.rename(temp_path, self.storage_path)
+
+        except Exception as e:
+            logger.error(f"保存灵魂状态失败: {e}")
+
+    def load(self):
+        """加载状态"""
+        if not self.storage_path or not os.path.exists(self.storage_path):
+            return
+        try:
+            with open(self.storage_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                with self._lock:
+                    for k, v in data.items():
+                        if k in self.energy:
+                            self.energy[k] = float(v)
+            logger.info(f"💾 Soul State Loaded: {self.get_state_description()}")
+        except Exception as e:
+            logger.error(f"加载灵魂状态失败: {e}")

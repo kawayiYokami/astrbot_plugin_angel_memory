@@ -77,6 +77,7 @@ class BaseMemory:
         associations: dict = None,
         created_at: float = None,
         is_consolidated: bool = None,  # 废弃字段，仅保留兼容性
+        state_snapshot: dict = None,   # 灵魂状态快照
     ):
         self.id = id or str(uuid.uuid4())
         self.memory_type = memory_type
@@ -87,6 +88,7 @@ class BaseMemory:
         self.is_active = is_active  # True=主动记忆(不衰减), False=被动记忆(会衰减)
         self.associations = associations or {}  # 记忆关联字段：{memory_id: strength}
         self.created_at = created_at or time.time()  # 自动记录创建时间
+        self.state_snapshot = state_snapshot or {} # 记录生成该记忆时的灵魂状态
         self.similarity = 0.0  # 相似度分数（仅用于检索时传递，不存储到数据库）
 
     def get_semantic_core(self) -> str:
@@ -114,6 +116,7 @@ class BaseMemory:
             "is_active": self.is_active,
             "associations": associations_str,
             "created_at": self.created_at,
+            "state_snapshot": json.dumps(self.state_snapshot) if self.state_snapshot else "{}",
         }
 
     @staticmethod
@@ -183,6 +186,7 @@ class BaseMemory:
                 is_active=data.get("is_active", False),
                 associations=cls._parse_associations(data.get("associations", {})),
                 created_at=data.get("created_at", time.time()),
+                state_snapshot=cls._parse_associations(data.get("state_snapshot", {})), # 复用json解析逻辑
             )
         except (KeyError, TypeError, ValueError) as e:
             raise ValidationError(f"从字典创建记忆失败: {str(e)}")
