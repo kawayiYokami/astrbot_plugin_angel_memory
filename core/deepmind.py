@@ -112,7 +112,8 @@ class DeepMind:
 
         # 初始化灵魂状态管理器
         try:
-            self.soul = SoulState(storage_path=self.plugin_context.get_data_dir() + "/soul_state.json")
+            # 将配置对象传递给 SoulState
+            self.soul = SoulState(config=self.config)
         except Exception as e:
             self.logger.error(f"灵魂状态管理器初始化失败: {e}")
             self.soul = None

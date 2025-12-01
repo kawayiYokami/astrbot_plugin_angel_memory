@@ -52,5 +52,77 @@
     "description": "[Token预算] 应答模型用于笔记上下文的令牌预算",
     "default": 16000,
     "hint": "建议设为8000-160000之间。参考：1个英文字符 ≈ 0.3个令牌，1个中文字符 ≈ 0.6个令牌。"
+  },
+  "soul_recall_depth_min": {
+    "type": "int",
+    "description": "[灵魂参数-RecallDepth] 回忆量倾向-最小值 (RAG Top_K)",
+    "default": 3,
+    "hint": "决定检索量的下限"
+  },
+  "soul_recall_depth_mid": {
+    "type": "int",
+    "description": "[灵魂参数-RecallDepth] 回忆量倾向-中庸值 (RAG Top_K)",
+    "default": 7,
+    "hint": "决定检索量的基准值"
+  },
+  "soul_recall_depth_max": {
+    "type": "int",
+    "description": "[灵魂参数-RecallDepth] 回忆量倾向-最大值 (RAG Top_K)",
+    "default": 20,
+    "hint": "决定检索量的上限"
+  },
+  "soul_impression_depth_min": {
+    "type": "int",
+    "description": "[灵魂参数-ImpressionDepth] 记住量倾向-最小值 (Memory Limit)",
+    "default": 1,
+    "hint": "决定记忆生成数量的下限"
+  },
+  "soul_impression_depth_mid": {
+    "type": "int",
+    "description": "[灵魂参数-ImpressionDepth] 记住量倾向-中庸值 (Memory Limit)",
+    "default": 3,
+    "hint": "决定记忆生成数量的基准值"
+  },
+  "soul_impression_depth_max": {
+    "type": "int",
+    "description": "[灵魂参数-ImpressionDepth] 记住量倾向-最大值 (Memory Limit)",
+    "default": 10,
+    "hint": "决定记忆生成数量的上限"
+  },
+  "soul_expression_desire_min": {
+    "type": "int",
+    "description": "[灵魂参数-ExpressionDesire] 发言长度倾向-最小值 (Max Tokens)",
+    "default": 100,
+    "hint": "决定发言长度的下限"
+  },
+  "soul_expression_desire_mid": {
+    "type": "int",
+    "description": "[灵魂参数-ExpressionDesire] 发言长度倾向-中庸值 (Max Tokens)",
+    "default": 500,
+    "hint": "决定发言长度的基准值"
+  },
+  "soul_expression_desire_max": {
+    "type": "int",
+    "description": "[灵魂参数-ExpressionDesire] 发言长度倾向-最大值 (Max Tokens)",
+    "default": 4000,
+    "hint": "决定发言长度的上限"
+  },
+  "soul_creativity_min": {
+    "type": "float",
+    "description": "[灵魂参数-Creativity] 思维发散倾向-最小值 (Temperature)",
+    "default": 0.1,
+    "hint": "决定思维发散的下限"
+  },
+  "soul_creativity_mid": {
+    "type": "float",
+    "description": "[灵魂参数-Creativity] 思维发散倾向-中庸值 (Temperature)",
+    "default": 0.7,
+    "hint": "决定思维发散的基准值"
+  },
+  "soul_creativity_max": {
+    "type": "float",
+    "description": "[灵魂参数-Creativity] 思维发散倾向-最大值 (Temperature)",
+    "default": 1.5,
+    "hint": "决定思维发散的上限"
   }
 }

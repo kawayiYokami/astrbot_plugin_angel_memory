@@ -18,14 +18,12 @@ class SoulState:
     实现了类似人类的“情绪惯性”和“创伤应激”机制。
     """
 
-    def __init__(self, storage_path: str = None):
+    def __init__(self, config=None):
         """
         初始化灵魂状态
 
-        Args:
-            storage_path: 持久化存储路径 (json文件)
+        注意：状态仅在内存中维护，重启插件后会重置为中庸状态(0.0)
         """
-        self.storage_path = storage_path
         self._lock = threading.RLock() # 线程锁
 
         # 能量池：累积历史刺激，初始为0（中庸），范围软限制 [-10, 10]
@@ -36,17 +34,33 @@ class SoulState:
             "Creativity":       0.0  # 思维发散倾向：决定温度 (Temperature)
         }
 
-        # 物理参数配置：定义每个维度的 [min, mid, max] 映射区间
+        # 从配置中读取物理参数
         self.config = {
-            "RecallDepth":      {"min": 3,   "mid": 7,   "max": 20},   # RAG Top_K
-            "ImpressionDepth":  {"min": 1,   "mid": 3,   "max": 10},   # 记忆生成数量上限
-            "ExpressionDesire": {"min": 100, "mid": 500, "max": 4000}, # Max Tokens
-            "Creativity":       {"min": 0.1, "mid": 0.7, "max": 1.5}   # Temperature
+            "RecallDepth": {
+                "min": getattr(config, "soul_recall_depth_min", 3),
+                "mid": getattr(config, "soul_recall_depth_mid", 7),
+                "max": getattr(config, "soul_recall_depth_max", 20)
+            },
+            "ImpressionDepth": {
+                "min": getattr(config, "soul_impression_depth_min", 1),
+                "mid": getattr(config, "soul_impression_depth_mid", 3),
+                "max": getattr(config, "soul_impression_depth_max", 10)
+            },
+            "ExpressionDesire": {
+                "min": getattr(config, "soul_expression_desire_min", 100),
+                "mid": getattr(config, "soul_expression_desire_mid", 500),
+                "max": getattr(config, "soul_expression_desire_max", 4000)
+            },
+            "Creativity": {
+                "min": getattr(config, "soul_creativity_min", 0.1),
+                "mid": getattr(config, "soul_creativity_mid", 0.7),
+                "max": getattr(config, "soul_creativity_max", 1.5)
+            }
         }
 
-        # 尝试加载历史状态
-        if self.storage_path and os.path.exists(self.storage_path):
-            self.load()
+        # 移除自动加载逻辑
+        # if self.storage_path and os.path.exists(self.storage_path):
+        #     self.load()
 
     def get_value(self, dimension: str) -> float:
         """
@@ -109,8 +123,8 @@ class SoulState:
             new_val = self.energy[dimension]
             logger.debug(f"🔋 Soul Update [{dimension}]: {original_val:.2f} -> {new_val:.2f} (Delta={delta}, Decay={decay})")
 
-        # 4. 自动保存 (save方法内部也有锁，但这里为了逻辑清晰，放在锁外或锁内均可，save本身是安全的)
-        self.save()
+        # 4. 不再自动保存到文件
+        # self.save()
 
     def resonate(self, snapshot: Dict[str, float], intensity: float = 0.1):
         """
@@ -136,7 +150,8 @@ class SoulState:
             if changes:
                 logger.debug(f"🎼 Soul Resonate: {', '.join(changes)}")
 
-        self.save()
+        # 不再自动保存到文件
+        # self.save()
 
     def get_snapshot(self) -> Dict[str, float]:
         """获取当前状态快照（用于存入新记忆）"""
@@ -151,40 +166,4 @@ class SoulState:
         desc.append(f"🎨 思维发散(Creativity): {self.get_value('Creativity')} Temp (E={self.energy['Creativity']:.1f})")
         return " | ".join(desc)
 
-    def save(self):
-        """持久化保存"""
-        if not self.storage_path:
-            return
-        try:
-            dir_path = os.path.dirname(self.storage_path)
-            if dir_path:
-                os.makedirs(dir_path, exist_ok=True)
-            # 使用临时文件写入，避免写入过程中断导致文件损坏
-            temp_path = self.storage_path + ".tmp"
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                # 只有在持有锁的时候才dump，确保数据一致性
-                with self._lock:
-                     json.dump(self.energy, f, indent=2)
-
-            # 原子性重命名
-            if os.path.exists(self.storage_path):
-                os.remove(self.storage_path)
-            os.rename(temp_path, self.storage_path)
-
-        except Exception as e:
-            logger.error(f"保存灵魂状态失败: {e}")
-
-    def load(self):
-        """加载状态"""
-        if not self.storage_path or not os.path.exists(self.storage_path):
-            return
-        try:
-            with open(self.storage_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                with self._lock:
-                    for k, v in data.items():
-                        if k in self.energy:
-                            self.energy[k] = float(v)
-            logger.info(f"💾 Soul State Loaded: {self.get_state_description()}")
-        except Exception as e:
-            logger.error(f"加载灵魂状态失败: {e}")
+    # 移除 save 和 load 方法，因为不需要持久化了

@@ -62,7 +62,7 @@ def rerank_with_bm25(
     """
     if not candidates:
         return []
-    
+
     # 如果查询为空，直接返回空列表，避免不必要的计算
     if not query or not query.strip():
         logger.debug("查询为空，跳过 BM25 精排。")

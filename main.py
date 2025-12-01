@@ -77,7 +77,7 @@ def _upgrade_chromadb():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "0.3.0",
+    "0.4.1",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -105,7 +105,7 @@ class AngelMemoryPlugin(Star):
         self.logger = logger
 
         # 1. 获取插件数据目录（在main.py中获取）
-        data_dir = StarTools.get_data_dir()
+        data_dir = StarTools.get_data_dir("astrbot_plugin_angel_memory")
         self.logger.info(f"获取到插件数据目录: {data_dir}")
 
         # 2. 创建统一的PluginContext，包含所有必要资源

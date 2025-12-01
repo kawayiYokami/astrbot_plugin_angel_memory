@@ -160,6 +160,23 @@ class MemoryConfig:
         )
         self._enable_local_embedding = config_get("enable_local_embedding", False)
 
+        # 灵魂参数配置
+        self._soul_recall_depth_min = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_min", 3), "soul_recall_depth_min")
+        self._soul_recall_depth_mid = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_mid", 7), "soul_recall_depth_mid")
+        self._soul_recall_depth_max = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_max", 20), "soul_recall_depth_max")
+
+        self._soul_impression_depth_min = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_min", 1), "soul_impression_depth_min")
+        self._soul_impression_depth_mid = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_mid", 3), "soul_impression_depth_mid")
+        self._soul_impression_depth_max = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_max", 10), "soul_impression_depth_max")
+
+        self._soul_expression_desire_min = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_min", 100), "soul_expression_desire_min")
+        self._soul_expression_desire_mid = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_mid", 500), "soul_expression_desire_mid")
+        self._soul_expression_desire_max = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_max", 4000), "soul_expression_desire_max")
+
+        self._soul_creativity_min = ConfigValidator.validate_positive_number(config_get("soul_creativity_min", 0.1), "soul_creativity_min")
+        self._soul_creativity_mid = ConfigValidator.validate_positive_number(config_get("soul_creativity_mid", 0.7), "soul_creativity_mid")
+        self._soul_creativity_max = ConfigValidator.validate_positive_number(config_get("soul_creativity_max", 1.5), "soul_creativity_max")
+
     @property
     def min_message_length(self) -> int:
         """获取最小消息长度"""
@@ -198,6 +215,35 @@ class MemoryConfig:
     def enable_local_embedding(self) -> bool:
         """是否启用本地嵌入模型"""
         return self._enable_local_embedding
+
+    # 灵魂参数属性
+    @property
+    def soul_recall_depth_min(self) -> int: return self._soul_recall_depth_min
+    @property
+    def soul_recall_depth_mid(self) -> int: return self._soul_recall_depth_mid
+    @property
+    def soul_recall_depth_max(self) -> int: return self._soul_recall_depth_max
+
+    @property
+    def soul_impression_depth_min(self) -> int: return self._soul_impression_depth_min
+    @property
+    def soul_impression_depth_mid(self) -> int: return self._soul_impression_depth_mid
+    @property
+    def soul_impression_depth_max(self) -> int: return self._soul_impression_depth_max
+
+    @property
+    def soul_expression_desire_min(self) -> int: return self._soul_expression_desire_min
+    @property
+    def soul_expression_desire_mid(self) -> int: return self._soul_expression_desire_mid
+    @property
+    def soul_expression_desire_max(self) -> int: return self._soul_expression_desire_max
+
+    @property
+    def soul_creativity_min(self) -> float: return self._soul_creativity_min
+    @property
+    def soul_creativity_mid(self) -> float: return self._soul_creativity_mid
+    @property
+    def soul_creativity_max(self) -> float: return self._soul_creativity_max
 
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """
