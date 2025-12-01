@@ -53,6 +53,14 @@ class ConfigValidator:
             )
         return value
 
+    @staticmethod
+    def validate_range_order(min_val: Any, mid_val: Any, max_val: Any, field_prefix: str) -> None:
+        """验证范围顺序 min <= mid <= max"""
+        if not (min_val <= mid_val <= max_val):
+            raise ValueError(
+                f"{field_prefix} range order invalid: min({min_val}) <= mid({mid_val}) <= max({max_val}) not satisfied"
+            )
+
 
 @dataclass
 class MemoryCapacityConfig:
@@ -160,23 +168,28 @@ class MemoryConfig:
         )
         self._enable_local_embedding = config_get("enable_local_embedding", False)
         self._enable_flashrank = config_get("enable_flashrank", False)
+        self._flashrank_model = config_get("flashrank_model", "ms-marco-MultiBERT-L-12")
 
         # 灵魂参数配置
         self._soul_recall_depth_min = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_min", 3), "soul_recall_depth_min")
         self._soul_recall_depth_mid = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_mid", 7), "soul_recall_depth_mid")
         self._soul_recall_depth_max = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_max", 20), "soul_recall_depth_max")
+        ConfigValidator.validate_range_order(self._soul_recall_depth_min, self._soul_recall_depth_mid, self._soul_recall_depth_max, "soul_recall_depth")
 
         self._soul_impression_depth_min = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_min", 1), "soul_impression_depth_min")
         self._soul_impression_depth_mid = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_mid", 3), "soul_impression_depth_mid")
         self._soul_impression_depth_max = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_max", 10), "soul_impression_depth_max")
+        ConfigValidator.validate_range_order(self._soul_impression_depth_min, self._soul_impression_depth_mid, self._soul_impression_depth_max, "soul_impression_depth")
 
         self._soul_expression_desire_min = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_min", 100), "soul_expression_desire_min")
         self._soul_expression_desire_mid = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_mid", 500), "soul_expression_desire_mid")
         self._soul_expression_desire_max = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_max", 4000), "soul_expression_desire_max")
+        ConfigValidator.validate_range_order(self._soul_expression_desire_min, self._soul_expression_desire_mid, self._soul_expression_desire_max, "soul_expression_desire")
 
         self._soul_creativity_min = ConfigValidator.validate_positive_number(config_get("soul_creativity_min", 0.1), "soul_creativity_min")
         self._soul_creativity_mid = ConfigValidator.validate_positive_number(config_get("soul_creativity_mid", 0.7), "soul_creativity_mid")
         self._soul_creativity_max = ConfigValidator.validate_positive_number(config_get("soul_creativity_max", 1.5), "soul_creativity_max")
+        ConfigValidator.validate_range_order(self._soul_creativity_min, self._soul_creativity_mid, self._soul_creativity_max, "soul_creativity")
 
     @property
     def min_message_length(self) -> int:
@@ -221,6 +234,11 @@ class MemoryConfig:
     def enable_flashrank(self) -> bool:
         """是否启用 FlashRank 重排"""
         return self._enable_flashrank
+
+    @property
+    def flashrank_model(self) -> str:
+        """FlashRank 模型名称"""
+        return self._flashrank_model
 
     # 灵魂参数属性
     @property
@@ -272,6 +290,7 @@ class MemoryConfig:
             "sleep_interval": self.sleep_interval,
             "enable_local_embedding": self.enable_local_embedding,
             "enable_flashrank": self.enable_flashrank,
+            "flashrank_model": self.flashrank_model,
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "small_model_note_budget": self.small_model_note_budget,

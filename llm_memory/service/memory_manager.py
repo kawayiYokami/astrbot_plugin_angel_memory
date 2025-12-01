@@ -247,7 +247,6 @@ class MemoryManager:
         all_memories = entity_memories + [mem for mems in type_memories.values() for mem in mems]
 
         # 步骤5: 被动记忆衰减（强度-1，最低为0）
-        # 步骤5: 被动记忆衰减（强度-1，最低为0）
         batch_updates = []
         for mem in all_memories:
             if not mem.is_active:  # 只对被动记忆衰减

@@ -22,7 +22,6 @@ except ImportError:
 from ..models.data_models import BaseMemory
 from ..models.note_models import NoteData
 from ..config.system_config import system_config
-from .bm25_retriever import rerank_with_bm25
 from .flashrank_retriever import FlashRankRetriever
 
 
@@ -1012,17 +1011,15 @@ class VectorStore:
             if not candidates:
                 return vector_results
 
-            # 优先尝试 FlashRank
+            # 使用 FlashRank
             flashrank = self._get_flashrank()
             if flashrank:
                 ranked_scores = flashrank.rerank(query, candidates, limit)
-                # FlashRank 返回的是语义相似度分数，直接作为最终排序依据
-                # 不需要像 BM25 那样进行复杂的加权融合，因为 Cross-Encoder 的分数更可靠
+                # 使用 3:7 加权融合策略 (0.3 * Vector + 0.7 * FlashRank)
                 return self._reorder_results_by_score(vector_results, ranked_scores, collection)
 
-            # 降级到 BM25
-            bm25_results = rerank_with_bm25(query, candidates, limit)
-            return self._merge_results(vector_results, bm25_results, collection)
+            # 如果 FlashRank 不可用，直接返回向量结果
+            return vector_results
 
         except Exception as e:
             self.logger.error(f"重排失败: {e}")
@@ -1062,15 +1059,15 @@ class VectorStore:
             if not candidates:
                 return vector_results
 
-            # 优先尝试 FlashRank
+            # 使用 FlashRank
             flashrank = self._get_flashrank()
             if flashrank:
                 ranked_scores = flashrank.rerank(query, candidates, limit)
+                # 使用 3:7 加权融合策略 (0.3 * Vector + 0.7 * FlashRank)
                 return self._reorder_notes_by_score(vector_results, ranked_scores, collection)
 
-            # 降级到 BM25
-            bm25_results = rerank_with_bm25(query, candidates, limit)
-            return self._merge_note_results(vector_results, bm25_results, collection)
+            # 如果 FlashRank 不可用，直接返回向量结果
+            return vector_results
 
         except Exception as e:
             self.logger.error(f"笔记重排失败: {e}")
@@ -1082,33 +1079,48 @@ class VectorStore:
         ranked_scores: List[Tuple[str, float]],
         collection
     ) -> List[BaseMemory]:
-        """根据重排分数重新排序结果"""
-        if not ranked_scores:
-            return original_results
+        """
+        根据 3:7 加权融合策略重新排序结果
+        Score = 0.3 * VectorScore + 0.7 * FlashRankScore
 
-        # 创建映射
-        memory_map = {mem.id: mem for mem in original_results}
+        策略：
+        1. 如果 FlashRank 失败 (ranked_scores为空)，则默认 FlashRank 分数为 1.0 (保留向量排序)
+        2. 如果 FlashRank 成功但截断了结果，未在 ranked_scores 中的项默认分数为 0.0
+        3. 始终保留所有原始候选结果，防止数据丢失
+        """
+        # 1. 准备 FlashRank 分数逻辑
+        flashrank_score_map = {}
+        default_flash_score = 0.0
 
-        final_results = []
-        ids_to_fetch = []
+        if ranked_scores:
+            flashrank_score_map = {doc_id: score for doc_id, score in ranked_scores}
+            # 既然 FlashRank 返回了结果，说明未选中的确实相关性低，给 0.0
+            default_flash_score = 0.0
+        else:
+            # FlashRank 失败或未返回任何结果，为了保持原有向量排序并归一化，给予满分 1.0
+            # 这样 Final = 0.3 * Vector + 0.7 * 1.0，顺序由 Vector 决定
+            default_flash_score = 1.0
 
-        for doc_id, score in ranked_scores:
-            if doc_id in memory_map:
-                mem = memory_map[doc_id]
-                # 更新相似度分数为重排分数
-                mem.similarity = score
-                final_results.append(mem)
-            else:
-                ids_to_fetch.append(doc_id)
+        fused_results = []
 
-        # 获取缺失的文档 (如果有的话)
-        if ids_to_fetch:
-            fetched = self._get_memories_by_ids(collection, ids_to_fetch)
-            for mem in fetched:
-                # 这里很难获取准确的 score，暂时略过或设为默认
-                final_results.append(mem)
+        # 2. 遍历所有原始结果（确保不丢失数据）
+        for mem in original_results:
+            # 获取 FlashRank 分数
+            flash_score = flashrank_score_map.get(mem.id, default_flash_score)
 
-        return final_results
+            # 获取向量分数
+            vector_score = getattr(mem, "similarity", 0.0)
+
+            # 核心公式: 0.3 * Vector + 0.7 * FlashRank
+            final_score = (0.3 * vector_score) + (0.7 * flash_score)
+
+            mem.similarity = final_score
+            fused_results.append(mem)
+
+        # 3. 重新按融合分数排序
+        fused_results.sort(key=lambda x: x.similarity, reverse=True)
+
+        return fused_results
 
     def _reorder_notes_by_score(
         self,
@@ -1116,116 +1128,43 @@ class VectorStore:
         ranked_scores: List[Tuple[str, float]],
         collection
     ) -> List[NoteData]:
-        """根据重排分数重新排序笔记"""
-        if not ranked_scores:
-            return original_results
+        """
+        根据 3:7 加权融合策略重新排序笔记
+        Score = 0.3 * VectorScore + 0.7 * FlashRankScore
+        """
+        # 1. 准备 FlashRank 分数逻辑
+        flashrank_score_map = {}
+        default_flash_score = 0.0
 
-        note_map = {n.id: n for n in original_results}
-
-        final_results = []
-        ids_to_fetch = []
-
-        for doc_id, score in ranked_scores:
-            if doc_id in note_map:
-                note = note_map[doc_id]
-                note.similarity = score
-                final_results.append(note)
-            else:
-                ids_to_fetch.append(doc_id)
-
-        if ids_to_fetch:
-            fetched = self.get_notes_by_ids(collection, ids_to_fetch)
-            final_results.extend(fetched)
-
-        return final_results
-
-    def _merge_results(
-        self,
-        vector_results: List[BaseMemory],
-        bm25_results: List[Tuple[str, float]],
-        collection,
-    ) -> List[BaseMemory]:
-        """融合向量检索和BM25检索结果"""
-        if not vector_results and not bm25_results:
-            return []
-
-        # 强制启用混合检索,直接进行结果融合
-
-        if not vector_results:
-            # 只有BM25结果,需要根据doc_id查找BaseMemory对象
-            return self._get_memories_by_ids(
-                collection, [doc_id for doc_id, _ in bm25_results]
-            )
-
-        # 创建文档ID到BaseMemory对象的映射
-        vector_memories_map = {}
-        for memory in vector_results:
-            vector_memories_map[memory.id] = memory
-
-        # 标准化分数到[0,1]区间
-        vector_scores = {}
-        if vector_results:
-            # 向量检索结果按相似度排序,分配递减分数
-            for i, memory in enumerate(vector_results):
-                vector_scores[memory.id] = 1.0 - (i * 0.1)  # 简单线性递减
-
-        bm25_scores = {}
-        if bm25_results:
-            max_score = max(score for _, score in bm25_results) if bm25_results else 1.0
-            for doc_id, score in bm25_results:
-                if max_score > 0:
-                    bm25_scores[doc_id] = score / max_score
-                else:
-                    bm25_scores[doc_id] = 0.0
-
-        # 合并分数
-        combined_scores = {}
-        for doc_id, score in vector_scores.items():
-            combined_scores[doc_id] = self.vector_weight * score
-
-        for doc_id, score in bm25_scores.items():
-            combined_scores[doc_id] = (
-                combined_scores.get(doc_id, 0) + self.bm25_weight * score
-            )
-
-        # 添加纯向量检索中存在但BM25中没有的结果
-        for doc_id in vector_memories_map:
-            if doc_id not in combined_scores:
-                combined_scores[doc_id] = self.vector_weight
-
-        # 按合并分数排序
-        sorted_results = sorted(
-            combined_scores.items(), key=lambda x: x[1], reverse=True
-        )
-
-        # 返回排序后的BaseMemory对象
-        final_memories = []
-        memory_ids_to_get = [
-            doc_id for doc_id, _ in sorted_results[: len(vector_results)]
-        ]
-
-        # 需要从数据库完整获取这些记忆(因为BM25结果中没有完整的记忆对象)
-        if len(memory_ids_to_get) > len(vector_memories_map):
-            additional_memories = self._get_memories_by_ids(
-                collection,
-                [
-                    doc_id
-                    for doc_id in memory_ids_to_get
-                    if doc_id not in vector_memories_map
-                ],
-            )
-            # 合并结果
-            all_memories_map = vector_memories_map.copy()
-            for memory in additional_memories:
-                all_memories_map[memory.id] = memory
+        if ranked_scores:
+            flashrank_score_map = {doc_id: score for doc_id, score in ranked_scores}
+            # 既然 FlashRank 返回了结果，说明未选中的确实相关性低，给 0.0
+            default_flash_score = 0.0
         else:
-            all_memories_map = vector_memories_map
+            # FlashRank 失败或未返回任何结果，为了保持原有向量排序并归一化，给予满分 1.0
+            default_flash_score = 1.0
 
-        for doc_id, _ in sorted_results[: len(vector_results)]:
-            if doc_id in all_memories_map:
-                final_memories.append(all_memories_map[doc_id])
+        fused_results = []
 
-        return final_memories
+        # 2. 遍历所有原始结果（确保不丢失数据）
+        for note in original_results:
+            # 获取 FlashRank 分数
+            flash_score = flashrank_score_map.get(note.id, default_flash_score)
+
+            # 获取向量分数
+            vector_score = getattr(note, "similarity", 0.0)
+
+            # 核心公式: 0.3 * Vector + 0.7 * FlashRank
+            final_score = (0.3 * vector_score) + (0.7 * flash_score)
+
+            note.similarity = final_score
+            fused_results.append(note)
+
+        # 3. 重新按融合分数排序
+        fused_results.sort(key=lambda x: x.similarity, reverse=True)
+
+        return fused_results
+
 
     def _get_memories_by_ids(self, collection, doc_ids: List[str]) -> List[BaseMemory]:
         """根据文档ID列表获取记忆对象"""
@@ -1453,7 +1392,13 @@ class VectorStore:
 
         return final_results
 
-    async def _search_vector_scores(self, collection, query: str, limit: int = 100) -> dict:
+    async def _search_vector_scores(
+        self,
+        collection,
+        query: str,
+        limit: int = 100,
+        vector: Optional[List[float]] = None
+    ) -> dict:
         """
         执行向量搜索,只返回 ID 和相似度分数的映射.
 
@@ -1464,13 +1409,17 @@ class VectorStore:
             collection: 目标 ChromaDB 集合(通常是副集合)
             query: 搜索查询字符串
             limit: 返回结果的最大数量
+            vector: 可选的预计算向量，如果提供则直接使用
 
         Returns:
             {'note_id': similarity_score, ...} 的字典
         """
         try:
-            # 显式生成查询向量(异步调用)，指明这是查询场景
-            query_embedding = await self.embed_single_document(query, is_query=True)
+            query_embedding = vector
+
+            # 如果没有提供向量，则显式生成(异步调用)
+            if query_embedding is None:
+                query_embedding = await self.embed_single_document(query, is_query=True)
 
             # --- 处理向量化失败 ---
             if query_embedding is None:
@@ -1539,101 +1488,3 @@ class VectorStore:
         except Exception as e:
             self.logger.error(f"根据ID获取笔记失败: {e}")
             return []
-
-    def _merge_note_results(
-        self,
-        vector_results: List[NoteData],
-        bm25_results: List[Tuple[str, float]],
-        collection,
-    ) -> List[NoteData]:
-        """
-        融合笔记的向量检索和BM25检索结果.
-
-        Args:
-            vector_results: 向量检索结果
-            bm25_results: BM25检索结果
-            collection: ChromaDB集合
-
-        Returns:
-            融合后的笔记列表
-        """
-        if not vector_results and not bm25_results:
-            return []
-
-        # 强制启用混合检索,直接进行结果融合
-
-        if not vector_results:
-            # 只有BM25结果,需要根据note_id查找NoteData对象
-            return self.get_notes_by_ids(
-                collection, [note_id for note_id, _ in bm25_results]
-            )
-
-        # 创建笔记ID到NoteData对象的映射
-        vector_notes_map = {}
-        for note in vector_results:
-            vector_notes_map[note.id] = note
-
-        # 标准化分数到[0,1]区间
-        vector_scores = {}
-        if vector_results:
-            # 向量检索结果按相似度排序,分配递减分数
-            for i, note in enumerate(vector_results):
-                vector_scores[note.id] = 1.0 - (i * 0.1)  # 简单线性递减
-
-        bm25_scores = {}
-        if bm25_results:
-            max_score = max(score for _, score in bm25_results) if bm25_results else 1.0
-            for note_id, score in bm25_results:
-                if max_score > 0:
-                    bm25_scores[note_id] = score / max_score
-                else:
-                    bm25_scores[note_id] = 0.0
-
-        # 合并分数
-        combined_scores = {}
-        for note_id, score in vector_scores.items():
-            combined_scores[note_id] = self.vector_weight * score
-
-        for note_id, score in bm25_scores.items():
-            combined_scores[note_id] = (
-                combined_scores.get(note_id, 0) + self.bm25_weight * score
-            )
-
-        # 添加纯向量检索中存在但BM25中没有的结果
-        for note_id in vector_notes_map:
-            if note_id not in combined_scores:
-                combined_scores[note_id] = self.vector_weight
-
-        # 按合并分数排序
-        sorted_results = sorted(
-            combined_scores.items(), key=lambda x: x[1], reverse=True
-        )
-
-        # 返回排序后的NoteData对象
-        final_notes = []
-        note_ids_to_get = [
-            note_id for note_id, _ in sorted_results[: len(vector_results)]
-        ]
-
-        # 需要从数据库完整获取这些笔记(因为BM25结果中没有完整的笔记对象)
-        if len(note_ids_to_get) > len(vector_notes_map):
-            additional_notes = self.get_notes_by_ids(
-                collection,
-                [
-                    note_id
-                    for note_id in note_ids_to_get
-                    if note_id not in vector_notes_map
-                ],
-            )
-            # 合并结果
-            all_notes_map = vector_notes_map.copy()
-            for note in additional_notes:
-                all_notes_map[note.id] = note
-        else:
-            all_notes_map = vector_notes_map
-
-        for note_id, _ in sorted_results[: len(vector_results)]:
-            if note_id in all_notes_map:
-                final_notes.append(all_notes_map[note_id])
-
-        return final_notes

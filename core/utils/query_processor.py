@@ -131,18 +131,9 @@ class QueryProcessor:
 
         try:
             # 使用token工具从后往前截断文本
-            # 先获取全部tokens，然后取最后max_tokens个
-            from ...llm_memory.utils.token_utils import get_tokenizer
+            from ...llm_memory.utils.token_utils import truncate_by_tokens_from_end
 
-            tokenizer = get_tokenizer()
-            tokens = tokenizer.encode(text)
-
-            if len(tokens) <= max_tokens:
-                return text
-
-            # 取最后max_tokens个token
-            truncated_tokens = tokens[-max_tokens:]
-            return tokenizer.decode(truncated_tokens)
+            return truncate_by_tokens_from_end(text, max_tokens)
         except Exception as e:
             self.logger.warning(f"Token截断处理失败: {e}")
             # 降级处理：简单字符截断（从后往前）

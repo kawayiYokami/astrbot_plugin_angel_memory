@@ -11,7 +11,7 @@ HAS_JIEBA = False
 
 from ..models.note_models import NoteData
 from ..components.tag_manager import TagManager
-from ..utils.token_utils import count_tokens
+from ..utils.token_utils import count_tokens, truncate_by_tokens
 
 
 class MarkdownParser:
@@ -627,27 +627,20 @@ class MarkdownParser:
         new_parts = []
         for part in parts:
             if count_tokens(part) > self.MAX_BLOCK_SIZE:
-                # 计算每个chunk的token数量
-                tokens = []
-                try:
-                    from ..utils.token_utils import get_tokenizer
+                # 使用 truncate_by_tokens 进行拆分
+                remainder = part
+                while remainder:
+                    # 获取符合长度限制的片段
+                    chunk = truncate_by_tokens(remainder, self.MAX_BLOCK_SIZE)
+                    if not chunk:
+                        # 防止死循环（理论上不应发生，除非 MAX_BLOCK_SIZE 极小）
+                        chunk = remainder[:10]  # 强制截取
 
-                    tokenizer = get_tokenizer()
-                    tokens = tokenizer.encode(part)
-                except Exception:
-                    # 回退到字符拆分
-                    for i in range(0, len(part), self.MAX_BLOCK_SIZE * 4):
-                        chunk = part[i : i + self.MAX_BLOCK_SIZE * 4]
-                        if chunk.strip():
-                            new_parts.append(chunk)
-                    continue
-
-                # 按token拆分
-                for i in range(0, len(tokens), self.MAX_BLOCK_SIZE):
-                    chunk_tokens = tokens[i : i + self.MAX_BLOCK_SIZE]
-                    chunk = tokenizer.decode(chunk_tokens)
                     if chunk.strip():
                         new_parts.append(chunk)
+
+                    # 更新剩余部分
+                    remainder = remainder[len(chunk):]
             else:
                 new_parts.append(part)
 

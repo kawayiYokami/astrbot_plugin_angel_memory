@@ -313,12 +313,15 @@ class NoteService:
 
         # 去重处理：移除内容完全相同的笔记
         all_recalled_notes = self._deduplicate_notes(all_recalled_notes)
-        
+
         # 2. 第二阶段：重排 (Reranking)
         # 使用轻量级方法查询副集合（只获取标签相关性分数）
         # 副集合不存储 metadata，所以不能使用 search_notes
         tag_scores = await self.vector_store._search_vector_scores(
-            collection=self.sub_collection, query=query, limit=len(all_recalled_notes)
+            collection=self.sub_collection,
+            query=query,
+            limit=len(all_recalled_notes),
+            vector=vector  # 传递预计算的向量，避免重复计算
         )
 
         # 3. 最终排序
@@ -352,38 +355,38 @@ class NoteService:
     def _deduplicate_notes(self, notes: List[Dict]) -> List[Dict]:
         """
         去除内容完全相同的笔记，保留相似度最高的版本
-        
+
         Args:
             notes: 笔记列表，每个笔记包含 id, content, content_similarity 等字段
-            
+
         Returns:
             去重后的笔记列表
         """
         if not notes:
             return notes
-            
+
         # 使用字典记录每个内容的最佳笔记（相似度最高的）
         content_to_best_note = {}
-        
+
         for note in notes:
             content = note.get("content", "")
             similarity = note.get("content_similarity", 0.0)
-            
+
             # 如果这个内容还没有记录，或者当前笔记的相似度更高
-            if (content not in content_to_best_note or 
+            if (content not in content_to_best_note or
                 similarity > content_to_best_note[content].get("content_similarity", 0.0)):
                 content_to_best_note[content] = note
-        
+
         # 记录去重统计
         original_count = len(notes)
         deduplicated_count = len(content_to_best_note)
-        
+
         if original_count > deduplicated_count:
             self.logger.info(
                 f"笔记去重：{original_count} -> {deduplicated_count} "
                 f"(移除了 {original_count - deduplicated_count} 个重复笔记)"
             )
-        
+
         # 返回去重后的笔记列表
         return list(content_to_best_note.values())
 
@@ -574,6 +577,7 @@ class NoteService:
             计时字典
         """
         import time
+        import asyncio
 
         timings = {}
         t_method_start = time.time()
@@ -602,13 +606,15 @@ class NoteService:
 
             # 批量存储到主集合
             t_main = time.time()
-            upsert_timings = self.vector_store.upsert_documents(
+            # 在同步方法中调用异步方法，需要使用 asyncio.run
+            # 注意：这假设当前线程没有运行的事件循环（FileMonitor在独立线程中运行，符合此条件）
+            upsert_timings = asyncio.run(self.vector_store.upsert_documents(
                 collection=self.main_collection,
                 ids=ids,
                 embedding_texts=embedding_texts,
                 metadatas=metadatas,
                 _return_timings=True,
-            )
+            ))
             timings["store_main"] = (time.time() - t_main) * 1000
             if upsert_timings:
                 timings["main_embed"] = upsert_timings.get("embed", 0)
@@ -630,13 +636,13 @@ class NoteService:
 
             # 批量存储到副集合（不传 metadatas）
             t_sub = time.time()
-            sub_upsert_timings = self.vector_store.upsert_documents(
+            sub_upsert_timings = asyncio.run(self.vector_store.upsert_documents(
                 collection=self.sub_collection,
                 ids=sub_ids,
                 embedding_texts=sub_tags_texts,
                 metadatas=None,  # 副集合不存储 metadata
                 _return_timings=True,
-            )
+            ))
             timings["store_sub"] = (time.time() - t_sub) * 1000
             if sub_upsert_timings:
                 timings["sub_embed"] = sub_upsert_timings.get("embed", 0)

@@ -1,7 +1,7 @@
 """
 FlashRank 重排组件。
 
-使用轻量级 Cross-Encoder (TinyBERT) 进行语义重排，替代传统的 BM25。
+使用轻量级 Cross-Encoder (MultiBERT-L-12) 进行语义重排，替代传统的 BM25。
 基于 ONNX Runtime，针对 CPU 推理进行了极致优化。
 """
 
@@ -13,6 +13,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from ..utils.path_manager import PathManager
 
 # 尝试导入 FlashRank
 try:
@@ -30,6 +32,7 @@ class FlashRankRetriever:
 
     _instance = None
     _ranker = None
+    _initialized = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -38,19 +41,28 @@ class FlashRankRetriever:
 
     def __init__(self):
         """初始化 FlashRank 模型"""
+        if self._initialized:
+            return
+
+        self._initialized = True
+
         if not HAS_FLASHRANK:
             logger.warning("FlashRank 未安装，无法使用重排功能。请运行: pip install flashrank")
             return
 
-        if self._ranker is None:
-            try:
-                # 使用默认的 ms-marco-TinyBERT-L-2-v2 模型
-                # 这是一个约 40MB 的量化模型，速度极快
-                self._ranker = Ranker()
-                logger.info("FlashRank 模型初始化完成 (ms-marco-TinyBERT-L-2-v2)")
-            except Exception as e:
-                logger.error(f"FlashRank 初始化失败: {e}")
-                self._ranker = None
+        try:
+            model_name = "ms-marco-MultiBERT-L-12"  # 默认模型
+
+            # 初始化 Ranker (FlashRank 会自动下载模型)
+
+            # 初始化 Ranker (FlashRank 会自动下载模型)
+            # MultiBERT-L-12 是目前 FlashRank 支持的模型中对中文语义理解最好的
+            # 虽然速度比 MiniLM 慢一倍，但为了检索质量，这是值得的默认选择
+            self._ranker = Ranker(model_name=model_name)
+            logger.info(f"FlashRank 模型初始化完成 ({model_name})")
+        except Exception as e:
+            logger.error(f"FlashRank 初始化失败: {e}")
+            self._ranker = None
 
     def rerank(
         self, query: str, candidates: List[Dict[str, str]], limit: int = 10

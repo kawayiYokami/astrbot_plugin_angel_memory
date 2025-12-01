@@ -5,7 +5,6 @@ chromadb>=1.2.1
 requests>=2.28.0
 mistune>=2.0.0
 markitdown[all]>=0.1.0
-tiktoken>=0.4.0
 # FlashRank 用于极速语义重排 (RAG 优化)
 flashrank>=0.2.0
 

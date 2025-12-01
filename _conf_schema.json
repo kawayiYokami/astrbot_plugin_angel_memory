@@ -23,6 +23,12 @@
     "default": false,
     "hint": "比默认BM25快10倍且更精准。开启前请确保已安装依赖: pip install flashrank"
   },
+  "flashrank_model": {
+    "type": "string",
+    "description": "[FlashRank] 重排模型名称，不知道是什么的请不要改动",
+    "default": "ms-marco-MultiBERT-L-12",
+    "hint": "推荐：ms-marco-MultiBERT-L-12 (多语言最强，中文效果佳)。若追求极致速度，可降级为 ms-marco-MiniLM-L-12-v2。"
+  },
   "default_passive_strength": {
     "type": "int",
     "description": "[记忆行为参数] 设置被动记忆的初始强度值",

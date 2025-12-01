@@ -1,84 +1,50 @@
 """
 Token 工具模块
 
-提供基于 tiktoken 的 token 计算功能。
+提供基于字符规则的轻量级 Token 估算功能。
+不再依赖 tiktoken，以提升性能和减少依赖。
+
+规则：
+1 个英文字符 ≈ 0.3 个 token
+1 个中文字符 ≈ 0.6 个 token
 """
 
-try:
-    import tiktoken
+import math
 
-    _TIKTOKEN_AVAILABLE = True
-except ImportError:
-    _TIKTOKEN_AVAILABLE = False
-    tiktoken = None
-
-# 默认使用的编码器
-_DEFAULT_ENCODING = "cl100k_base"  # 适用于 GPT-3.5 和 GPT-4
-
-# 编码器实例缓存
-_encoder_cache = {}
-
-
-def get_tokenizer(encoding_name: str = _DEFAULT_ENCODING):
+def count_tokens(text: str) -> int:
     """
-    获取 tokenizer 实例
+    计算文本的 token 数量（基于字符规则估算）
 
-    Args:
-        encoding_name: 编码器名称，默认为 cl100k_base
-
-    Returns:
-        tiktoken 编码器实例
-    """
-    global _encoder_cache
-
-    if not _TIKTOKEN_AVAILABLE:
-        raise ImportError(
-            "tiktoken library is not installed. "
-            "Please install it with: pip install tiktoken"
-        )
-
-    if encoding_name not in _encoder_cache:
-        _encoder_cache[encoding_name] = tiktoken.get_encoding(encoding_name)
-
-    return _encoder_cache[encoding_name]
-
-
-def count_tokens(text: str, encoding_name: str = _DEFAULT_ENCODING) -> int:
-    """
-    计算文本的 token 数量
+    规则：
+    - ASCII 字符 (英文、数字、符号等): 0.3 token
+    - 非 ASCII 字符 (中文等): 0.6 token
 
     Args:
         text: 要计算的文本
-        encoding_name: 编码器名称，默认为 cl100k_base
 
     Returns:
-        token 数量
+        估算的 token 数量
     """
     if not text:
         return 0
 
-    try:
-        tokenizer = get_tokenizer(encoding_name)
-        return len(tokenizer.encode(text))
-    except (ValueError, RuntimeError):
-        # 编码器相关错误：不支持的编码或运行时错误
-        # 回退到简单的字符计数（除以4近似）
-        return len(text) // 4
-    except Exception as e:
-        # 其他预期外的错误，重新抛出以保持追踪
-        raise RuntimeError(f"Token counting failed: {e}") from e
+    token_count = 0.0
+    for char in text:
+        if ord(char) < 128:
+            token_count += 0.3
+        else:
+            token_count += 0.6
+
+    return math.ceil(token_count)
 
 
-def truncate_by_tokens(
-    text: str, max_tokens: int, encoding_name: str = _DEFAULT_ENCODING
-) -> str:
+def truncate_by_tokens(text: str, max_tokens: int) -> str:
     """
-    按 token 数量截断文本
+    按 token 数量截断文本（基于字符规则估算）
 
     Args:
         text: 要截断的文本
         max_tokens: 最大 token 数量
-        encoding_name: 编码器名称，默认为 cl100k_base
 
     Returns:
         截断后的文本
@@ -86,19 +52,49 @@ def truncate_by_tokens(
     if not text:
         return ""
 
-    try:
-        tokenizer = get_tokenizer(encoding_name)
-        tokens = tokenizer.encode(text)
+    current_tokens = 0.0
+    truncated_text = []
 
-        if len(tokens) <= max_tokens:
-            return text
+    for char in text:
+        char_tokens = 0.3 if ord(char) < 128 else 0.6
 
-        truncated_tokens = tokens[:max_tokens]
-        return tokenizer.decode(truncated_tokens)
-    except (ValueError, RuntimeError):
-        # 编码器相关错误：不支持的编码或运行时错误
-        # 回退到简单的字符截断
-        return text[: max_tokens * 4]  # 粗略估计
-    except Exception as e:
-        # 其他预期外的错误，重新抛出以保持追踪
-        raise RuntimeError(f"Token truncation failed: {e}") from e
+        if current_tokens + char_tokens > max_tokens:
+            break
+
+        current_tokens += char_tokens
+        truncated_text.append(char)
+
+    return "".join(truncated_text)
+
+
+def truncate_by_tokens_from_end(text: str, max_tokens: int) -> str:
+    """
+    按 token 数量从后往前截断文本（保留末尾部分）
+
+    Args:
+        text: 要截断的文本
+        max_tokens: 最大 token 数量（必须 >= 0）
+
+    Returns:
+        截断后的文本（保留末尾）
+    """
+    if max_tokens < 0:
+        raise ValueError("max_tokens 必须大于或等于 0")
+
+    if not text:
+        return ""
+
+    current_tokens = 0.0
+    truncated_text = []
+
+    # 反向遍历
+    for char in reversed(text):
+        char_tokens = 0.3 if ord(char) < 128 else 0.6
+
+        if current_tokens + char_tokens > max_tokens:
+            break
+
+        current_tokens += char_tokens
+        truncated_text.append(char)
+
+    return "".join(reversed(truncated_text))
