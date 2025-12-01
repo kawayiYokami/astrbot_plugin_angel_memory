@@ -247,12 +247,17 @@ class MemoryManager:
         all_memories = entity_memories + [mem for mems in type_memories.values() for mem in mems]
 
         # 步骤5: 被动记忆衰减（强度-1，最低为0）
+        # 步骤5: 被动记忆衰减（强度-1，最低为0）
+        batch_updates = []
         for mem in all_memories:
             if not mem.is_active:  # 只对被动记忆衰减
                 new_strength = max(0, mem.strength - 1)
-                await self.store.update_memory(
-                    self.collection, mem.id, {"strength": new_strength}
-                )
+                if new_strength != mem.strength:
+                    mem.strength = new_strength
+                    batch_updates.append({"id": mem.id, "updates": {"strength": new_strength}})
+
+        if batch_updates:
+            await self.store.update_memory(self.collection, batch_updates)
 
         self.logger.debug(f"链式回忆: 实体记忆={len(entity_memories)}, 类型记忆={sum(len(v) for v in type_memories.values())}, 总计={len(all_memories)}")
 

@@ -430,10 +430,13 @@ class VectorStore:
                         "document": current_data["documents"][i] if current_data["documents"] and i < len(current_data["documents"]) else ""
                     }
 
-                updated_ids = []
-                updated_embeddings = []
-                updated_documents = []
-                updated_metadatas = []
+                # 分组：需重算向量 vs 仅更新元数据
+                reembed_batch = {
+                    "ids": [], "texts": [], "docs": [], "metas": []
+                }
+                meta_only_batch = {
+                    "ids": [], "metas": []
+                }
 
                 for item in memory_id:
                     mem_id = item["id"]
@@ -447,22 +450,39 @@ class VectorStore:
                     current_meta = id_to_data[mem_id]["metadata"]
                     current_document = id_to_data[mem_id]["document"]
 
-                    semantic_core = current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
+                    # 检查是否需要重新向量化（仅当语义核心字段变更时）
+                    # 注意：如果 updates 包含 judgment 或 tags，则必须重算向量
+                    needs_reembed = "judgment" in mem_updates or "tags" in mem_updates
+
                     current_meta.update(mem_updates)
 
-                    updated_ids.append(mem_id)
-                    updated_embeddings.append(semantic_core)
-                    updated_documents.append(current_document)
-                    updated_metadatas.append(current_meta)
+                    if needs_reembed:
+                        semantic_core = current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
+                        reembed_batch["ids"].append(mem_id)
+                        reembed_batch["texts"].append(semantic_core)
+                        reembed_batch["docs"].append(current_document)
+                        reembed_batch["metas"].append(current_meta)
+                    else:
+                        meta_only_batch["ids"].append(mem_id)
+                        meta_only_batch["metas"].append(current_meta)
 
-                if updated_ids:
+                # 1. 执行重向量化更新（耗时操作）
+                if reembed_batch["ids"]:
                     await self.upsert_documents(
                         collection=collection,
-                        ids=updated_ids,
-                        embedding_texts=updated_embeddings,
-                        documents=updated_documents,
-                        metadatas=updated_metadatas,
+                        ids=reembed_batch["ids"],
+                        embedding_texts=reembed_batch["texts"],
+                        documents=reembed_batch["docs"],
+                        metadatas=reembed_batch["metas"],
                     )
+
+                # 2. 执行仅元数据更新（快速操作）
+                if meta_only_batch["ids"]:
+                    collection.update(
+                        ids=meta_only_batch["ids"],
+                        metadatas=meta_only_batch["metas"]
+                    )
+                    self.logger.debug(f"快速更新了 {len(meta_only_batch['ids'])} 条记忆的元数据（跳过向量化）")
 
             except Exception as e:
                 self.logger.error(f"批量更新记忆失败: {str(e)}")
@@ -480,19 +500,27 @@ class VectorStore:
                     current_data["documents"][0] if current_data["documents"] else ""
                 )
 
-                semantic_core = (
-                    current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
-                )
-
+                # 检查是否需要重新向量化
+                needs_reembed = updates and ("judgment" in updates or "tags" in updates)
                 current_meta.update(updates)
 
-                await self.upsert_documents(
-                    collection=collection,
-                    ids=memory_id,
-                    embedding_texts=semantic_core,
-                    documents=current_document,
-                    metadatas=current_meta,
-                )
+                if needs_reembed:
+                    semantic_core = (
+                        current_meta.get("judgment", "") + " " + current_meta.get("tags", "")
+                    )
+                    await self.upsert_documents(
+                        collection=collection,
+                        ids=memory_id,
+                        embedding_texts=semantic_core,
+                        documents=current_document,
+                        metadatas=current_meta,
+                    )
+                else:
+                    collection.update(
+                        ids=[memory_id],
+                        metadatas=[current_meta]
+                    )
+                    self.logger.debug(f"快速更新了记忆 {memory_id} 的元数据（跳过向量化）")
 
             except Exception as e:
                 self.logger.error(f"更新记忆 {memory_id} 失败: {str(e)}")
