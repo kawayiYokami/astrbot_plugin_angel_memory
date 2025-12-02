@@ -127,13 +127,13 @@
   },
   "soul_creativity_mid": {
     "type": "float",
-    "description": "[灵魂参数-Creativity] 思维发散倾向-中庸值 (Temperature)",
+    "description": "[（未实装）灵魂参数-Creativity] 思维发散倾向-中庸值 (Temperature)",
     "default": 0.7,
     "hint": "决定思维发散的基准值"
   },
   "soul_creativity_max": {
     "type": "float",
-    "description": "[灵魂参数-Creativity] 思维发散倾向-最大值 (Temperature)",
+    "description": "[（未实装）灵魂参数-Creativity] 思维发散倾向-最大值 (Temperature)",
     "default": 1.5,
     "hint": "决定思维发散的上限"
   }
