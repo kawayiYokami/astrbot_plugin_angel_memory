@@ -504,6 +504,9 @@ class DeepMind:
         """
         潜意识的核心工作：整理相关记忆并结合灵魂状态，喂给主意识。
         """
+        # 将plugin_context注入到event中，供QueryProcessor使用
+        event.plugin_context = self.plugin_context
+
         session_id = self._get_session_id(event)
 
         # 1. 从 event.angelheart_context 中获取对话历史
@@ -820,12 +823,14 @@ class DeepMind:
         try:
             # 重构事件对象的部分数据用于处理
             class SimpleEvent:
-                def __init__(self, data):
+                def __init__(self, data, plugin_context):
                     self.angelmemory_context = data.get("angelmemory_context")
                     self.angelheart_context = data.get("angelheart_context")
                     self.unified_msg_origin = data.get("unified_msg_origin")
+                    # 注入plugin_context，确保QueryProcessor能够访问
+                    self.plugin_context = plugin_context
 
-            event = SimpleEvent(event_data)
+            event = SimpleEvent(event_data, self.plugin_context)
 
             # 获取原始上下文数据
             context_data = self._parse_memory_context(event)
