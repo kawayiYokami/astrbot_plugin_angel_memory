@@ -63,78 +63,30 @@
     "type": "int",
     "description": "[Token预算] 应答模型用于笔记上下文的令牌预算",
     "default": 16000,
-    "hint": "建议设为8000-160000之间。参考：1个英文字符 ≈ 0.3个令牌，1个中文字符 ≈ 0.6个令牌。"
-  },
-  "soul_recall_depth_min": {
-    "type": "int",
-    "description": "[灵魂参数-RecallDepth] 回忆量倾向-最小值 (RAG Top_K)",
-    "default": 3,
-    "hint": "决定检索量的下限"
+    "hint": "建议设为100-1600之间。参考：1个英文字符 ≈ 0.3个令牌，1个中文字符 ≈ 0.6个令牌。"
   },
   "soul_recall_depth_mid": {
     "type": "int",
-    "description": "[灵魂参数-RecallDepth] 回忆量倾向-中庸值 (RAG Top_K)",
+    "description": "[灵魂参数] 社交倾向-回归值 (建议检索记忆数)",
     "default": 7,
-    "hint": "决定检索量的基准值"
-  },
-  "soul_recall_depth_max": {
-    "type": "int",
-    "description": "[灵魂参数-RecallDepth] 回忆量倾向-最大值 (RAG Top_K)",
-    "default": 20,
-    "hint": "决定检索量的上限"
-  },
-  "soul_impression_depth_min": {
-    "type": "int",
-    "description": "[灵魂参数-ImpressionDepth] 记住量倾向-最小值 (Memory Limit)",
-    "default": 1,
-    "hint": "决定记忆生成数量的下限"
+    "hint": "决定“内向|外向”人格的基准值，影响检索记忆的数量"
   },
   "soul_impression_depth_mid": {
     "type": "int",
-    "description": "[灵魂参数-ImpressionDepth] 记住量倾向-中庸值 (Memory Limit)",
+    "description": "[灵魂参数] 对话姿态-回归值 (建议生成记忆数)",
     "default": 3,
-    "hint": "决定记忆生成数量的基准值"
-  },
-  "soul_impression_depth_max": {
-    "type": "int",
-    "description": "[灵魂参数-ImpressionDepth] 记住量倾向-最大值 (Memory Limit)",
-    "default": 10,
-    "hint": "决定记忆生成数量的上限"
-  },
-  "soul_expression_desire_min": {
-    "type": "int",
-    "description": "[灵魂参数-ExpressionDesire] 发言长度倾向-最小值 (Max Tokens)",
-    "default": 100,
-    "hint": "决定发言长度的下限"
+    "hint": "决定“指导|好奇”人格的基准值，影响生成新记忆的数量"
   },
   "soul_expression_desire_mid": {
-    "type": "int",
-    "description": "[灵魂参数-ExpressionDesire] 发言长度倾向-中庸值 (Max Tokens)",
-    "default": 500,
-    "hint": "决定发言长度的基准值"
-  },
-  "soul_expression_desire_max": {
-    "type": "int",
-    "description": "[灵魂参数-ExpressionDesire] 发言长度倾向-最大值 (Max Tokens)",
-    "default": 4000,
-    "hint": "决定发言长度的上限"
-  },
-  "soul_creativity_min": {
     "type": "float",
-    "description": "[灵魂参数-Creativity] 思维发散倾向-最小值 (Temperature)",
-    "default": 0.1,
-    "hint": "决定思维发散的下限"
+    "description": "[灵魂参数] 健谈程度-回归值 (0-1)",
+    "default": 0.5,
+    "hint": "决定“话少|话多”人格的基准倾向, 0为话少, 1为话多"
   },
   "soul_creativity_mid": {
     "type": "float",
-    "description": "[（未实装）灵魂参数-Creativity] 思维发散倾向-中庸值 (Temperature)",
+    "description": "[灵魂参数] 当前心情-回归值 (0-1)",
     "default": 0.7,
-    "hint": "决定思维发散的基准值"
-  },
-  "soul_creativity_max": {
-    "type": "float",
-    "description": "[（未实装）灵魂参数-Creativity] 思维发散倾向-最大值 (Temperature)",
-    "default": 1.5,
-    "hint": "决定思维发散的上限"
+    "hint": "决定“严肃|调皮”人格的基准倾向, 0为严肃, 1为调皮"
   }
 }

@@ -34,27 +34,27 @@ class SoulState:
             "Creativity":       0.0  # 思维发散倾向：决定温度 (Temperature)
         }
 
-        # 从配置中读取物理参数
+        # 从配置中读取回归值，min/max值在此处硬编码以符合群聊场景
         self.config = {
             "RecallDepth": {
-                "min": getattr(config, "soul_recall_depth_min", 3),
+                "min": 1,
                 "mid": getattr(config, "soul_recall_depth_mid", 7),
-                "max": getattr(config, "soul_recall_depth_max", 20)
+                "max": 20
             },
             "ImpressionDepth": {
-                "min": getattr(config, "soul_impression_depth_min", 1),
+                "min": 1,
                 "mid": getattr(config, "soul_impression_depth_mid", 3),
-                "max": getattr(config, "soul_impression_depth_max", 10)
+                "max": 10
             },
             "ExpressionDesire": {
-                "min": getattr(config, "soul_expression_desire_min", 100),
-                "mid": getattr(config, "soul_expression_desire_mid", 500),
-                "max": getattr(config, "soul_expression_desire_max", 4000)
+                "min": 0.0,
+                "mid": getattr(config, "soul_expression_desire_mid", 0.5),
+                "max": 1.0
             },
             "Creativity": {
-                "min": getattr(config, "soul_creativity_min", 0.1),
+                "min": 0.0,
                 "mid": getattr(config, "soul_creativity_mid", 0.7),
-                "max": getattr(config, "soul_creativity_max", 1.5)
+                "max": 1.0
             }
         }
 

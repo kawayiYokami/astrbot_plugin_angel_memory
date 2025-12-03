@@ -316,45 +316,77 @@ class DeepMind:
 
 
 
+    def _normalize_soul_value(self, dimension: str, value: float) -> float:
+        """将灵魂状态的物理值归一化到 [0, 1] 区间"""
+        if not self.soul:
+            return 0.5
+
+        cfg = self.soul.config.get(dimension, {})
+        min_val = cfg.get("min", 0)
+        max_val = cfg.get("max", 1)
+
+        if max_val == min_val:
+            return 0.5
+
+        normalized = (value - min_val) / (max_val - min_val)
+        return max(0.0, min(1.0, normalized))
+
+    def _create_tendency_bar(self, normalized_value: float) -> str:
+        """创建一个10格的文本进度条"""
+        bar_length = 10
+        filled_length = int(round(normalized_value * bar_length))
+        return '█' * filled_length + ' ' * (bar_length - filled_length)
+
     def _inject_memories_to_request(
-        self, request: ProviderRequest, session_id: str, note_context: str
+        self, request: ProviderRequest, session_id: str, note_context: str, soul_state_values: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        将记忆注入到LLM请求中
-
-        Args:
-            request: LLM请求对象
-            session_id: 会话ID
-            note_context: 笔记上下文
+        将记忆和灵魂状态注入到LLM请求中
         """
+        # 1. 注入灵魂状态仪表盘
+        if soul_state_values:
+            # 归一化用于生成进度条
+            norm_recall = self._normalize_soul_value("RecallDepth", soul_state_values["RecallDepth"])
+            norm_impression = self._normalize_soul_value("ImpressionDepth", soul_state_values["ImpressionDepth"])
+            norm_expression = self._normalize_soul_value("ExpressionDesire", soul_state_values["ExpressionDesire"])
+            norm_creativity = self._normalize_soul_value("Creativity", soul_state_values["Creativity"])
 
-        # 1. 从短期记忆推送给主意识（潜意识筛选后的精选记忆）
-        short_term_memories = self.session_memory_manager.get_session_memories(
-            session_id
-        )
+            bar_recall = self._create_tendency_bar(norm_recall)
+            bar_impression = self._create_tendency_bar(norm_impression)
+            bar_expression = self._create_tendency_bar(norm_expression)
+            bar_creativity = self._create_tendency_bar(norm_creativity)
 
-        memory_context = self.memory_injector.format_session_memories_for_prompt(
-            short_term_memories
-        )
+            dashboard_text = (
+                "<灵魂仪表盘>\n"
+                "    <用法>这是我当前的内在性格倾向。在生成回答时，我将尝试参考这些倾向来调整我的语气、内容详略和思考方式，以更符合我当下的“人设”。每个倾向值在0到1之间，0代表左侧描述，1代表右侧描述。这不是强制命令，我会根据对话上下文灵活判断。</用法>\n"
+                f"    <倾向 类型='社交'>内向 <---[ {bar_recall} ]---> 外向 (值: {norm_recall:.2f})</倾向>\n"
+                f"    <倾向 类型='认知'>指导 <---[ {bar_impression} ]---> 好奇 (值: {norm_impression:.2f})</倾向>\n"
+                f"    <倾向 类型='表达'>话少 <---[ {bar_expression} ]---> 话多 (值: {norm_expression:.2f})</倾向>\n"
+                f"    <倾向 类型='心情'>严肃 <---[ {bar_creativity} ]---> 调皮 (值: {norm_creativity:.2f})</倾向>\n"
+                "</灵魂仪表盘>"
+            )
 
-        # 2. 合并记忆和笔记上下文
-        if memory_context or note_context:
-            # 注入记忆内容作为用户消息
-            if memory_context:
-                request.contexts.append({
-                    "role": "user",
-                    "content": f"[RAG-记忆] 相关记忆参考:\n{memory_context}"
-                })
+            request.contexts.append({
+                "role": "assistant",
+                "content": dashboard_text
+            })
 
-            # 注入笔记内容作为用户消息
-            if note_context:
-                request.contexts.append({
-                    "role": "user",
-                    "content": f"[RAG-笔记] 相关笔记参考:\n{note_context}"
-                })
+        # 2. 从短期记忆推送给主意识
+        short_term_memories = self.session_memory_manager.get_session_memories(session_id)
+        memory_context = self.memory_injector.format_session_memories_for_prompt(short_term_memories)
 
-        else:
-            pass
+        # 3. 合并记忆和笔记上下文
+        if memory_context:
+            request.contexts.append({
+                "role": "user",
+                "content": f"[RAG-记忆] 相关记忆参考:\n{memory_context}"
+            })
+
+        if note_context:
+            request.contexts.append({
+                "role": "user",
+                "content": f"[RAG-笔记] 相关笔记参考:\n{note_context}"
+            })
 
     async def _update_memory_system(
         self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
@@ -470,43 +502,9 @@ class DeepMind:
         self, event: AstrMessageEvent, request: ProviderRequest
     ):
         """
-        潜意识的核心工作：整理相关记忆喂给主意识
-
-        工作流程：
-        1. 从记忆库找出相关的内容
-        2. 直接注入原始内容（极速响应改造）
-        3. 把有用的记忆包装成记忆包
-        4. 喂给主意识（LLM）帮助他思考
-
-        Args:
-            event: 用户的消息（触发回忆的线索）
-            request: 即将发给主意识的请求（我们要往里面塞记忆）
+        潜意识的核心工作：整理相关记忆并结合灵魂状态，喂给主意识。
         """
         session_id = self._get_session_id(event)
-
-        # 0. 动态注入 LLM 参数 (基于灵魂状态)
-        if hasattr(self, "soul") and self.soul:
-            try:
-                # 获取动态参数
-                dynamic_temp = self.soul.get_value("Creativity")
-                dynamic_tokens = int(self.soul.get_value("ExpressionDesire"))
-
-                # 注入到请求中 (尝试使用 extension 字段，如果不存在则创建)
-                if not hasattr(request, "extension"):
-                    request.extension = {}
-
-                # 确保 extension 是字典
-                if request.extension is None:
-                    request.extension = {}
-
-                request.extension.update({
-                    "temperature": dynamic_temp,
-                    "max_tokens": dynamic_tokens
-                })
-
-                self.logger.info(f"👻 灵魂参数注入: Temp={dynamic_temp}, MaxTokens={dynamic_tokens}")
-            except Exception as e:
-                self.logger.warning(f"灵魂参数注入失败: {e}")
 
         # 1. 从 event.angelheart_context 中获取对话历史
         chat_records = []
@@ -515,152 +513,97 @@ class DeepMind:
                 angelheart_data = json.loads(event.angelheart_context)
                 chat_records = angelheart_data.get("chat_records", [])
             except (json.JSONDecodeError, KeyError):
-                self.logger.error(
-                    f"为会话 {session_id} 解析 angelheart_context 失败"
-                )
+                self.logger.error(f"为会话 {session_id} 解析 angelheart_context 失败")
 
-        # 初始化 user_list 为空列表
+        # 2. 格式化对话历史为查询字符串
+        query = ""
         user_list = []
-
-        # 如果没有对话记录，使用当前消息文本
         if not chat_records:
             message_text = self._extract_message_text(event)
             query = message_text if message_text else ""
         else:
-            # 2. 格式化对话历史为查询字符串
             query, user_list = self.prompt_builder.format_chat_records(chat_records)
 
-        # 3. 读取主意识的短期记忆（供其他模块参考，不进行长期记忆召回）
-        session_memories = self.session_memory_manager.get_session_memories(session_id)
-
-        # 4. 转换为JSON格式
-        memories_json = self._memories_to_json(session_memories)
-
-        # 注入到事件中（使用angelmemory_context）
-        event.angelmemory_context = json.dumps(
-            {
-                "memories": memories_json,
-                "recall_query": query,  # 保留查询字符串供后续使用
-                "recall_time": time.time(),
-                "session_id": session_id,
-                "user_list": user_list,  # 将新生成的"用户清单"存入上下文
-            }
-        )
-
-        # 如果未配置 provider_id，跳过记忆整理
+        # 3. 如果未配置 provider_id，跳过记忆整理
         if not self.provider_id:
             return
 
-        # 解析记忆上下文数据
-        context_data = self._parse_memory_context(event)
-        if not context_data:
-            return
-
-        session_id = context_data["session_id"]
-        query = context_data["query"]
-
-        # 核心修复：将 plugin_context 附加到 event 对象
-        event.plugin_context = self.plugin_context
-
-        # 检索长期记忆和候选笔记
+        # 4. 检索长期记忆和笔记
         retrieval_data = await self._retrieve_memories_and_notes(event, query, precompute_vectors=True)
         long_term_memories = retrieval_data["long_term_memories"]
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
 
+        # 5. 将检索到的长期记忆填入短期记忆
+        if long_term_memories and self.memory_system:
+            self.session_memory_manager.add_memories_to_session(session_id, long_term_memories)
 
-        try:
-            # 直接将检索到的长期记忆填入短期记忆，由session_memory按生命值淘汰
-            if long_term_memories and self.memory_system:
-                self.session_memory_manager.add_memories_to_session(
-                    session_id, long_term_memories
-                )
+        # 6. 构建笔记上下文
+        note_context = ""
+        if candidate_notes:
+            from ..llm_memory.utils.token_utils import count_tokens
+            current_tokens = 0
+            selected_notes = []
+            for note in candidate_notes:
+                note_content = note.get("content", "")
+                note_tokens = count_tokens(note_content)
+                if current_tokens + note_tokens <= self.large_model_note_budget:
+                    selected_notes.append(note)
+                    current_tokens += note_tokens
+                else:
+                    break
 
-            # 直接注入原始笔记内容（不经过小模型筛选）
-            note_context = ""
-            if candidate_notes:
-                # 构建笔记上下文，限制token数量
-                from ..llm_memory.utils.token_utils import count_tokens
-
-                current_tokens = 0
-                selected_notes = []
-
-                for note in candidate_notes:
-                    note_content = note.get("content", "")
-                    note_tokens = count_tokens(note_content)
-
-                    # 检查是否超出大模型笔记预算
-                    if current_tokens + note_tokens <= self.large_model_note_budget:
-                        selected_notes.append(note)
-                        current_tokens += note_tokens
+            if selected_notes:
+                note_context_parts = []
+                for note in selected_notes:
+                    content = note.get("content", "")
+                    tags = note.get("tags", [])
+                    cleaned_content = self._clean_note_content(content)
+                    if tags:
+                        tags_str = ", ".join(tags)
+                        intro_str = f"关于({tags_str})的笔记："
+                        note_context_parts.append(f"{intro_str} {cleaned_content}")
                     else:
-                        break
+                        note_context_parts.append(cleaned_content)
+                time_warning = "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n"
+                note_context = time_warning + "\n\n".join(note_context_parts)
 
-                # 构建笔记上下文
-                if selected_notes:
-                    # 使用新的方法构建笔记上下文，避免模型误解标签为引用
-                    note_context_parts = []
-                    for note in selected_notes:
-                        content = note.get("content", "")
-                        tags = note.get("tags", [])
-
-                        # 清理笔记内容（去除所有空行）
-                        cleaned_content = self._clean_note_content(content)
-
-                        if tags:
-                            # 如果有标签，构建新的引言格式
-                            tags_str = ", ".join(tags)
-                            intro_str = f"关于({tags_str})的笔记："
-                            note_context_parts.append(f"{intro_str} {cleaned_content}")
-                        else:
-                            # 如果没有标签，直接添加内容
-                            note_context_parts.append(cleaned_content)
-
-                    # 合并所有笔记，只在开头添加一次时效性提醒
-                    time_warning = "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n"
-                    note_context = time_warning + "\n\n".join(note_context_parts)
-
-            # 生成并传递ID映射表
-
-            # 为记忆和笔记分别生成 ID => 短ID 的映射
-            memory_id_mapping = MemoryIDResolver.generate_id_mapping(
-                [mem.to_dict() for mem in long_term_memories], "id"
-            )
-            note_id_mapping = MemoryIDResolver.generate_id_mapping(
-                candidate_notes, "id"
-            )
-
-            # 将原始上下文数据存入event.angelmemory_context，供异步分析使用
+        # 7. 获取灵魂状态值
+        soul_state_values = None
+        if hasattr(self, "soul") and self.soul:
             try:
-                angelmemory_context = (
-                    json.loads(event.angelmemory_context)
-                    if hasattr(event, "angelmemory_context")
-                    and event.angelmemory_context
-                    else {}
-                )
-                angelmemory_context["raw_memories"] = [
-                    memory.to_dict() if hasattr(memory, "to_dict") else {}
-                    for memory in long_term_memories
-                ]
-                angelmemory_context["raw_notes"] = candidate_notes
-                angelmemory_context["core_topic"] = core_topic
-                # 把ID映射表也一起存进去
-                angelmemory_context["memory_id_mapping"] = memory_id_mapping
-                angelmemory_context["note_id_mapping"] = note_id_mapping
-                event.angelmemory_context = json.dumps(angelmemory_context)
+                soul_state_values = {
+                    "RecallDepth": self.soul.get_value("RecallDepth"),
+                    "ImpressionDepth": self.soul.get_value("ImpressionDepth"),
+                    "ExpressionDesire": self.soul.get_value("ExpressionDesire"),
+                    "Creativity": self.soul.get_value("Creativity")
+                }
             except Exception as e:
-                self.logger.error(f"保存原始上下文数据失败: {e}")
+                self.logger.warning(f"获取灵魂状态值失败: {e}")
 
-            # 注入记忆到请求（从短期记忆中读取并注入）
-            self._inject_memories_to_request(request, session_id, note_context)
+        # 8. 注入记忆、笔记和灵魂状态到请求
+        self._inject_memories_to_request(request, session_id, note_context, soul_state_values)
 
+        # 9. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
+        try:
+            memory_id_mapping = MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in long_term_memories], "id")
+            note_id_mapping = MemoryIDResolver.generate_id_mapping(candidate_notes, "id")
+
+            angelmemory_context = {
+                "memories": self._memories_to_json(self.session_memory_manager.get_session_memories(session_id)),
+                "recall_query": query,
+                "recall_time": time.time(),
+                "session_id": session_id,
+                "user_list": user_list,
+                "raw_memories": [memory.to_dict() for memory in long_term_memories],
+                "raw_notes": candidate_notes,
+                "core_topic": core_topic,
+                "memory_id_mapping": memory_id_mapping,
+                "note_id_mapping": note_id_mapping
+            }
+            event.angelmemory_context = json.dumps(angelmemory_context)
         except Exception as e:
-            import traceback
-
-            self.logger.error(
-                f"会话 {session_id} 的记忆组织失败: {e}"
-            )
-            self.logger.error(f"错误详情: {traceback.format_exc()}")
+            self.logger.error(f"保存原始上下文数据以供异步分析失败: {e}")
 
     def _extract_message_text(self, event: AstrMessageEvent) -> Optional[str]:
         """
