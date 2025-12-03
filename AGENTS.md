@@ -2,12 +2,13 @@
 
 ## 核心设计模式
 
-### 双层认知架构
-项目采用「潜意识-主意识」双层认知架构：
+### 三层认知架构
+项目采用「灵魂-潜意识-主意识」三层认知架构：
+- **灵魂层**（[`SoulState`](core/soul/soul_state.py:13)）：AI的精神状态管理器，通过4维能量槽控制行为参数
 - **潜意识层**（[`DeepMind`](core/deepmind.py:33)）：后台自动处理记忆的检索、整理和巩固
 - **主意识层**（LLM）：通过工具接口主动记忆和回忆
 
-这种设计模拟人类认知过程，实现了「观察→回忆→反馈→睡眠」的完整认知工作流。
+这种设计模拟人类认知过程，实现了「观察→回忆→反馈→睡眠→灵魂共鸣」的完整认知工作流。
 
 ### 依赖注入与组件工厂
 使用[`ComponentFactory`](core/component_factory.py:26)统一管理核心组件创建，确保：
@@ -41,6 +42,14 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 → 小模型分析 → 记忆强化/新增/合并 → 睡眠巩固
 ```
 
+### 灵魂状态流程
+```
+记忆检索 → SoulState.resonate() (旧记忆冲击当前状态)
+→ 小模型分析 → SoulState.update_energy() (根据16态代码更新)
+→ 动态参数注入 → LLM请求参数调整
+→ 新记忆生成 → 注入灵魂快照
+```
+
 ## 开发场景导航
 
 ### 新增记忆类型
@@ -53,16 +62,27 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - 笔记模型：[`NoteData`](llm_memory/models/note_models.py)
 - 配置模型：[`MemorySystemConfig`](llm_memory/config/system_config.py:16)
 
+### 灵魂状态配置
+灵魂系统4维能量槽配置：
+- **RecallDepth**：回忆量倾向，控制RAG检索数量
+- **ImpressionDepth**：记住量倾向，控制记忆生成数量
+- **ExpressionDesire**：发言长度倾向，控制LLM输出长度
+- **Creativity**：思维发散倾向，控制LLM温度参数
+
+每个维度支持min/mid/max三级配置，通过橡皮筋算法(Tanh)映射到具体参数。
+
 ### 配置环境变量
 关键配置项：
 - `MEMORY_EMBEDDING_MODEL`：嵌入模型选择
 - `MEMORY_COLLECTION_NAME`：记忆集合名称
 - `MEMORY_STRENGTH_THRESHOLD`：记忆强度阈值
+- `soul_*_min/mid/max`：灵魂参数范围配置
 
 ### 调试记忆系统
 1. 检查插件状态：[`plugin.get_plugin_status()`](main.py:347)
 2. 查看组件初始化：[`ComponentFactory.get_components()`](core/component_factory.py:276)
 3. 监控记忆流程：DeepMind日志输出
+4. 灵魂状态调试：[`soul.get_state_description()`](core/soul/soul_state.py:167)
 
 ## 核心技术栈
 
@@ -80,6 +100,12 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - **API提供商**：支持多种第三方嵌入服务
 - **缓存机制**：内存缓存提升重复查询性能
 
+### 灵魂系统
+- **状态管理**：4维能量槽实时状态维护
+- **橡皮筋算法**：Tanh函数实现非线性映射
+- **共鸣机制**：旧记忆状态快照冲击当前状态
+- **16态编码**：二进制状态码表示AI精神状态
+
 ## 关键决策点
 
 ### 1. 统一三元组记忆结构
@@ -96,13 +122,20 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 
 这种区分模拟人类记忆，确保重要信息长期保存。
 
-### 3. 异步反馈队列
+### 3. 灵魂状态动态参数调整
+通过4维能量槽实现AI行为参数动态调整：
+- **能量累积**：历史刺激累积影响当前行为
+- **自然衰减**：能量值随时间自动回归中庸
+- **橡皮筋映射**：非线性映射保证参数稳定
+- **状态共鸣**：旧记忆状态影响当前决策
+
+### 4. 异步反馈队列
 使用[`FeedbackQueue`](core/utils/feedback_queue.py)处理记忆反馈：
 - 不阻塞主对话流程
 - 批量处理提升性能
 - 失败重试保证可靠性
 
-### 4. 文件监控与笔记系统
+### 5. 文件监控与笔记系统
 - 自动监控文档变化，实时更新索引
 - 支持Markdown、文本等多种格式
 - 与记忆系统协同，提供结构化知识库
@@ -122,7 +155,13 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - 文件路径批量映射
 - 记忆批量更新
 
-### 4. 懒加载
+### 4. 灵魂系统优化
+- **线程安全**：使用RLock保证并发访问安全
+- **状态快照**：轻量级状态复制，避免深度拷贝
+- **参数预计算**：缓存映射结果，减少重复计算
+- **软限制机制**：能量值范围软限制，避免数值溢出
+
+### 5. 懒加载
 - 组件按需创建
 - 模型延迟加载
 - 服务懒初始化
@@ -141,6 +180,12 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 ### 4. 增强关联算法
 优化[`AssociationManager`](llm_memory/components/association_manager.py:30)的关联计算逻辑。
 
+### 5. 灵魂系统扩展
+- **新增能量维度**：扩展SoulState.energy字典添加新维度
+- **自定义映射函数**：替换Tanh函数实现特定映射曲线
+- **状态编码扩展**：扩展16态编码为更多状态表示
+- **共鸣算法优化**：实现更复杂的状态融合算法
+
 ## 故障排查指南
 
 ### 常见问题
@@ -148,6 +193,8 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 2. **向量化错误**：确认嵌入模型可用性
 3. **检索为空**：检查相似度阈值和查询预处理
 4. **性能下降**：清理嵌入缓存，优化批量操作
+5. **灵魂状态异常**：检查能量值范围和映射函数
+6. **参数注入失败**：验证LLM请求对象的extension字段
 
 ### 日志级别
 - **INFO**：关键流程和状态变化
@@ -160,6 +207,8 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - 检索延迟
 - 记忆数量
 - 缓存命中率
+- 灵魂能量值变化
+- 状态转换频率
 
 ---
 
