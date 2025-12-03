@@ -11,6 +11,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.star.star_tools import StarTools
+import asyncio
 
 try:
     from astrbot.api import logger
@@ -304,20 +305,13 @@ class AngelMemoryPlugin(Star):
                 self.logger.debug("没有记忆上下文，跳过记忆整理")
                 return
 
-            # 使用共享的PluginContext处理记忆整理
-            result = await self.plugin_manager.handle_memory_consolidation(
-                event, self.plugin_context
+            # 将记忆整理任务提交到事件循环，但不等待其完成，以避免阻塞主事件流程
+            asyncio.create_task(
+                self.plugin_manager.handle_memory_consolidation(
+                    event, self.plugin_context
+                )
             )
-
-            if result["status"] == "waiting":
-                self.logger.info("系统正在初始化中，跳过此次记忆整理")
-                return
-            elif result["status"] == "success":
-                self.logger.debug("记忆整理完成")
-            elif result["status"] == "skipped":
-                self.logger.debug(f"记忆整理跳过: {result.get('message', '未知原因')}")
-            else:
-                self.logger.error(f"记忆整理失败: {result.get('message', '未知错误')}")
+            self.logger.debug("记忆整理任务已提交至后台，不等待完成。")
 
         except Exception as e:
             self.logger.error(f"after_message_sent failed: {e}")
