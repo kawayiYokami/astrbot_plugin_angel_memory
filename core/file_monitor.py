@@ -101,91 +101,29 @@ class FileMonitorService:
                 self.note_service._thread_pool.shutdown(wait=True)
                 self.logger.debug("✅ NoteService线程池已关闭")
 
-            # 3. 强制ChromaDB执行WAL checkpoint（清空WAL文件）
-            self._force_chromadb_checkpoint("TRUNCATE")
+            # 3. ChromaDB维护操作已禁用（防止数据库损坏）
+            # 原因：外部直接操作SQLite文件会与ChromaDB客户端冲突
+            self.logger.debug("跳过ChromaDB维护操作（由内部自动管理）")
 
             self.logger.info("🔓 所有资源已释放，线程已回收")
 
         except Exception as e:
             self.logger.error(f"清理资源失败: {e}")
 
-    def _force_chromadb_checkpoint(self, mode: str = "PASSIVE"):
+    def _force_chromadb_vacuum(self):
         """
-        优化的ChromaDB WAL checkpoint机制
+        ⚠️ 已禁用直接VACUUM操作
 
-        Args:
-            mode: checkpoint模式
-                - PASSIVE: 默认模式，不阻塞其他操作
-                - RESTART: 更彻底的checkpoint
-                - TRUNCATE: 清空WAL文件（最彻底）
+        原因：在ChromaDB客户端持有数据库连接时直接执行VACUUM会导致数据库损坏。
+        ChromaDB内部已有自动优化机制，无需手动干预。
+
+        如需释放空间，应：
+        1. 完全关闭所有ChromaDB客户端
+        2. 使用ChromaDB官方工具或重启服务后自动优化
         """
-        try:
-            import sqlite3
-            from pathlib import Path
-            import time
+        self.logger.debug("已跳过VACUUM操作（由ChromaDB内部自动管理）")
+        return
 
-            # 获取ChromaDB数据库路径
-            vector_store = self.note_service.vector_store
-            db_path = Path(vector_store.db_path) / "chroma.sqlite3"
-
-            if not db_path.exists():
-                self.logger.debug("ChromaDB数据库不存在，跳过checkpoint")
-                return
-
-            # 检查WAL文件大小
-            wal_path = db_path.with_suffix(".sqlite3-wal")
-            wal_size = wal_path.stat().st_size if wal_path.exists() else 0
-
-            # 如果WAL文件太小（<1MB），跳过checkpoint（减少不必要开销）
-            if wal_size < 1024 * 1024 and mode == "PASSIVE":
-                self.logger.debug(f"WAL文件较小 ({wal_size} bytes)，跳过checkpoint")
-                return
-
-            start_time = time.time()
-
-            # 创建临时连接执行checkpoint
-            conn = sqlite3.connect(str(db_path), timeout=30.0)
-            try:
-                # 根据模式选择checkpoint策略
-                if mode == "TRUNCATE":
-                    # 清空WAL文件（最彻底，但可能阻塞）
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                elif mode == "RESTART":
-                    # 重启WAL模式（中等强度）
-                    conn.execute("PRAGMA wal_checkpoint(RESTART)")
-                else:
-                    # 默认PASSIVE模式（最轻量）
-                    conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-
-                conn.commit()
-
-                # 计算执行耗时
-                execution_time = time.time() - start_time
-
-                # 检查checkpoint后的WAL文件大小
-                new_wal_size = wal_path.stat().st_size if wal_path.exists() else 0
-                size_reduction = wal_size - new_wal_size
-
-                self.logger.debug(
-                    f"✅ ChromaDB WAL checkpoint完成 | "
-                    f"模式: {mode} | "
-                    f"耗时: {execution_time:.2f}s | "
-                    f"减少: {size_reduction // 1024}KB"
-                )
-
-                # 如果WAL文件仍然过大且不是TRUNCATE模式，记录警告
-                if new_wal_size > 10 * 1024 * 1024 and mode != "TRUNCATE":  # >10MB
-                    self.logger.warning(
-                        f"⚠️ WAL文件仍然较大 ({new_wal_size // 1024 // 1024}MB)，"
-                        "可能需要手动维护或使用TRUNCATE模式"
-                    )
-
-            finally:
-                conn.close()
-
-        except Exception as e:
-            # checkpoint失败不应该阻止其他清理操作
-            self.logger.warning(f"ChromaDB checkpoint失败（不影响继续）: {e}")
 
     def _format_timing_log(self, timings: dict) -> str:
         """格式化计时信息为日志字符串（按处理顺序）"""

@@ -290,6 +290,7 @@ class DeepMind:
                 vector=note_vector  # 传递预计算向量
             )
 
+
         # 5. 创建短ID到完整ID的映射（用于后续上下文扩展）
         note_id_mapping = {}
         for note in candidate_notes:
@@ -304,6 +305,7 @@ class DeepMind:
             memory_id_mapping = MemoryIDResolver.generate_id_mapping(
                 [memory.to_dict() for memory in long_term_memories], "id"
             )
+
 
         return {
             "long_term_memories": long_term_memories,
@@ -518,14 +520,45 @@ class DeepMind:
             except (json.JSONDecodeError, KeyError):
                 self.logger.error(f"为会话 {session_id} 解析 angelheart_context 失败")
 
-        # 2. 格式化对话历史为查询字符串
+        # 2. 从 secretary_decision 构建查询字符串
         query = ""
         user_list = []
-        if not chat_records:
-            message_text = self._extract_message_text(event)
-            query = message_text if message_text else ""
+
+        # 尝试从 secretary_decision 中提取关键信息
+        secretary_decision = {}
+        if hasattr(event, "angelheart_context"):
+            try:
+                angelheart_data = json.loads(event.angelheart_context)
+                secretary_decision = angelheart_data.get("secretary_decision", {})
+            except (json.JSONDecodeError, KeyError):
+                self.logger.error(f"为会话 {session_id} 解析 secretary_decision 失败")
+
+        if secretary_decision:
+            # 从 secretary_decision 构建查询词
+            topic = secretary_decision.get("topic", "")
+            entities = secretary_decision.get("entities", [])
+            facts = secretary_decision.get("facts", [])
+            keywords = secretary_decision.get("keywords", [])
+
+            # 构建查询词：主题 + 实体 + 关键事实 + 关键词
+            query_parts = []
+            if topic:
+                query_parts.append(topic)
+            if entities:
+                query_parts.extend(entities)
+            if facts:
+                query_parts.extend(facts[:3])  # 限制事实数量
+            if keywords:
+                query_parts.extend(keywords[:3])  # 限制关键词数量
+
+            query = " ".join(query_parts)
         else:
-            query, user_list = self.prompt_builder.format_chat_records(chat_records)
+            # 降级到原始逻辑
+            if not chat_records:
+                message_text = self._extract_message_text(event)
+                query = message_text if message_text else ""
+            else:
+                query, user_list = self.prompt_builder.format_chat_records(chat_records)
 
         # 3. 如果未配置 provider_id，跳过记忆整理
         if not self.provider_id:
@@ -533,6 +566,7 @@ class DeepMind:
 
         # 4. 检索长期记忆和笔记
         retrieval_data = await self._retrieve_memories_and_notes(event, query, precompute_vectors=True)
+
         long_term_memories = retrieval_data["long_term_memories"]
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
