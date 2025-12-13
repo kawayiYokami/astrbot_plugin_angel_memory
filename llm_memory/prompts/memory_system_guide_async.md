@@ -131,10 +131,11 @@ reasoning的正确用法:
 </记忆书写规范>
 
 <输出规范>
+**重要：你必须直接输出JSON格式的结果，严禁输出任何反思过程、解释说明或其他额外文本。**
+
 JSON结果格式:
 {
   "soul_state_code": "0110",
-  "useful_notes": ["笔记的id1", "笔记的id2"],
   "feedback_data": {
     "useful_memory_ids": ["记忆id1", "记忆id2"],
     "merge_groups": [],
@@ -155,11 +156,6 @@ JSON结果格式:
 }
 
 字段含义说明:
-- useful_notes: 与当前对话强相关的笔记ID列表
-  - 从候选笔记中挑选出可以作为参考资料的笔记
-  - 必须确保与对话话题直接相关，而不是仅仅因为包含用户名
-  - 如果不确定相关性，请留空
-
 - soul_state_code: 描述AI当前精神状态的4位二进制代码
 
 - feedback_data.useful_memory_ids: 本次交互中引用或确认有用的已存在记忆ID

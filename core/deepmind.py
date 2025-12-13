@@ -873,11 +873,9 @@ class DeepMind:
 
             query = context_data["query"]
 
-            # 获取原始记忆和笔记数据
+            # 获取原始记忆数据
             raw_memories_data = context_data.get("raw_memories", [])
-            raw_notes_data = context_data.get("raw_notes", [])
             core_topic = context_data.get("core_topic", "")
-
 
             # 将原始数据转换为记忆对象
             from ..llm_memory.models.data_models import BaseMemory
@@ -897,17 +895,14 @@ class DeepMind:
 
             # 从上下文数据中获取ID映射表
             memory_id_mapping = context_data.get("memory_id_mapping", {})
-            note_id_mapping = context_data.get("note_id_mapping", {})
 
-            # 构建反思提示词（使用模块化的提示词构建器，现在展示短ID）
+            # 构建反思提示词（只传递记忆数据，不传递笔记）
             prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompt(
                 historical_query=query,
                 main_llm_response=response_text,
                 raw_memories=long_term_memories,
-                raw_notes=raw_notes_data,
                 core_topic=core_topic,
-                memory_id_mapping=memory_id_mapping,  # 传递记忆ID映射表
-                note_id_mapping=note_id_mapping,  # 传递笔记ID映射表
+                memory_id_mapping=memory_id_mapping,
                 config=self.config,
             )
 

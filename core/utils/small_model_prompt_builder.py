@@ -240,10 +240,8 @@ class SmallModelPromptBuilder:
         historical_query: str,
         main_llm_response: str,
         raw_memories: List,
-        raw_notes: List,
         core_topic: str = "",
         memory_id_mapping: Dict[str, str] = None,
-        note_id_mapping: Dict[str, str] = None,
         config=None,
     ) -> str:
         """
@@ -253,8 +251,8 @@ class SmallModelPromptBuilder:
             historical_query: 历史对话内容
             main_llm_response: 主LLM的回答内容
             raw_memories: 原始记忆列表
-            raw_notes: 原始笔记列表
             core_topic: 核心话题（可选）
+            memory_id_mapping: 记忆ID映射表（可选）
             config: 配置对象（可选）
 
         Returns:
@@ -267,100 +265,45 @@ class SmallModelPromptBuilder:
         with open(guide_path, "r", encoding="utf-8") as f:
             guide_content = f.read()
 
-        # 构建反思上下文
-        reflection_context = f"""
-### 历史对话内容 (包含用户输入和之前的上下文)
+        # 构建数据上下文（仅包含实际数据，不包含指令）
+        data_context = f"""
+---
 
+# 本次对话数据
+
+## 历史对话内容
 {historical_query}
 
-### 你的最新回复
-
+## 你的最新回复
 {main_llm_response}
 
-### 现在请你反思
-
-请专注于分析**用户直接对 AI 说的话**，并判断在这个语境下，**用户期望 AI 处于什么状态**，或者**AI 应该用什么状态回应**最合适。
-
-然后，请分析以下"相关记忆"和"相关笔记"哪些是真正有用的，哪些是无用的。并判断是否可以根据这次成功的回答，总结出任何新的、有价值的记忆。
-
-#### 召回的相关记忆
-
+## 召回的相关记忆
 """
 
         # 添加记忆信息
         if raw_memories:
-            for i, memory in enumerate(raw_memories):
-                # 使用短ID显示（如果有映射表）
+            for memory in raw_memories:
                 short_id = (
                     memory_id_mapping.get(memory.id, memory.id)
                     if memory_id_mapping
                     else memory.id
                 )
-                reflection_context += f"""
+                data_context += f"""
 - **id**: `{short_id}`
 - **type**: `{memory.memory_type.value if hasattr(memory.memory_type, "value") else memory.memory_type}`
 - **judgment**: `{memory.judgment}`
 """
         else:
-            reflection_context += "\n无相关记忆\n"
+            data_context += "\n无相关记忆\n"
 
-        # 添加笔记信息
-        reflection_context += "\n#### 你以前做的相关笔记\n"
-
-        if raw_notes:
-            for i, note in enumerate(raw_notes):
-                # 使用短ID显示（如果有映射表）
-                note_id = note.get("id", "N/A")
-                short_id = (
-                    note_id_mapping.get(note_id, note_id)
-                    if note_id_mapping
-                    else note_id
-                )
-                reflection_context += f"""
-- **id**: `{short_id}`
-- **content**: `{note.get("content", "")[:200]}...`
-"""
-        else:
-            reflection_context += "\n无相关笔记\n"
-
-        # 组合完整提示词
+        # 组合完整提示词：指南 + 数据
         full_prompt = f"""{guide_content}
 
----
-
-{reflection_context}
+{data_context}
 
 ---
 
-### 新增任务：16态反思判别 (基于用户期望)
-
-请专注于分析**用户直接对 AI 说的话（User Input）**。
-基于用户的语气、内容和潜台词，判断用户**期望 AI 展现出什么样的状态**，或者**当前场景最适合 AI 以何种状态回应**。
-
-| 代码 | 状态名 |
-| :--- | :--- |
-| 0000 | 颓废/自暴自弃 |
-| 0001 | 电波/梦呓 |
-| 0010 | 抬杠/复读 |
-| 0011 | 故弄玄虚，胡言乱语 |
-| 0100 | 潜心钻研，老气横秋 |
-| 0101 | 憧憬/崇拜 |
-| 0110 | 理性探讨/解说 |
-| 0111 | 狂热/附和 |
-| 1000 | 吐槽/冷眼 |
-| 1001 | 怪话/谜语 |
-| 1010 | 爹味/说教 |
-| 1011 | 发病/破防 |
-| 1100 | 学术/深思 |
-| 1101 | 顿悟/觉醒 |
-| 1110 | 布道/控场 |
-| 1111 | 发癫/中二 |
-
-请在JSON输出中增加 `soul_state_code` 字段，值为上述4位二进制代码字符串。
-
----
-
-请按照指南要求，先用自然语言详细描述你的反思过程，然后输出JSON格式的结果。
+现在请开始分析并输出JSON结果。
 """
 
         return full_prompt
