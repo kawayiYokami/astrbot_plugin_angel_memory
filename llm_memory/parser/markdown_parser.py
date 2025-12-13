@@ -7,11 +7,12 @@ Markdown解析器
 import re
 import uuid
 from typing import List, Dict, Any, Set
-HAS_JIEBA = False
 
 from ..models.note_models import NoteData
 from ..components.tag_manager import TagManager
 from ..utils.token_utils import count_tokens, truncate_by_tokens
+
+HAS_JIEBA = False
 
 
 class MarkdownParser:

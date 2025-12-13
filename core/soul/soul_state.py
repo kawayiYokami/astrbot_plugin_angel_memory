@@ -1,8 +1,6 @@
 import math
-import json
-import os
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict
 
 try:
     from astrbot.api import logger

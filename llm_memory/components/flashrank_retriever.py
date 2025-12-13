@@ -5,7 +5,7 @@ FlashRank 重排组件。
 基于 ONNX Runtime，针对 CPU 推理进行了极致优化。
 """
 
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 
 # 导入日志记录器
 try:
@@ -14,7 +14,6 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from ..utils.path_manager import PathManager
 
 # 尝试导入 FlashRank
 try:

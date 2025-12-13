@@ -164,7 +164,7 @@ class DBManager:
         try:
             collection = self.client.get_collection(name=collection_name)
             return {"count": collection.count()}
-        except:
+        except Exception:
             return {"count": 0}
 
     def browse_collection(self, collection_name: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:

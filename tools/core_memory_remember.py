@@ -4,9 +4,7 @@ from astrbot.api.event import AstrMessageEvent
 from dataclasses import dataclass, field
 
 # 导入必要的服务组件和模型
-from ..core.component_factory import ComponentFactory
 from ..llm_memory.service.cognitive_service import CognitiveService
-from ..llm_memory.models.data_models import MemoryType
 
 # 导入日志记录器
 try:

@@ -108,7 +108,6 @@ class VectorStore:
         """懒加载 FlashRank 重排器"""
         try:
             # 从 PluginContext 获取配置
-            pm = PathManager.get_instance()
             # 获取 PluginContext 实例有点 hack，但 PathManager 是单例且与 context 绑定
             # 更好的方式是 VectorStore 应该持有 plugin_context 的引用，但这需要较大的重构
             # 这里我们通过检查环境变量或配置来决定

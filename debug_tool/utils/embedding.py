@@ -1,8 +1,6 @@
 import logging
-from typing import List, Union
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from openai import OpenAI
-import os
 
 logger = logging.getLogger(__name__)
 

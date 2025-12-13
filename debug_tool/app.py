@@ -111,10 +111,11 @@ def render_item(item, type="memory", use_flashrank=False):
         try:
             ts = float(meta['created_at'])
             # 可能是秒或毫秒，通常是秒
-            if ts > 1e11: ts /= 1000 # 毫秒修正
+            if ts > 1e11:
+                ts /= 1000  # 毫秒修正
             time_str = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
             header_parts.append(f"🕒 {time_str}")
-        except:
+        except Exception:
             pass
 
     # 标签 (文本格式)
@@ -132,8 +133,7 @@ def render_item(item, type="memory", use_flashrank=False):
 
         header_parts.append(f"🔖 {tag_ids_str}")
 
-    # 标签 (ID格式，需要解析) - FlashRank 可选
-    tag_names = []
+    # FlashRank 可选显示
     if use_flashrank and item.get('final_ranked_score'):
         # 显示原始分数和重排后分数
         original_score = item.get('original_score', 0.0)

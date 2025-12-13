@@ -1,4 +1,3 @@
-from .soul.soul_state import SoulState
 """
 DeepMind潜意识核心模块
 
@@ -14,6 +13,7 @@ import json
 from typing import List, Dict, Any, Optional
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
+from .soul.soul_state import SoulState
 from .utils.memory_id_resolver import MemoryIDResolver
 from ..llm_memory import CognitiveService
 from ..llm_memory.utils.json_parser import JsonParser
@@ -21,7 +21,6 @@ from .session_memory import SessionMemoryManager
 from .utils import SmallModelPromptBuilder, MemoryInjector
 from .utils.feedback_queue import get_feedback_queue
 from .utils.query_processor import get_query_processor
-from .config import MemoryConstants
 
 try:
     from astrbot.api import logger
@@ -975,7 +974,6 @@ class DeepMind:
 
             # ID解析：使用映射表将LLM返回的短ID翻译回长ID
             memory_id_mapping = context_data.get("memory_id_mapping", {})
-            note_id_mapping = context_data.get("note_id_mapping", {})
 
             if "useful_memory_ids" in feedback_data:
                 # 使用映射表将短ID翻译回长ID
