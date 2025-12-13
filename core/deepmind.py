@@ -252,11 +252,15 @@ class DeepMind:
                     vector=memory_vector,
                 )
 
-                # 情绪共鸣：旧记忆冲击当前状态
+                # 情绪共鸣：旧记忆冲击当前状态（批量处理）
                 if self.soul:
-                    for mem in long_term_memories:
-                        if hasattr(mem, "state_snapshot"):
-                            self.soul.resonate(mem.state_snapshot)
+                    snapshots = [
+                        mem.state_snapshot
+                        for mem in long_term_memories
+                        if hasattr(mem, "state_snapshot") and mem.state_snapshot
+                    ]
+                    if snapshots:
+                        self.soul.resonate(snapshots)
 
             except Exception as e:
                 self.logger.error(f"链式召回失败，跳过记忆检索: {e}")
@@ -947,27 +951,12 @@ class DeepMind:
                 state_code = full_json_data.get("soul_state_code", "0000")
                 if len(state_code) == 4:
                     try:
-                        # 解析4位代码
-                        is_recall, is_learn, is_talkative, is_creative = [int(c) for c in state_code]
-
-                        # 定义更新规则 (命中+1.0, 未命中-0.5, 自然衰减0.1)
+                        # 使用新的原子化接口（4位代码一次性调整）
                         # 代码位对应: RecallDepth, ImpressionDepth, ExpressionDesire, Creativity
-                        # 注意：上面的解析顺序可能需要根据Prompt中的定义微调
                         # 0000 颓废: 话少(Expression-), 死板(Creativity-), 不查历史(Recall-), 拒绝新知(Impression-)
                         # 1111 觉醒: 话多(Expression+), 飞升(Creativity+), 查阅历史(Recall+), 吸收新知(Impression+)
 
-                        # 更新 RecallDepth (对应第1位: 查阅历史)
-                        self.soul.update_energy("RecallDepth", 1.0 if is_recall else -0.5, decay=0.1)
-
-                        # 更新 ImpressionDepth (对应第2位: 吸收新知)
-                        self.soul.update_energy("ImpressionDepth", 1.0 if is_learn else -0.5, decay=0.1)
-
-                        # 更新 ExpressionDesire (对应第3位: 话多)
-                        self.soul.update_energy("ExpressionDesire", 1.0 if is_talkative else -0.5, decay=0.1)
-
-                        # 更新 Creativity (对应第4位: 发散/逻辑飞升/不被束缚)
-                        self.soul.update_energy("Creativity", 1.0 if is_creative else -0.5, decay=0.1)
-
+                        self.soul.adjust(state_code, mode="reflect")
                         self.logger.info(f"🧘 灵魂反思 ({state_code}): {self.soul.get_state_description()}")
                     except ValueError:
                         self.logger.warning(f"无效的灵魂状态代码: {state_code}")
