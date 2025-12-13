@@ -81,8 +81,8 @@ class MemoryConstants:
     SHORT_TERM_MEMORY_CAPACITY = 1.0
     SLEEP_INTERVAL = 3600  # 默认睡眠间隔（秒）
     DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
-    SMALL_MODEL_NOTE_BUDGET = 8000  # 默认小模型笔记Token预算
-    LARGE_MODEL_NOTE_BUDGET = 12000  # 默认大模型笔记Token预算
+    SMALL_MODEL_NOTE_BUDGET = 200  # 默认小模型笔记Token预算
+    LARGE_MODEL_NOTE_BUDGET = 200  # 默认大模型笔记Token预算
 
     # 时间常量（秒）
     TIME_SECOND = 1
@@ -137,32 +137,48 @@ class MemoryConfig:
 
         # 预计算常用配置值（使用通用验证器）
         config_get = self.config.get
+
+        # 记忆行为参数配置 - 支持新旧格式兼容
+        # 新格式：memory_behavior.min_message_length
+        # 旧格式：min_message_length
+        memory_behavior = config_get("memory_behavior", {})
+
         self._min_message_length = ConfigValidator.validate_positive_int(
-            config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH),
+            memory_behavior.get("min_message_length") or config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH),
             "min_message_length",
             max_value=500,
         )
         self._short_term_memory_capacity = ConfigValidator.validate_positive_number(
-            config_get(
-                "short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY
-            ),
+            memory_behavior.get("short_term_memory_capacity") or config_get("short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY),
             "short_term_memory_capacity",
             max_value=10.0,
         )
         self._sleep_interval = ConfigValidator.validate_non_negative_int(
-            config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL),
+            memory_behavior.get("sleep_interval") or config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL),
             "sleep_interval",
             max_value=86400,
         )
+        self._default_passive_strength = ConfigValidator.validate_positive_int(
+            memory_behavior.get("default_passive_strength") or config_get("default_passive_strength", 10),
+            "default_passive_strength",
+            max_value=100,
+        )
+
         self._data_directory = config_get("data_directory", self.data_dir)
         self._provider_id = config_get("provider_id", "")
+
+        # Token预算配置 - 支持新旧格式兼容
+        # 新格式：token_budget.small_model_budget
+        # 旧格式：small_model_note_budget
+        token_budget = config_get("token_budget", {})
+
         self._small_model_note_budget = ConfigValidator.validate_non_negative_int(
-            config_get("small_model_note_budget", 8000),
+            token_budget.get("small_model_budget") or config_get("small_model_note_budget", MemoryConstants.SMALL_MODEL_NOTE_BUDGET),
             "small_model_note_budget",
             max_value=64000,
         )
         self._large_model_note_budget = ConfigValidator.validate_non_negative_int(
-            config_get("large_model_note_budget", 12000),
+            token_budget.get("large_model_budget") or config_get("large_model_note_budget", MemoryConstants.LARGE_MODEL_NOTE_BUDGET),
             "large_model_note_budget",
             max_value=64000,
         )
@@ -170,26 +186,106 @@ class MemoryConfig:
         self._enable_flashrank = config_get("enable_flashrank", False)
         self._flashrank_model = config_get("flashrank_model", "ms-marco-MultiBERT-L-12")
 
-        # 灵魂参数配置
-        self._soul_recall_depth_min = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_min", 3), "soul_recall_depth_min")
-        self._soul_recall_depth_mid = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_mid", 7), "soul_recall_depth_mid")
-        self._soul_recall_depth_max = ConfigValidator.validate_positive_int(config_get("soul_recall_depth_max", 20), "soul_recall_depth_max")
-        ConfigValidator.validate_range_order(self._soul_recall_depth_min, self._soul_recall_depth_mid, self._soul_recall_depth_max, "soul_recall_depth")
+        # 灵魂系统配置 - 支持新旧格式兼容
+        # 新格式：enable_soul_system.enabled, enable_soul_system.recall_depth_mid
+        # 旧格式：enable_soul_system (bool), soul_recall_depth_mid
+        soul_system_config = config_get("enable_soul_system", {})
 
-        self._soul_impression_depth_min = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_min", 1), "soul_impression_depth_min")
-        self._soul_impression_depth_mid = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_mid", 3), "soul_impression_depth_mid")
-        self._soul_impression_depth_max = ConfigValidator.validate_positive_int(config_get("soul_impression_depth_max", 10), "soul_impression_depth_max")
-        ConfigValidator.validate_range_order(self._soul_impression_depth_min, self._soul_impression_depth_mid, self._soul_impression_depth_max, "soul_impression_depth")
+        # 兼容旧格式：如果enable_soul_system是bool，转换为新格式
+        if isinstance(soul_system_config, bool):
+            self._enable_soul_system = soul_system_config
+            soul_system_config = {}
+        else:
+            self._enable_soul_system = ConfigValidator.validate_bool(
+                soul_system_config.get("enabled", True),
+                "enable_soul_system.enabled"
+            )
 
-        self._soul_expression_desire_min = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_min", 100), "soul_expression_desire_min")
-        self._soul_expression_desire_mid = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_mid", 500), "soul_expression_desire_mid")
-        self._soul_expression_desire_max = ConfigValidator.validate_positive_int(config_get("soul_expression_desire_max", 4000), "soul_expression_desire_max")
-        ConfigValidator.validate_range_order(self._soul_expression_desire_min, self._soul_expression_desire_mid, self._soul_expression_desire_max, "soul_expression_desire")
+        # RecallDepth 参数 - 优先使用新格式，其次旧格式，最后默认值
+        self._soul_recall_depth_min = ConfigValidator.validate_positive_int(
+            config_get("soul_recall_depth_min", 3),
+            "soul_recall_depth_min"
+        )
+        self._soul_recall_depth_mid = ConfigValidator.validate_positive_int(
+            soul_system_config.get("recall_depth_mid") or config_get("soul_recall_depth_mid", 7),
+            "soul_recall_depth_mid"
+        )
+        self._soul_recall_depth_max = ConfigValidator.validate_positive_int(
+            config_get("soul_recall_depth_max", 20),
+            "soul_recall_depth_max"
+        )
+        ConfigValidator.validate_range_order(
+            self._soul_recall_depth_min,
+            self._soul_recall_depth_mid,
+            self._soul_recall_depth_max,
+            "soul_recall_depth"
+        )
 
-        self._soul_creativity_min = ConfigValidator.validate_positive_number(config_get("soul_creativity_min", 0.1), "soul_creativity_min")
-        self._soul_creativity_mid = ConfigValidator.validate_positive_number(config_get("soul_creativity_mid", 0.7), "soul_creativity_mid")
-        self._soul_creativity_max = ConfigValidator.validate_positive_number(config_get("soul_creativity_max", 1.5), "soul_creativity_max")
-        ConfigValidator.validate_range_order(self._soul_creativity_min, self._soul_creativity_mid, self._soul_creativity_max, "soul_creativity")
+        # ImpressionDepth 参数
+        self._soul_impression_depth_min = ConfigValidator.validate_positive_int(
+            config_get("soul_impression_depth_min", 1),
+            "soul_impression_depth_min"
+        )
+        self._soul_impression_depth_mid = ConfigValidator.validate_positive_int(
+            soul_system_config.get("impression_depth_mid") or config_get("soul_impression_depth_mid", 3),
+            "soul_impression_depth_mid"
+        )
+        self._soul_impression_depth_max = ConfigValidator.validate_positive_int(
+            config_get("soul_impression_depth_max", 10),
+            "soul_impression_depth_max"
+        )
+        ConfigValidator.validate_range_order(
+            self._soul_impression_depth_min,
+            self._soul_impression_depth_mid,
+            self._soul_impression_depth_max,
+            "soul_impression_depth"
+        )
+
+        # ExpressionDesire 参数 - 使用归一化值(0-1)
+        self._soul_expression_desire_min = ConfigValidator.validate_positive_number(
+            config_get("soul_expression_desire_min", 0.0),
+            "soul_expression_desire_min",
+            max_value=1.0
+        )
+        self._soul_expression_desire_mid = ConfigValidator.validate_positive_number(
+            soul_system_config.get("expression_desire_mid") or config_get("soul_expression_desire_mid", 0.5),
+            "soul_expression_desire_mid",
+            max_value=1.0
+        )
+        self._soul_expression_desire_max = ConfigValidator.validate_positive_number(
+            config_get("soul_expression_desire_max", 1.0),
+            "soul_expression_desire_max",
+            max_value=1.0
+        )
+        ConfigValidator.validate_range_order(
+            self._soul_expression_desire_min,
+            self._soul_expression_desire_mid,
+            self._soul_expression_desire_max,
+            "soul_expression_desire"
+        )
+
+        # Creativity 参数 - 使用归一化值(0-1)
+        self._soul_creativity_min = ConfigValidator.validate_positive_number(
+            config_get("soul_creativity_min", 0.0),
+            "soul_creativity_min",
+            max_value=1.0
+        )
+        self._soul_creativity_mid = ConfigValidator.validate_positive_number(
+            soul_system_config.get("creativity_mid") or config_get("soul_creativity_mid", 0.7),
+            "soul_creativity_mid",
+            max_value=1.0
+        )
+        self._soul_creativity_max = ConfigValidator.validate_positive_number(
+            config_get("soul_creativity_max", 1.0),
+            "soul_creativity_max",
+            max_value=1.0
+        )
+        ConfigValidator.validate_range_order(
+            self._soul_creativity_min,
+            self._soul_creativity_mid,
+            self._soul_creativity_max,
+            "soul_creativity"
+        )
 
     @property
     def min_message_length(self) -> int:
@@ -205,6 +301,11 @@ class MemoryConfig:
     def sleep_interval(self) -> int:
         """获取睡眠间隔（秒）"""
         return self._sleep_interval
+
+    @property
+    def default_passive_strength(self) -> int:
+        """获取被动记忆默认强度"""
+        return self._default_passive_strength
 
     @property
     def data_directory(self) -> str:
@@ -240,6 +341,11 @@ class MemoryConfig:
         """FlashRank 模型名称"""
         return self._flashrank_model
 
+    @property
+    def enable_soul_system(self) -> bool:
+        """是否启用灵魂系统"""
+        return self._enable_soul_system
+
     # 灵魂参数属性
     @property
     def soul_recall_depth_min(self) -> int: return self._soul_recall_depth_min
@@ -256,11 +362,11 @@ class MemoryConfig:
     def soul_impression_depth_max(self) -> int: return self._soul_impression_depth_max
 
     @property
-    def soul_expression_desire_min(self) -> int: return self._soul_expression_desire_min
+    def soul_expression_desire_min(self) -> float: return self._soul_expression_desire_min
     @property
-    def soul_expression_desire_mid(self) -> int: return self._soul_expression_desire_mid
+    def soul_expression_desire_mid(self) -> float: return self._soul_expression_desire_mid
     @property
-    def soul_expression_desire_max(self) -> int: return self._soul_expression_desire_max
+    def soul_expression_desire_max(self) -> float: return self._soul_expression_desire_max
 
     @property
     def soul_creativity_min(self) -> float: return self._soul_creativity_min
@@ -288,9 +394,11 @@ class MemoryConfig:
             "min_message_length": self.min_message_length,
             "short_term_memory_capacity": self.short_term_memory_capacity,
             "sleep_interval": self.sleep_interval,
+            "default_passive_strength": self.default_passive_strength,
             "enable_local_embedding": self.enable_local_embedding,
             "enable_flashrank": self.enable_flashrank,
             "flashrank_model": self.flashrank_model,
+            "enable_soul_system": self.enable_soul_system,
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "small_model_note_budget": self.small_model_note_budget,

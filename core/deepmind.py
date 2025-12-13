@@ -345,8 +345,8 @@ class DeepMind:
         """
         将记忆和灵魂状态注入到LLM请求中
         """
-        # 1. 注入灵魂状态仪表盘
-        if soul_state_values:
+        # 1. 注入灵魂状态仪表盘（仅当启用灵魂系统时）
+        if soul_state_values and self.config.enable_soul_system:
             # 归一化用于生成进度条
             norm_recall = self._normalize_soul_value("RecallDepth", soul_state_values["RecallDepth"])
             norm_impression = self._normalize_soul_value("ImpressionDepth", soul_state_values["ImpressionDepth"])
@@ -360,7 +360,7 @@ class DeepMind:
 
             dashboard_text = (
                 "<灵魂仪表盘>\n"
-                "    <用法>这是我当前的内在性格倾向。在生成回答时，我将尝试参考这些倾向来调整我的语气、内容详略和思考方式，以更符合我当下的“人设”。每个倾向值在0到1之间，0代表左侧描述，1代表右侧描述。这不是强制命令，我会根据对话上下文灵活判断。</用法>\n"
+                '    <用法>这是我当前的内在性格倾向。在生成回答时，我将尝试参考这些倾向来调整我的语气、内容详略和思考方式，以更符合我当下的"人设"。每个倾向值在0到1之间，0代表左侧描述，1代表右侧描述。这不是强制命令，我会根据对话上下文灵活判断。</用法>\n'
                 f"    <倾向 类型='社交'>内向 <---[ {bar_recall} ]---> 外向 (值: {norm_recall:.2f})</倾向>\n"
                 f"    <倾向 类型='认知'>指导 <---[ {bar_impression} ]---> 好奇 (值: {norm_impression:.2f})</倾向>\n"
                 f"    <倾向 类型='表达'>话少 <---[ {bar_expression} ]---> 话多 (值: {norm_expression:.2f})</倾向>\n"

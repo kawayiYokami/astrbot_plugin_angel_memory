@@ -1,5 +1,5 @@
 name: astrbot_plugin_angel_memory
 description: "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索"
 author: kawayiYokami
-version: 0.4.9
+version: 0.5.0
 repo: https://github.com/kawayiYokami/astrbot_plugin_angel_memory
