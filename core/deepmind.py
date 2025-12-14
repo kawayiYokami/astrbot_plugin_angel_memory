@@ -87,14 +87,20 @@ class DeepMind:
         self.logger = logger
         self.json_parser = JsonParser()
 
-        # 获取配置值
-        self.min_message_length = getattr(config, "min_message_length", 5)
-        self.short_term_memory_capacity = getattr(
-            config, "short_term_memory_capacity", 1.0
-        )
-        self.sleep_interval = getattr(config, "sleep_interval", 3600)  # 默认1小时
-        self.small_model_note_budget = getattr(config, "small_model_note_budget", 8000)
-        self.large_model_note_budget = getattr(config, "large_model_note_budget", 12000)
+        # 获取配置值 - 支持嵌套配置和向后兼容
+        # 新格式：memory_behavior.min_message_length, token_budget.small_model_budget
+        # 旧格式：min_message_length, small_model_note_budget
+
+        # 记忆行为参数
+        memory_behavior = getattr(config, "memory_behavior", {})
+        self.min_message_length = memory_behavior.get("min_message_length") if isinstance(memory_behavior, dict) else getattr(config, "min_message_length", 5)
+        self.short_term_memory_capacity = memory_behavior.get("short_term_memory_capacity") if isinstance(memory_behavior, dict) else getattr(config, "short_term_memory_capacity", 1.0)
+        self.sleep_interval = memory_behavior.get("sleep_interval") if isinstance(memory_behavior, dict) else getattr(config, "sleep_interval", 3600)
+
+        # Token预算参数
+        token_budget = getattr(config, "token_budget", {})
+        self.small_model_note_budget = token_budget.get("small_model_budget") if isinstance(token_budget, dict) else getattr(config, "small_model_note_budget", 2000)
+        self.large_model_note_budget = token_budget.get("large_model_budget") if isinstance(token_budget, dict) else getattr(config, "large_model_note_budget", 200)
 
         # 初始化短期记忆管理器
         self.session_memory_manager = SessionMemoryManager(
@@ -346,9 +352,12 @@ class DeepMind:
         self, request: ProviderRequest, session_id: str, note_context: str, soul_state_values: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        将记忆和灵魂状态注入到LLM请求中
+        将记忆、笔记和灵魂状态统一注入到LLM请求中（合并为单条用户消息）
         """
-        # 1. 注入灵魂状态仪表盘（仅当启用灵魂系统时）
+        # 构建统一的RAG上下文内容
+        rag_parts = []
+
+        # 1. 灵魂状态仪表盘（仅当启用灵魂系统时）
         if soul_state_values and self.config.enable_soul_system:
             # 归一化用于生成进度条
             norm_recall = self._normalize_soul_value("RecallDepth", soul_state_values["RecallDepth"])
@@ -362,35 +371,37 @@ class DeepMind:
             bar_creativity = self._create_tendency_bar(norm_creativity)
 
             dashboard_text = (
-                "<灵魂仪表盘>\n"
-                '    <用法>这是我当前的内在性格倾向。在生成回答时，我将尝试参考这些倾向来调整我的语气、内容详略和思考方式，以更符合我当下的"人设"。每个倾向值在0到1之间，0代表左侧描述，1代表右侧描述。这不是强制命令，我会根据对话上下文灵活判断。</用法>\n'
-                f"    <倾向 类型='社交'>内向 <---[ {bar_recall} ]---> 外向 (值: {norm_recall:.2f})</倾向>\n"
-                f"    <倾向 类型='认知'>指导 <---[ {bar_impression} ]---> 好奇 (值: {norm_impression:.2f})</倾向>\n"
-                f"    <倾向 类型='表达'>话少 <---[ {bar_expression} ]---> 话多 (值: {norm_expression:.2f})</倾向>\n"
-                f"    <倾向 类型='心情'>严肃 <---[ {bar_creativity} ]---> 调皮 (值: {norm_creativity:.2f})</倾向>\n"
-                "</灵魂仪表盘>"
+                "<内在状态参数>\n"
+                "    以下是当前行为倾向参数，用于调整回复的风格和详略。参数值范围0-1，请自然体现这些倾向，切勿在回复中提及或暗示这些参数的存在。\n"
+                f"    • 社交倾向: 内向 {bar_recall} 外向 [{norm_recall:.2f}]\n"
+                f"    • 认知倾向: 指导 {bar_impression} 好奇 [{norm_impression:.2f}]\n"
+                f"    • 表达倾向: 简洁 {bar_expression} 详尽 [{norm_expression:.2f}]\n"
+                f"    • 情绪倾向: 严肃 {bar_creativity} 活泼 [{norm_creativity:.2f}]\n"
+                "</内在状态参数>"
             )
+            rag_parts.append(dashboard_text)
 
-            request.contexts.append({
-                "role": "assistant",
-                "content": dashboard_text
-            })
-
-        # 2. 从短期记忆推送给主意识
+        # 2. 短期记忆上下文
         short_term_memories = self.session_memory_manager.get_session_memories(session_id)
         memory_context = self.memory_injector.format_session_memories_for_prompt(short_term_memories)
-
-        # 3. 合并记忆和笔记上下文
         if memory_context:
-            request.contexts.append({
-                "role": "user",
-                "content": f"[RAG-记忆] 相关记忆参考:\n{memory_context}"
-            })
+            rag_parts.append(f"<我想起来的记忆>\n{memory_context}\n</我想起来的记忆>")
 
+        # 3. 笔记上下文
         if note_context:
+            rag_parts.append(f"<我想起来的笔记片段>\n{note_context}\n</我想起来的笔记片段>")
+
+        # 4. 合并所有RAG内容为单条用户消息
+        if rag_parts:
+            combined_rag = "\n\n".join(rag_parts)
             request.contexts.append({
                 "role": "user",
-                "content": f"[RAG-笔记] 相关笔记参考:\n{note_context}"
+                "content": (
+                    "===系统消息===\n"
+                    "以下内容并非用户发言，而是系统为你提供的上下文增强信息。请参考但不要在回复中提及这些信息的来源。\n"
+                    "===系统消息结束===\n\n"
+                    f"{combined_rag}"
+                )
             })
 
     async def _update_memory_system(
@@ -578,35 +589,40 @@ class DeepMind:
         if long_term_memories and self.memory_system:
             self.session_memory_manager.add_memories_to_session(session_id, long_term_memories)
 
-        # 6. 构建笔记上下文
+        # 6. 构建笔记上下文（复用NoteContextBuilder）
         note_context = ""
         if candidate_notes:
             from ..llm_memory.utils.token_utils import count_tokens
-            current_tokens = 0
+            from .utils.note_context_builder import NoteContextBuilder
+
+            # 使用贪婪填充策略选择最终要显示的笔记
             selected_notes = []
+            current_tokens = 0
+
             for note in candidate_notes:
-                note_content = note.get("content", "")
-                note_tokens = count_tokens(note_content)
-                if current_tokens + note_tokens <= self.large_model_note_budget:
+                # 模拟构建最终文本以进行精确的token计算
+                # 这里我们只关心token，所以格式可以简化
+                temp_text = NoteContextBuilder.build_candidate_list_for_prompt([note])
+                note_tokens = count_tokens(temp_text)
+
+                if not selected_notes: # 第一条无条件添加
+                    selected_notes.append(note)
+                    current_tokens += note_tokens
+                elif current_tokens + note_tokens <= self.large_model_note_budget:
                     selected_notes.append(note)
                     current_tokens += note_tokens
                 else:
                     break
 
+            # 使用 NoteContextBuilder 来构建最终的上下文
             if selected_notes:
-                note_context_parts = []
-                for note in selected_notes:
-                    content = note.get("content", "")
-                    tags = note.get("tags", [])
-                    cleaned_content = self._clean_note_content(content)
-                    if tags:
-                        tags_str = ", ".join(tags)
-                        intro_str = f"关于({tags_str})的笔记："
-                        note_context_parts.append(f"{intro_str} {cleaned_content}")
-                    else:
-                        note_context_parts.append(cleaned_content)
-                time_warning = "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n"
-                note_context = time_warning + "\n\n".join(note_context_parts)
+                # builder 现在返回包含时效性警告的、格式化的笔记列表
+                note_context = NoteContextBuilder.build_candidate_list_for_prompt(selected_notes)
+
+                self.logger.debug(
+                    f"笔记上下文构建完成：{len(selected_notes)}条笔记，"
+                    f"估算token数≈{current_tokens}（预算={self.large_model_note_budget}）"
+                )
 
         # 7. 获取灵魂状态值
         soul_state_values = None

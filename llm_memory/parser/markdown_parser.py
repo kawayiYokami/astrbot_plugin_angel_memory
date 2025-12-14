@@ -100,8 +100,9 @@ class MarkdownParser:
         # 第五步：按起始行排序（确保全局顺序正确）
         all_blocks.sort(key=lambda b: b["start_line"])
 
-        # 第六步：C方法全局贪婪合并（跨section）
-        all_blocks = self._merge_short_blocks_global(all_blocks)
+        # 第六步：C方法全局贪婪合并（跨section）- 已禁用
+        # all_blocks = self._merge_short_blocks_global(all_blocks)
+        # 注：禁用贪婪合并后，每个块保持独立，便于精确定位和按需扩展上下文
 
         # 第七步：批量转换标签为ID（一次性数据库操作）
         tag_to_id_map = {}

@@ -210,18 +210,8 @@ class SmallModelPromptBuilder:
         if core_topic and core_topic.strip():
             topic_section = f"\n# 当前对话核心话题\n{core_topic.strip()}\n"
 
-        # 5. 构建候选笔记清单
-        notes_section = ""
-        if candidate_notes:
-            notes_section = NoteContextBuilder.build_candidate_list_for_prompt(
-                candidate_notes
-            )
-            if topic_section:
-                # 添加话题上下文说明，帮助LLM理解候选笔记的来源
-                notes_section = f"\n# 基于上述核心话题检索到的相关笔记{notes_section}"
-
-        # 6. 组装新的 system_prompt
-        final_system_prompt = f"{system_prompt}\n\n{participants_section}{rules_section}{ai_identity_section}{topic_section}{notes_section}"
+        # 5. 组装新的 system_prompt (已移除废弃的笔记清单)
+        final_system_prompt = f"{system_prompt}\n\n{participants_section}{rules_section}{ai_identity_section}{topic_section}"
 
         # 7. 构建完整提示词（简化记忆处理）
         parts = [final_system_prompt]

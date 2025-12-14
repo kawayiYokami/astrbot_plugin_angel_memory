@@ -35,21 +35,30 @@ class NoteContextBuilder:
             格式化的笔记清单字符串
         """
         if not notes:
-            return "暂无相关笔记"
+            return "" # 返回空字符串而非提示
 
-        lines = ["\n你检索到以下笔记片段作为参考："]
-
-        for i, note in enumerate(notes, 1):
-            # 生成短ID用于显示
+        note_parts = []
+        for note in notes:
             short_id = MemoryIDResolver.generate_short_id(note["id"])
             content = note.get("content", "").strip()
             tags = note.get("tags", [])
-            tags_str = f" [标签: {', '.join(tags)}]" if tags else ""
+            tags_str = ", ".join(tags) if tags else "无"
 
-            # 笔记块已被嵌入模型限制长度，不需要截断
-            lines.append(f"({i}) [ID: {short_id}]{tags_str} {content}")
+            note_text = (
+                f"[笔记片段]\n"
+                f"ID: {short_id}\n"
+                f"标签: {tags_str}\n"
+                f"内容:\n{content}"
+            )
+            note_parts.append(note_text)
 
-        return "\n".join(lines)
+        # 组合所有笔记片段
+        notes_str = "\n\n---\n\n".join(note_parts)
+
+        # 在开头添加时效性警告
+        time_warning = "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n\n"
+
+        return time_warning + notes_str
 
     @staticmethod
     def expand_context_from_note_ids(
