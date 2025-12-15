@@ -352,12 +352,23 @@ class DeepMind:
         self, request: ProviderRequest, session_id: str, note_context: str, soul_state_values: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        将记忆、笔记和灵魂状态统一注入到LLM请求中（合并为单条用户消息）
+        将记忆、笔记和灵魂状态统一注入到LLM请求中（拼接到Prompt头部）
         """
-        # 构建统一的RAG上下文内容
-        rag_parts = []
+        system_context_parts = []
 
-        # 1. 灵魂状态仪表盘（仅当启用灵魂系统时）
+        # 1. Instruction (系统指令)
+        instruction = (
+            "<instruction>\n"
+            "以下是系统自动检索的背景上下文（包含记忆、笔记及当前状态）。\n"
+            "请利用这些信息辅助回答，但必须遵守以下规则：\n"
+            "1. **对话优先**：始终优先响应用户的当前对话内容，记忆和笔记仅作为补充参考。\n"
+            "2. **绝对隐形**：严禁在回复中提及\"soul_state\"、\"系统提示\"、\"XML标签\"等来源信息。\n"
+            "3. **状态保密**：soul_state 仅用于调整你的回复风格，绝不可在回复中泄露或讨论。\n"
+            "</instruction>"
+        )
+        system_context_parts.append(instruction)
+
+        # 2. 灵魂状态 (soul_state)
         if soul_state_values and self.config.enable_soul_system:
             # 归一化用于生成进度条
             norm_recall = self._normalize_soul_value("RecallDepth", soul_state_values["RecallDepth"])
@@ -370,39 +381,34 @@ class DeepMind:
             bar_expression = self._create_tendency_bar(norm_expression)
             bar_creativity = self._create_tendency_bar(norm_creativity)
 
-            dashboard_text = (
-                "<内在状态参数>\n"
-                "    以下是当前行为倾向参数，用于调整回复的风格和详略。参数值范围0-1，请自然体现这些倾向，切勿在回复中提及或暗示这些参数的存在。\n"
-                f"    • 社交倾向: 内向 {bar_recall} 外向 [{norm_recall:.2f}]\n"
-                f"    • 认知倾向: 指导 {bar_impression} 好奇 [{norm_impression:.2f}]\n"
-                f"    • 表达倾向: 简洁 {bar_expression} 详尽 [{norm_expression:.2f}]\n"
-                f"    • 情绪倾向: 严肃 {bar_creativity} 活泼 [{norm_creativity:.2f}]\n"
-                "</内在状态参数>"
+            soul_state_content = (
+                f"<soul_state>\n"
+                f"• 社交倾向: 内向 {bar_recall} 外向 [{norm_recall:.2f}]\n"
+                f"• 认知倾向: 指导 {bar_impression} 好奇 [{norm_impression:.2f}]\n"
+                f"• 表达倾向: 简洁 {bar_expression} 详尽 [{norm_expression:.2f}]\n"
+                f"• 情绪倾向: 严肃 {bar_creativity} 活泼 [{norm_creativity:.2f}]\n"
+                f"</soul_state>"
             )
-            rag_parts.append(dashboard_text)
+            system_context_parts.append(soul_state_content)
 
-        # 2. 短期记忆上下文
+        # 3. 记忆 (memories)
         short_term_memories = self.session_memory_manager.get_session_memories(session_id)
         memory_context = self.memory_injector.format_session_memories_for_prompt(short_term_memories)
         if memory_context:
-            rag_parts.append(f"<我想起来的记忆>\n{memory_context}\n</我想起来的记忆>")
+            system_context_parts.append(f"<memories>\n{memory_context}\n</memories>")
 
-        # 3. 笔记上下文
+        # 4. 笔记 (notes)
         if note_context:
-            rag_parts.append(f"<我想起来的笔记片段>\n{note_context}\n</我想起来的笔记片段>")
+            system_context_parts.append(f"<notes>\n{note_context}\n</notes>")
 
-        # 4. 合并所有RAG内容为单条用户消息
-        if rag_parts:
-            combined_rag = "\n\n".join(rag_parts)
-            request.contexts.append({
-                "role": "user",
-                "content": (
-                    "===系统消息===\n"
-                    "以下内容并非用户发言，而是系统为你提供的上下文增强信息。请参考但不要在回复中提及这些信息的来源。\n"
-                    "===系统消息结束===\n\n"
-                    f"{combined_rag}"
-                )
-            })
+        # 5. 组装并注入到 Prompt 头部
+        if system_context_parts:
+            # 使用换行符连接各部分，并包裹在 system_context 中
+            full_system_context = "<system_context>\n" + "\n\n".join(system_context_parts) + "\n</system_context>\n\n"
+
+            # 拼接到 request.prompt 的最前面
+            current_prompt = request.prompt if request.prompt else ""
+            request.prompt = full_system_context + current_prompt
 
     async def _update_memory_system(
         self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
