@@ -31,6 +31,7 @@ from .core.plugin_context import PluginContextFactory
 from .tools.core_memory_remember import CoreMemoryRememberTool
 from .tools.core_memory_recall import CoreMemoryRecallTool
 from .tools.expand_note_context import ExpandNoteContextTool
+from .tools.research_tool import ResearchTool
 
 
 def ensure_chromadb_version():
@@ -131,12 +132,17 @@ class AngelMemoryPlugin(Star):
         # 5. 注册LLM工具
         self.llm_tools_enabled = True  # 标记LLM工具是否启用
         try:
+            # 创建 ResearchTool 实例
+            research_tool = ResearchTool()
+            research_tool.set_context(self.context)
+
             self.context.add_llm_tools(
                 CoreMemoryRememberTool(),
                 CoreMemoryRecallTool(),
-                ExpandNoteContextTool()
+                ExpandNoteContextTool(),
+                research_tool
             )
-            self.logger.info("✅ 已注册 core_memory_remember、core_memory_recall 和 expand_note_context 工具。")
+            self.logger.info("✅ 已注册 core_memory_remember、core_memory_recall、expand_note_context 和 research_topic 工具。")
         except AttributeError as e:
             self.llm_tools_enabled = False
             self.logger.error(f"❌ 注册LLM工具失败，context可能不支持add_llm_tools方法: {e}", exc_info=True)
