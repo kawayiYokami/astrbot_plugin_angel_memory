@@ -21,7 +21,7 @@
     "type": "bool",
     "description": "[性能优化] 启用 FlashRank 极速重排 (推荐)",
     "default": false,
-    "hint": "比默认BM25快10倍且更精准。开启前请确保已安装依赖: pip install flashrank"
+    "hint": "使用FlashRank进行语义重排，比传统方法快10倍且更精准。开启前请确保已安装依赖: pip install flashrank"
   },
   "flashrank_model": {
     "type": "string",

@@ -2,6 +2,17 @@
 
 ## 核心设计模式
 
+### LLM工具注入机制
+项目通过4个FunctionTool为LLM提供记忆能力：
+- **core_memory_remember**（[`CoreMemoryRememberTool`](tools/core_memory_remember.py:18)）：主动记忆工具，永久保存重要信息
+- **core_memory_recall**（[`CoreMemoryRecallTool`](tools/core_memory_recall.py:20)）：主动回忆工具，加权随机抽取核心记忆
+- **note_recall**（[`ExpandNoteContextTool`](tools/expand_note_context.py:19)）：笔记展开工具，查看完整笔记内容
+- **research_topic**（[`ResearchTool`](tools/research_tool.py:18)）：研究助手工具，启动独立研究Agent
+
+这些工具在插件初始化时通过[`context.add_llm_tools()`](main.py:139)注入，成为LLM的主动能力。
+
+## 核心设计模式
+
 ### 三层认知架构
 项目采用「灵魂-潜意识-主意识」三层认知架构：
 - **灵魂层**（[`SoulState`](core/soul/soul_state.py:13)）：AI的精神状态管理器，通过4维能量槽控制行为参数
@@ -24,6 +35,14 @@
 
 ## 数据流与控制流
 
+### LLM工具调用流程
+```
+LLM决策调用工具 → FunctionTool.run()
+→ 从event.plugin_context获取服务实例
+→ 调用CognitiveService/NoteService/DeepMind
+→ 返回结果给LLM
+```
+
 ### 记忆存储流程
 ```
 用户输入 → DeepMind.organize_and_inject_memories()
@@ -33,7 +52,7 @@
 ### 记忆检索流程
 ```
 查询输入 → 预处理(实体提取) → 链式召回
-→ 混合检索(向量+BM25) → 结果融合
+→ 向量检索+FlashRank语义重排 → 结果融合
 ```
 
 ### 记忆反馈流程
@@ -52,10 +71,16 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 
 ## 开发场景导航
 
+### 新增LLM工具
+1. 创建新的`FunctionTool`子类，继承自[`astrbot.api.FunctionTool`](tools/core_memory_remember.py:18)
+2. 定义`name`、`description`、`parameters`（JSON Schema格式）
+3. 实现`async def run()`方法，从`event.plugin_context`获取所需服务
+4. 在[`main.py`](main.py:139)的`context.add_llm_tools()`中注册
+
 ### 新增记忆类型
 1. 在[`MemoryType`](llm_memory/models/data_models.py:24)枚举中添加新类型
 2. 在[`MemoryHandlerFactory`](llm_memory/service/memory_handlers.py:102)中注册处理器
-3. 更新[`process_feedback()`](llm_memory/service/memory_manager.py:394)方法处理新类型
+3. 更新[`process_feedback()`](llm_memory/service/memory_manager.py:398)方法处理新类型
 
 ### 修改数据模型
 - 记忆模型：[`BaseMemory`](llm_memory/models/data_models.py:61)
@@ -79,19 +104,25 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - `soul_*_min/mid/max`：灵魂参数范围配置
 
 ### 调试记忆系统
-1. 检查插件状态：[`plugin.get_plugin_status()`](main.py:347)
+1. 检查插件状态：[`plugin.get_plugin_status()`](main.py:352)
 2. 查看组件初始化：[`ComponentFactory.get_components()`](core/component_factory.py:276)
 3. 监控记忆流程：DeepMind日志输出
-4. 灵魂状态调试：[`soul.get_state_description()`](core/soul/soul_state.py:167)
+4. 灵魂状态调试：[`soul.get_state_description()`](core/soul/soul_state.py:323)
 
 ## 核心技术栈
+
+### 工具层
+- **FunctionTool框架**：AstrBot官方工具协议，支持JSON Schema参数定义
+- **PluginContext注入**：通过`event.plugin_context`访问所有核心服务
+- **参数验证**：工具层执行严格的参数验证（长度、格式、范围）
+- **错误处理**：友好的错误提示，指导LLM正确使用工具
 
 ### 存储层
 - **ChromaDB**：向量数据库，存储记忆和笔记
 - **SQLite**：标签管理、文件索引、关联网络
 
 ### 检索层
-- **混合检索**：向量相似度+BM25关键词匹配
+- **语义检索**：向量相似度+FlashRank重排
 - **链式召回**：基于实体和类型的分阶段检索
 - **关联网络**：记忆间的双向关联图
 
@@ -108,7 +139,18 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 
 ## 关键决策点
 
-### 1. 统一三元组记忆结构
+### 1. 工具即能力：双层记忆架构
+项目采用「被动记忆+主动记忆」双层架构：
+- **被动记忆**：DeepMind自动管理，LLM无感知，通过事件钩子自动注入
+- **主动记忆**：通过工具暴露，LLM主动调用，显式的记忆操作
+
+工具设计原则：
+- **最小化参数**：judgment/reasoning/tags三元组，50字符限制
+- **加权随机**：recall工具按strength加权抽样，避免确定性偏见
+- **上下文传递**：通过`event.plugin_context`统一获取服务实例
+- **错误友好**：详细的错误提示，帮助LLM自我纠正
+
+### 2. 统一三元组记忆结构
 所有记忆类型采用`(judgment, reasoning, tags)`三元组：
 - **judgment**：核心论断，用于向量化
 - **reasoning**：解释背景，提供上下文
@@ -116,26 +158,26 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 
 这种设计简化了记忆模型，同时保持了表达力。
 
-### 2. 主动记忆与被动记忆
+### 3. 主动记忆与被动记忆
 - **主动记忆**(`is_active=True`)：永不衰减，用户重要偏好
 - **被动记忆**：会随时间和使用衰减，一般性知识
 
 这种区分模拟人类记忆，确保重要信息长期保存。
 
-### 3. 灵魂状态动态参数调整
+### 4. 灵魂状态动态参数调整
 通过4维能量槽实现AI行为参数动态调整：
 - **能量累积**：历史刺激累积影响当前行为
 - **自然衰减**：能量值随时间自动回归中庸
 - **橡皮筋映射**：非线性映射保证参数稳定
 - **状态共鸣**：旧记忆状态影响当前决策
 
-### 4. 异步反馈队列
+### 5. 异步反馈队列
 使用[`FeedbackQueue`](core/utils/feedback_queue.py)处理记忆反馈：
 - 不阻塞主对话流程
 - 批量处理提升性能
 - 失败重试保证可靠性
 
-### 5. 文件监控与笔记系统
+### 6. 文件监控与笔记系统
 - 自动监控文档变化，实时更新索引
 - 支持Markdown、文本等多种格式
 - 与记忆系统协同，提供结构化知识库

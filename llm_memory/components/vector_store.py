@@ -93,10 +93,8 @@ class VectorStore:
         # ChromaDB是线程安全的,不需要额外的线程锁
         # 移除了 self._db_lock = threading.RLock()
 
-        # 混合检索配置 - 强制启用
-        self.hybrid_search_enabled = True  # 强制启用混合检索以获得最佳体验
-        self.vector_weight = 0.6
-        self.bm25_weight = 0.4
+        # FlashRank重排配置
+        self.flashrank_enabled = True  # 使用FlashRank进行语义重排
 
         # 懒加载的标签管理器(用于基于 tag_ids 重建标签文本)
         self._tag_manager: Optional[TagManager] = None
@@ -132,7 +130,7 @@ class VectorStore:
             self._tag_manager = TagManager(index_dir, provider_id)
             return self._tag_manager
         except Exception as e:
-            self.logger.warning(f"初始化 TagManager 失败,无法为BM25重建标签文本: {e}")
+            self.logger.warning(f"初始化 TagManager 失败: {e}")
             return None
 
     def _post_initialization_verification(self):
@@ -339,7 +337,7 @@ class VectorStore:
                     if len(vector_results) >= limit:
                         break
 
-        # 混合检索:为记忆系统提供语义精排
+        # FlashRank语义重排
         final_results = self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
@@ -359,7 +357,7 @@ class VectorStore:
         Args:
             collection: 目标 ChromaDB 集合.
             vector: 预计算的查询向量
-            query: 原始查询文本，用于BM25精排
+            query: 原始查询文本，用于FlashRank语义重排
             limit: 返回结果的最大数量
             where_filter: 可选的元数据过滤器字典 (e.g., {"memory_type": "EventMemory", "is_consolidated": False})
             similarity_threshold: 相似度阈值(0.0-1.0),低于此阈值的结果将被过滤
@@ -417,7 +415,7 @@ class VectorStore:
                     if len(vector_results) >= limit:
                         break
 
-        # 混合检索:为记忆系统提供语义精排
+        # FlashRank语义重排
         final_results = self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
@@ -979,7 +977,7 @@ class VectorStore:
         self, query: str, vector_results: List[BaseMemory], collection, limit: int
     ) -> List[BaseMemory]:
         """
-        通用重排入口（支持 FlashRank 和 BM25）.
+        通用重排入口（使用 FlashRank 语义重排）.
 
         Args:
             query: 查询文本
@@ -1229,7 +1227,7 @@ class VectorStore:
             metadatas=note.to_dict(),  # 笔记的所有数据都存储在 metadata 中
         )
 
-        # 笔记使用无状态BM25精排,不需要预先建立索引
+        # 笔记使用FlashRank语义重排
 
     async def search_notes_with_vector(
         self,
@@ -1245,7 +1243,7 @@ class VectorStore:
         Args:
             collection: 目标 ChromaDB 集合
             vector: 预计算的查询向量
-            query: 原始查询文本，用于BM25精排
+            query: 原始查询文本，用于FlashRank语义重排
             limit: 返回结果的最大数量
             where_filter: 可选的元数据过滤器
 

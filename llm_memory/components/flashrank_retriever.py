@@ -1,8 +1,8 @@
 """
 FlashRank 重排组件。
 
-使用轻量级 Cross-Encoder (MultiBERT-L-12) 进行语义重排，替代传统的 BM25。
-基于 ONNX Runtime，针对 CPU 推理进行了极致优化。
+使用轻量级 Cross-Encoder (MultiBERT-L-12) 进行语义重排。
+基于 ONNX Runtime，针对 CPU 推理进行了极致优化，速度快且精准度高。
 """
 
 from typing import List, Dict, Tuple
