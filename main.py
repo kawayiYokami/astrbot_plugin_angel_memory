@@ -21,8 +21,6 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 # 导入版本检查相关模块
-import subprocess
-import sys
 import pkg_resources
 
 # 导入核心模块
@@ -35,45 +33,36 @@ from .tools.research_tool import ResearchTool
 
 
 def ensure_chromadb_version():
-    """确保 chromadb 版本不低于 1.2.1"""
+    """确保 chromadb 版本符合要求，否则抛出异常并引导用户手动升级。"""
     MINIMUM_CHROMADB_VERSION = "1.2.1"
     logger.info("开始检查 chromadb 版本...")
 
     try:
-        # 获取当前安装的 chromadb 版本
         current_version = pkg_resources.get_distribution("chromadb").version
         logger.info(f"当前安装的 chromadb 版本: {current_version}")
 
         if pkg_resources.parse_version(current_version) < pkg_resources.parse_version(
             MINIMUM_CHROMADB_VERSION
         ):
-            logger.warning(
-                f"chromadb 版本过低 (当前: {current_version}, 最低要求: {MINIMUM_CHROMADB_VERSION})，将升级到最新版本。"
+            error_message = (
+                f"chromadb 版本过低 (当前: {current_version}, 最低要求: {MINIMUM_CHROMADB_VERSION})。"
+                f"请手动升级: pip install --upgrade chromadb>={MINIMUM_CHROMADB_VERSION}"
             )
-            _upgrade_chromadb()
+            logger.error(error_message)
+            raise ImportError(error_message)
         else:
             logger.info(f"chromadb 版本检查通过 (版本: {current_version})")
 
     except pkg_resources.DistributionNotFound:
-        logger.warning(
-            f"chromadb 未安装，将安装最新版本（不低于 {MINIMUM_CHROMADB_VERSION}）。"
+        error_message = (
+            f"chromadb 未安装 (最低要求: {MINIMUM_CHROMADB_VERSION})。"
+            f"请手动安装: pip install chromadb>={MINIMUM_CHROMADB_VERSION}"
         )
-        _upgrade_chromadb()
+        logger.error(error_message)
+        raise ImportError(error_message)
     except Exception as e:
         logger.error(f"检查 chromadb 版本时出错: {e}")
-        logger.warning("无法验证 chromadb 版本，插件可能无法正常工作")
-
-def _upgrade_chromadb():
-    """升级 chromadb 到最新版本"""
-    try:
-        logger.info("正在升级 chromadb 到最新版本...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "chromadb"]
-        )
-        logger.info("chromadb 升级成功。强烈建议重启应用程序以加载新版本的库。")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"升级 chromadb 失败: {e}")
-        raise
+        logger.warning("无法验证 chromadb 版本，插件可能无法正常工作。")
 
 
 @register(
