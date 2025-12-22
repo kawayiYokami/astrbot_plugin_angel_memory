@@ -190,7 +190,22 @@ class ResearchTool(FunctionTool):
             )
 
             logger.info("ResearchTool: 研究任务完成")
-            return llm_response.completion_text
+
+            # 添加系统提示，提醒 LLM 需要转述给用户
+            system_reminder = (
+                "<system_reminder>\n"
+                "⚠️ 重要提示：工具调用结果用户是看不到的！\n"
+                "请你根据以下研究报告和上下文，用清晰、简洁的方式转述给用户。\n"
+                "你可以：\n"
+                "- 提取关键信息和核心发现\n"
+                "- 总结主要结论\n"
+                "- 重新组织信息使其更易理解\n"
+                "- 根据用户的原始问题，突出最相关的内容\n"
+                "</system_reminder>\n\n"
+                "=== 研究报告 ===\n"
+            )
+
+            return f"{system_reminder}{llm_response.completion_text}"
 
         except Exception as e:
             logger.error(f"ResearchTool: 执行过程中发生错误 - {e}", exc_info=True)
