@@ -1,0 +1,144 @@
+{
+  "provider_id": {
+    "type": "string",
+    "description": "[核心模型设置] 用于记忆整理的LLM提供商ID",
+    "default": "",
+    "hint": "建议为拥有思考能力的模型。留空则只使用基础记忆功能。"
+  },
+  "astrbot_embedding_provider_id": {
+    "type": "string",
+    "description": "[核心模型设置] 用于向量化的嵌入模型提供商ID",
+    "default": "",
+    "hint": "优先使用官方API。留空则使用本地模型。"
+  },
+  "enable_local_embedding": {
+    "type": "bool",
+    "description": "[核心模型设置] 启用本地嵌入模型支持",
+    "default": false,
+    "hint": "开启后首次使用时将自动安装本地模型依赖（约800MB）。"
+  },
+  "enable_flashrank": {
+    "type": "bool",
+    "description": "[性能优化] 启用 FlashRank 极速重排 (推荐)",
+    "default": false,
+    "hint": "使用FlashRank进行语义重排，比传统方法快10倍且更精准。开启前请确保已安装依赖: pip install flashrank"
+  },
+  "flashrank_model": {
+    "type": "string",
+    "description": "[FlashRank] 重排模型名称",
+    "default": "ms-marco-MultiBERT-L-12",
+    "hint": "推荐：ms-marco-MultiBERT-L-12 (多语言最强，中文效果佳)。若追求极致速度，可降级为 ms-marco-MiniLM-L-12-v2。"
+  },
+  "memory_behavior": {
+    "type": "object",
+    "description": "[记忆行为参数] 记忆系统的行为配置",
+    "hint": "控制记忆处理的各种参数，影响记忆的生成、保存和巩固。",
+    "items": {
+      "default_passive_strength": {
+        "type": "int",
+        "description": "被动记忆的初始强度值",
+        "default": 10,
+        "hint": "此数值影响被动记忆在遗忘过程中的存活能力，推荐范围10-50。主动记忆不受此影响。"
+      },
+      "min_message_length": {
+        "type": "int",
+        "description": "触发记忆处理的最小消息字符数",
+        "default": 5,
+        "hint": "过滤过短的消息，以提高记忆质量。"
+      },
+      "short_term_memory_capacity": {
+        "type": "int",
+        "description": "短期记忆通道的容量倍数",
+        "default": 1,
+        "hint": "设置为2则容量翻倍，设置为3则容量变为3倍。"
+      },
+      "sleep_interval": {
+        "type": "int",
+        "description": "记忆巩固（睡眠）的执行间隔（秒）",
+        "default": 3600,
+        "hint": "默认1小时执行一次。设置为0则禁用定期睡眠。"
+      }
+    }
+  },
+  "token_budget": {
+    "type": "object",
+    "description": "[Token预算] 笔记系统的Token限制配置",
+    "hint": "控制笔记选择和上下文注入的Token数量，避免超出模型限制。",
+    "items": {
+      "small_model_budget": {
+        "type": "int",
+        "description": "候选笔记池的令牌预算",
+        "default": 2000,
+        "hint": "控制从向量库召回的候选笔记总量。建议1000-5000。参考：1个英文字符≈0.3令牌，1个中文字符≈0.6令牌。"
+      },
+      "large_model_budget": {
+        "type": "int",
+        "description": "注入LLM的笔记内容令牌预算（软限制）",
+        "default": 200,
+        "hint": "控制实际注入给应答模型的笔记内容总量。采用贪婪填充：第一条笔记即使超出预算也会完整显示，后续笔记累加至接近预算。建议200-1000。"
+      }
+    }
+  },
+  "enable_soul_system": {
+    "type": "object",
+    "description": "[灵魂系统] 灵魂状态系统配置",
+    "hint": "启用后会根据AI的精神状态动态调整行为参数（检索量、记忆量、发言长度、创造性）。关闭则使用固定参数，不会在上下文中注入灵魂仪表盘。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用灵魂系统",
+        "default": true,
+        "hint": "是否启用灵魂状态系统"
+      },
+      "recall_depth_mid": {
+        "type": "int",
+        "description": "社交倾向-回归值 (建议检索记忆数)",
+        "default": 7,
+        "hint": "决定内向|外向人格的基准值，影响检索记忆的数量。范围：3-20（系统自动限制）"
+      },
+      "impression_depth_mid": {
+        "type": "int",
+        "description": "对话姿态-回归值 (建议生成记忆数)",
+        "default": 3,
+        "hint": "决定指导|好奇人格的基准值，影响生成新记忆的数量。范围：1-10（系统自动限制）"
+      },
+      "expression_desire_mid": {
+        "type": "float",
+        "description": "健谈程度-回归值 (归一化)",
+        "default": 0.5,
+        "hint": "决定话少|话多人格的基准值，影响发言长度。范围：0.0-1.0（系统自动限制）"
+      },
+      "creativity_mid": {
+        "type": "float",
+        "description": "创造性-回归值 (归一化)",
+        "default": 0.7,
+        "hint": "决定严肃|调皮人格的基准值，影响LLM温度参数。范围：0.0-1.0（系统自动限制）"
+      }
+    }
+  },
+  "research_assistant": {
+    "type": "object",
+    "description": "[研究助手] 深度研究功能配置(测试，不稳定，请多反馈)",
+    "hint": "配置用于执行深度研究任务的设置。该功能允许AI自主搜索、阅读和内化知识。",
+    "items": {
+      "persona_id": {
+        "type": "string",
+        "description": "研究人格名称",
+        "default": "",
+        "hint": "填写专用研究人格名称。系统会将人格的提示词补充到内置研究提示词中，并使用人格配置的工具集。建议提示词仅补充领域知识或特定要求，不必重复说明研究流程。"
+      },
+      "provider_id": {
+        "type": "string",
+        "description": "研究专用 LLM 提供商",
+        "default": "",
+        "hint": "指定用于执行研究任务的 LLM 提供商 ID。留空则使用当前会话的提供商。推荐使用 DeepSeek V3.2 或 Gemini pro 等推理能力强的模型。"
+      },
+      "start_messages": {
+         "type": "string",
+         "description": "研究任务启动时发送的可爱提示",
+         "hint": "用 | 分隔多条消息，启动时会随机选择一条发送。留空则不发送。",
+         "default": "请稍等，我这就去把知识都抓回来！(ง •̀_•́)ง|好嘞！研究任务启动，我开始工作啦！|收到，正在开启深度研究模式... ✨"
+      }
+    }
+  }
+}
