@@ -13,6 +13,7 @@ import json
 from typing import List, Dict, Any, Optional
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
 from .soul.soul_state import SoulState
 from .utils.memory_id_resolver import MemoryIDResolver
 from ..llm_memory import CognitiveService
@@ -352,7 +353,7 @@ class DeepMind:
         self, request: ProviderRequest, session_id: str, note_context: str, soul_state_values: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        将记忆、笔记和灵魂状态统一注入到LLM请求中（拼接到Prompt头部）
+        将记忆、笔记和灵魂状态统一注入到LLM请求中（使用 extra_user_content_parts）
         """
         system_context_parts = []
 
@@ -401,14 +402,14 @@ class DeepMind:
         if note_context:
             system_context_parts.append(f"<notes>\n{note_context}\n</notes>")
 
-        # 5. 组装并注入到 Prompt 头部
+        # 5. 组装并注入到 extra_user_content_parts
         if system_context_parts:
             # 使用换行符连接各部分，并包裹在 system_context 中
-            full_system_context = "<system_context>\n" + "\n\n".join(system_context_parts) + "\n</system_context>\n\n"
+            full_system_context = "<system_context>\n" + "\n\n".join(system_context_parts) + "\n</system_context>"
 
-            # 拼接到 request.prompt 的最前面
-            current_prompt = request.prompt if request.prompt else ""
-            request.prompt = full_system_context + current_prompt
+            # 创建 TextPart 并添加到 extra_user_content_parts
+            text_part = TextPart(text=full_system_context)
+            request.extra_user_content_parts.append(text_part)
 
     async def _update_memory_system(
         self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
