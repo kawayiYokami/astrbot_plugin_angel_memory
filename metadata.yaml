@@ -2,5 +2,5 @@ name: astrbot_plugin_angel_memory
 display_name: 天使之魂
 description: "赋予AI动态演化的人格、长期记忆与自主学习能力，将聊天工具升级为有生命感的AI伙伴。"
 author: kawayiYokami
-version: 0.99.99
+version: 0.99.999
 repo: https://github.com/kawayiYokami/astrbot_plugin_angel_memory

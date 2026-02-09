@@ -87,6 +87,7 @@
 | `provider_id` | "" | 记忆整理LLM提供商ID |
 | `astrbot_embedding_provider_id` | "local" | 嵌入模型提供商ID |
 | `enable_local_embedding` | false | 是否启用本地嵌入模型 |
+| `dependency_policy.chromadb_mode` | `strict` | 依赖检查策略（`strict`=失败即中止，`relaxed`=告警降级） |
 | `min_message_length` | 5 | 触发记忆处理的最小消息长度 |
 | `sleep_interval` | 3600 | 记忆巩固间隔（秒） |
 | `short_term_memory_capacity` | 1.0 | 短期记忆容量倍数（0.1-10.0） |
@@ -322,6 +323,10 @@ large_model_note_budget: 200    # 大模型（应答）
 # 记忆系统
 short_term_memory_capacity: 1.0 # 短期记忆容量
 sleep_interval: 3600            # 巩固间隔（秒）
+
+# 依赖检查策略
+dependency_policy:
+  chromadb_mode: strict         # strict 或 relaxed
 ```
 
 ### 嵌入模型选择

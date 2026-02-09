@@ -22,6 +22,10 @@ from .session_memory import SessionMemoryManager
 from .utils import SmallModelPromptBuilder, MemoryInjector
 from .utils.feedback_queue import get_feedback_queue
 from .utils.query_processor import get_query_processor
+from .services.retrieval_service import DeepMindRetrievalService
+from .services.injection_service import DeepMindInjectionService
+from .services.feedback_service import DeepMindFeedbackService
+from .services.sleep_service import DeepMindSleepService
 
 try:
     from astrbot.api import logger
@@ -115,6 +119,10 @@ class DeepMind:
         self.prompt_builder = SmallModelPromptBuilder()
         self.memory_injector = MemoryInjector()
         self.query_processor = get_query_processor()
+        self.retrieval_service = DeepMindRetrievalService(self)
+        self.injection_service = DeepMindInjectionService(self)
+        self.feedback_service = DeepMindFeedbackService(self)
+        self.sleep_service = DeepMindSleepService(self)
 
         # 初始化灵魂状态管理器
         try:
@@ -187,23 +195,7 @@ class DeepMind:
         Returns:
             包含 session_id, query, user_list 的字典，解析失败返回 None
         """
-        if not hasattr(event, "angelmemory_context"):
-            return None
-
-        try:
-            context_data = json.loads(event.angelmemory_context)
-            return {
-                "session_id": context_data["session_id"],
-                "query": context_data.get("recall_query", ""),
-                "user_list": context_data.get("user_list", []),
-                # 添加原始数据字段
-                "raw_memories": context_data.get("raw_memories", []),
-                "raw_notes": context_data.get("raw_notes", []),
-                "core_topic": context_data.get("core_topic", ""),
-            }
-        except (json.JSONDecodeError, KeyError) as e:
-            self.logger.warning(f"解析记忆上下文失败: {e}")
-            return None
+        return self.retrieval_service.parse_memory_context(event)
 
     async def _retrieve_memories_and_notes(
         self, event: AstrMessageEvent, query: str, precompute_vectors: bool = False
@@ -219,135 +211,19 @@ class DeepMind:
         Returns:
             包含 long_term_memories, candidate_notes, note_id_mapping, secretary_decision 的字典
         """
-        # 1. 预处理记忆检索查询词
-        if precompute_vectors:
-            memory_query, memory_vector = await self.query_processor.process_query_for_memory_with_vector(query, event)
-        else:
-            memory_query = self.query_processor.process_query_for_memory(query, event)
-            memory_vector = None
-
-        # 1. 使用链式召回从长期记忆检索相关记忆
-        long_term_memories = []
-        if self.memory_system:
-            try:
-                # 从 angelheart_context 获取实体列表 (通过 QueryProcessor)
-                rag_fields = self.query_processor.extract_rag_fields(event)
-                entities = rag_fields.get("entities", [])
-
-                # 安全获取 handlers
-                handlers = None
-                if hasattr(self.memory_system, 'memory_handler_factory') and self.memory_system.memory_handler_factory:
-                    handlers = getattr(self.memory_system.memory_handler_factory, 'handlers', None)
-
-                # 动态获取检索上限
-                dynamic_limit = self.CHAINED_RECALL_PER_TYPE_LIMIT
-                if self.soul:
-                    try:
-                        dynamic_limit = self.soul.get_value("RecallDepth")
-                        self.logger.info(f"🧠 灵魂回忆深度: {dynamic_limit} (E={self.soul.energy['RecallDepth']:.1f})")
-                    except Exception as e:
-                        self.logger.warning(f"获取灵魂参数失败，使用默认值: {e}")
-
-                # 调用新的 chained_recall
-                long_term_memories = await self.memory_system.chained_recall(
-                    query=memory_query,
-                    entities=entities,
-                    per_type_limit=int(dynamic_limit), # 动态控制
-                    final_limit=int(dynamic_limit * 1.5),
-                    memory_handlers=handlers,
-                    event=event,
-                    vector=memory_vector,
-                )
-
-                # 情绪共鸣：旧记忆冲击当前状态（批量处理）
-                if self.soul:
-                    snapshots = [
-                        mem.state_snapshot
-                        for mem in long_term_memories
-                        if hasattr(mem, "state_snapshot") and mem.state_snapshot
-                    ]
-                    if snapshots:
-                        self.soul.resonate(snapshots)
-
-            except Exception as e:
-                self.logger.error(f"链式召回失败，跳过记忆检索: {e}")
-                long_term_memories = []
-
-        # 2. 获取 secretary_decision 信息
-        secretary_decision = {}
-        try:
-            if hasattr(event, "angelheart_context"):
-                angelheart_data = json.loads(event.angelheart_context)
-                secretary_decision = angelheart_data.get("secretary_decision", {})
-        except (json.JSONDecodeError, KeyError):
-            self.logger.error("无法获取 secretary_decision 信息")
-
-        # 3. 使用统一的RAG字段进行笔记检索
-        # 直接使用原始query，让QueryProcessor统一处理RAG字段
-        if precompute_vectors:
-            note_query, note_vector = await self.query_processor.process_query_for_notes_with_vector(query, event)
-        else:
-            note_query = self.query_processor.process_query_for_notes(query, event)
-            note_vector = None
-
-        # 4. 获取候选笔记（用于小模型的选择）
-        candidate_notes = []
-        if self.note_service:
-            candidate_notes = await self.note_service.search_notes_by_token_limit(
-                query=note_query,
-                max_tokens=self.small_model_note_budget,
-                recall_count=self.NOTE_CANDIDATE_COUNT,
-                vector=note_vector  # 传递预计算向量
-            )
-
-
-        # 5. 创建短ID到完整ID的映射（用于后续上下文扩展）
-        note_id_mapping = {}
-        for note in candidate_notes:
-            note_id = note.get("id")
-            if note_id:
-                short_id = MemoryIDResolver.generate_short_id(note_id)
-                note_id_mapping[short_id] = note_id
-
-        # 6. 创建短期记忆ID映射表（用于解析 useful_memory_ids）
-        memory_id_mapping = {}
-        if long_term_memories:
-            memory_id_mapping = MemoryIDResolver.generate_id_mapping(
-                [memory.to_dict() for memory in long_term_memories], "id"
-            )
-
-
-        return {
-            "long_term_memories": long_term_memories,
-            "candidate_notes": candidate_notes,
-            "note_id_mapping": note_id_mapping,
-            "memory_id_mapping": memory_id_mapping,
-            "secretary_decision": secretary_decision,
-            "core_topic": secretary_decision.get("topic", ""),
-        }
+        return await self.retrieval_service.retrieve_memories_and_notes(
+            event, query, precompute_vectors
+        )
 
 
 
     def _normalize_soul_value(self, dimension: str, value: float) -> float:
         """将灵魂状态的物理值归一化到 [0, 1] 区间"""
-        if not self.soul:
-            return 0.5
-
-        cfg = self.soul.config.get(dimension, {})
-        min_val = cfg.get("min", 0)
-        max_val = cfg.get("max", 1)
-
-        if max_val == min_val:
-            return 0.5
-
-        normalized = (value - min_val) / (max_val - min_val)
-        return max(0.0, min(1.0, normalized))
+        return self.injection_service.normalize_soul_value(dimension, value)
 
     def _create_tendency_bar(self, normalized_value: float) -> str:
         """创建一个10格的文本进度条"""
-        bar_length = 10
-        filled_length = int(round(normalized_value * bar_length))
-        return '█' * filled_length + ' ' * (bar_length - filled_length)
+        return self.injection_service.create_tendency_bar(normalized_value)
 
     def _inject_memories_to_request(
         self, request: ProviderRequest, session_id: str, note_context: str, soul_state_values: Optional[Dict[str, Any]] = None
@@ -355,61 +231,9 @@ class DeepMind:
         """
         将记忆、笔记和灵魂状态统一注入到LLM请求中（使用 extra_user_content_parts）
         """
-        system_context_parts = []
-
-        # 1. Instruction (系统指令)
-        instruction = (
-            "<instruction>\n"
-            "以下是系统自动检索的背景上下文（包含记忆、笔记及当前状态）。\n"
-            "请利用这些信息辅助回答，但必须遵守以下规则：\n"
-            "1. **对话优先**：始终优先响应用户的当前对话内容，记忆和笔记仅作为补充参考。\n"
-            "2. **绝对隐形**：严禁在回复中提及\"soul_state\"、\"系统提示\"、\"XML标签\"等来源信息。\n"
-            "3. **状态保密**：soul_state 仅用于调整你的回复风格，绝不可在回复中泄露或讨论。\n"
-            "</instruction>"
+        self.injection_service.inject_memories_to_request(
+            request, session_id, note_context, soul_state_values
         )
-        system_context_parts.append(instruction)
-
-        # 2. 灵魂状态 (soul_state)
-        if soul_state_values and self.config.enable_soul_system:
-            # 归一化用于生成进度条
-            norm_recall = self._normalize_soul_value("RecallDepth", soul_state_values["RecallDepth"])
-            norm_impression = self._normalize_soul_value("ImpressionDepth", soul_state_values["ImpressionDepth"])
-            norm_expression = self._normalize_soul_value("ExpressionDesire", soul_state_values["ExpressionDesire"])
-            norm_creativity = self._normalize_soul_value("Creativity", soul_state_values["Creativity"])
-
-            bar_recall = self._create_tendency_bar(norm_recall)
-            bar_impression = self._create_tendency_bar(norm_impression)
-            bar_expression = self._create_tendency_bar(norm_expression)
-            bar_creativity = self._create_tendency_bar(norm_creativity)
-
-            soul_state_content = (
-                f"<soul_state>\n"
-                f"• 社交倾向: 内向 {bar_recall} 外向 [{norm_recall:.2f}]\n"
-                f"• 认知倾向: 指导 {bar_impression} 好奇 [{norm_impression:.2f}]\n"
-                f"• 表达倾向: 简洁 {bar_expression} 详尽 [{norm_expression:.2f}]\n"
-                f"• 情绪倾向: 严肃 {bar_creativity} 活泼 [{norm_creativity:.2f}]\n"
-                f"</soul_state>"
-            )
-            system_context_parts.append(soul_state_content)
-
-        # 3. 记忆 (memories)
-        short_term_memories = self.session_memory_manager.get_session_memories(session_id)
-        memory_context = self.memory_injector.format_session_memories_for_prompt(short_term_memories)
-        if memory_context:
-            system_context_parts.append(f"<memories>\n{memory_context}\n</memories>")
-
-        # 4. 笔记 (notes)
-        if note_context:
-            system_context_parts.append(f"<notes>\n{note_context}\n</notes>")
-
-        # 5. 组装并注入到 extra_user_content_parts
-        if system_context_parts:
-            # 使用换行符连接各部分，并包裹在 system_context 中
-            full_system_context = "<system_context>\n" + "\n\n".join(system_context_parts) + "\n</system_context>"
-
-            # 创建 TextPart 并添加到 extra_user_content_parts
-            text_part = TextPart(text=full_system_context)
-            request.extra_user_content_parts.append(text_part)
 
     async def _update_memory_system(
         self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
@@ -422,65 +246,9 @@ class DeepMind:
             long_term_memories: 长期记忆列表
             session_id: 会话ID
         """
-        useful_memory_ids = feedback_data.get("useful_memory_ids", [])
-        new_memories_raw = feedback_data.get("new_memories", {})
-        merge_groups_raw = feedback_data.get("merge_groups", [])
-
-        # 1. 处理有用的旧记忆
-        useful_long_term_memories = []
-        if useful_memory_ids:
-            memory_map = {memory.id: memory for memory in long_term_memories}
-            useful_long_term_memories = [
-                memory_map[memory_id]
-                for memory_id in useful_memory_ids
-                if memory_id in memory_map
-            ]
-
-        # 2. 处理新生成的记忆
-        new_memories_normalized = MemoryIDResolver.normalize_new_memories_format(
-            new_memories_raw, self.logger
+        await self.feedback_service.update_memory_system(
+            feedback_data, long_term_memories, session_id
         )
-        new_memory_objects = []
-        if new_memories_normalized:
-            from ..llm_memory.models.data_models import BaseMemory, MemoryType
-
-            for mem_dict in new_memories_normalized:
-                try:
-                    # 创建一个字典副本以进行修改
-                    init_data = mem_dict.copy()
-
-                    # 将 'type' 键重命名为 'memory_type' 并转换为枚举类型
-                    if "type" in init_data:
-                        init_data["memory_type"] = MemoryType(init_data.pop("type"))
-
-                    # 现在，init_data 中的键与构造函数完全匹配
-                    new_memory_objects.append(BaseMemory(**init_data))
-                except Exception as e:
-                    self.logger.warning(f"为新记忆创建BaseMemory对象失败: {e}")
-
-        # 3. 更新短期记忆：添加新记忆，评估现有记忆，清理死亡记忆
-        useful_memory_ids = [memory.id for memory in useful_long_term_memories]
-        self.session_memory_manager.update_session_memories(
-            session_id, new_memory_objects, useful_memory_ids
-        )
-
-        # 5. 后台异步处理长期记忆反馈
-        merge_groups = MemoryIDResolver.normalize_merge_groups_format(merge_groups_raw)
-
-        if useful_memory_ids or new_memories_normalized or merge_groups:
-            task_payload = {
-                "feedback_fn": self._execute_feedback_task,
-                "session_id": session_id,
-                # 将所有数据都放在顶层，与 'feedback_fn' 同级
-                "useful_memory_ids": list(useful_memory_ids),
-                "new_memories": new_memories_normalized,
-                "merge_groups": merge_groups,
-                # 'payload' 字段可以保留并传入 session_id，因为 _execute_feedback_task 会用到
-                "payload": {"session_id": session_id},
-            }
-            await get_feedback_queue().submit(task_payload)
-        else:
-            pass
 
     async def _execute_feedback_task(
         self,
@@ -491,16 +259,9 @@ class DeepMind:
     ) -> None:
         """异步执行的长期记忆反馈。"""
 
-        # 检查 memory_system 是否可用
-        if self.memory_system is not None:
-            # 直接异步调用
-            await self.memory_system.feedback(
-                useful_memory_ids=useful_memory_ids,
-                new_memories=new_memories,
-                merge_groups=merge_groups,
-            )
-        else:
-            self.logger.error("记忆系统不可用，跳过反馈")
+        await self.feedback_service.execute_feedback_task(
+            useful_memory_ids, new_memories, merge_groups, session_id
+        )
 
     def _clean_note_content(self, content: str) -> str:
         """
@@ -746,53 +507,11 @@ class DeepMind:
         Returns:
             bool: 是否执行了睡眠
         """
-        # 如果睡眠间隔为0，表示禁用睡眠
-        if sleep_interval <= 0:
-            return False
-
-        import time
-
-        current_time = time.time()
-
-        # 首次运行，立即睡眠
-        if self.last_sleep_time is None:
-            await self._sleep()
-            self.last_sleep_time = current_time
-            return True
-
-        # 计算距离上次睡眠的时间
-        time_since_last_sleep = current_time - self.last_sleep_time
-
-        # 检查是否到达睡眠间隔
-        if time_since_last_sleep >= sleep_interval:
-            await self._sleep()
-            self.last_sleep_time = current_time
-            return True
-        else:
-            # 未到睡眠时间
-            return False
+        return await self.sleep_service.check_and_sleep_if_needed(sleep_interval)
 
     async def _sleep(self):
         """AI睡觉整理记忆：重要内容加强，无用内容清理"""
-        if not self.is_enabled():
-            return
-
-        import time
-
-        start_time = time.time()
-
-        try:
-            # 检查 memory_system 是否可用
-            if self.memory_system is not None:
-                await self.memory_system.consolidate_memories()
-                elapsed_time = time.time() - start_time
-            else:
-                self.logger.error(
-                    "记忆系统不可用，跳过巩固"
-                )
-        except Exception as e:
-            elapsed_time = time.time() - start_time
-            self.logger.error(f"记忆巩固失败（耗时 {elapsed_time:.2f} 秒）: {e}")
+        await self.sleep_service.sleep()
 
     def shutdown(self):
         """关闭潜意识系统，让AI好好休息"""
@@ -813,24 +532,9 @@ class DeepMind:
         # 获取会话ID
         session_id = self._get_session_id(event)
 
-        # 直接将任务提交到后台队列，不等待LLM响应
-        task_payload = {
-            "feedback_fn": self._execute_async_analysis_task,
-            "session_id": session_id,
-            "payload": {
-                "event_data": self._serialize_event_data(event),
-                "response_data": self._serialize_response_data(response),
-                "session_id": session_id,
-            },
-            # 添加这些字段以确保任务能被正确刷新到队列中
-            # 即使是空列表，也能确保任务被处理
-            "useful_memory_ids": [],  # 这些字段是为了确保任务能被反馈队列正确处理
-            "new_memories": [],
-            "merge_groups": [],
-        }
-
-        # 提交到反馈队列后台执行
-        await get_feedback_queue().submit(task_payload)
+        await self.feedback_service.submit_async_analysis_task(
+            event, response, session_id
+        )
 
     def _serialize_event_data(self, event: AstrMessageEvent) -> Dict:
         """序列化事件数据以便在后台线程中使用"""
