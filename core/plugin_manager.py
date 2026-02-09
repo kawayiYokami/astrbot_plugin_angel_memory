@@ -66,7 +66,7 @@ class PluginManager:
         """
 
         # 等待系统准备就绪
-        if not self.init_manager.wait_until_ready(timeout=30):
+        if not await self.init_manager.wait_until_ready_async(timeout=30):
             self.logger.info("⏳ 系统正在初始化中，LLM请求将跳过")
             return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
@@ -87,7 +87,7 @@ class PluginManager:
         """
 
         # 等待系统准备就绪
-        if not self.init_manager.wait_until_ready(timeout=30):
+        if not await self.init_manager.wait_until_ready_async(timeout=30):
             self.logger.info("⏳ 系统正在初始化中，LLM响应将跳过")
             return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
@@ -199,7 +199,7 @@ class PluginManager:
             dict: 处理结果
         """
         # 等待系统准备就绪
-        if not self.init_manager.wait_until_ready(timeout=30):
+        if not await self.init_manager.wait_until_ready_async(timeout=30):
             self.logger.info("⏳ 系统正在初始化中，记忆整理将跳过")
             return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
@@ -305,6 +305,7 @@ class PluginManager:
                 "has_providers": has_providers,
                 "provider_count": provider_count,
             }
+            status.update(self.init_manager.get_failed_info())
 
             self.logger.debug(f"📊 插件状态查询: {status}")
             return status

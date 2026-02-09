@@ -12,6 +12,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.star.star_tools import StarTools
 import asyncio
+import logging
 
 try:
     from astrbot.api import logger
@@ -32,37 +33,88 @@ from .tools.expand_note_context import ExpandNoteContextTool
 from .tools.research_tool import ResearchTool
 
 
-def ensure_chromadb_version():
-    """确保 chromadb 版本符合要求，否则抛出异常并引导用户手动升级。"""
-    MINIMUM_CHROMADB_VERSION = "1.2.1"
+def configure_logging_behavior():
+    """统一日志行为，避免重复输出与第三方噪音日志。"""
+    try:
+        if isinstance(logger, logging.Logger):
+            logger.propagate = False
+    except Exception:
+        pass
+
+    noisy_logger_names = ["httpx", "httpcore", "urllib3"]
+    for logger_name in noisy_logger_names:
+        try:
+            third_party_logger = logging.getLogger(logger_name)
+            third_party_logger.setLevel(logging.WARNING)
+            third_party_logger.propagate = False
+        except Exception:
+            continue
+
+
+def ensure_chromadb_version(config: dict | None = None) -> bool:
+    """确保 chromadb 版本符合要求，按策略决定严格失败或告警降级。"""
+    MINIMUM_CHROMADB_VERSION = "1.4.1"
+    MAJOR_COMPATIBILITY_LIMIT = "2"
+    runtime_config = config or {}
+    dependency_policy = runtime_config.get("dependency_policy", {})
+    chromadb_mode = dependency_policy.get("chromadb_mode", "strict")
+    strict_mode = chromadb_mode != "relaxed"
+
     logger.info("开始检查 chromadb 版本...")
+    logger.info(
+        f"chromadb 依赖检查模式: {'strict' if strict_mode else 'relaxed'}"
+    )
 
     try:
         current_version = pkg_resources.get_distribution("chromadb").version
         logger.info(f"当前安装的 chromadb 版本: {current_version}")
 
-        if pkg_resources.parse_version(current_version) < pkg_resources.parse_version(
-            MINIMUM_CHROMADB_VERSION
-        ):
+        current_parsed = pkg_resources.parse_version(current_version)
+        minimum_parsed = pkg_resources.parse_version(MINIMUM_CHROMADB_VERSION)
+        compatibility_limit_parsed = pkg_resources.parse_version(
+            MAJOR_COMPATIBILITY_LIMIT
+        )
+
+        if current_parsed < minimum_parsed:
             error_message = (
                 f"chromadb 版本过低 (当前: {current_version}, 最低要求: {MINIMUM_CHROMADB_VERSION})。"
-                f"请手动升级: pip install --upgrade chromadb>={MINIMUM_CHROMADB_VERSION}"
+                f"请手动升级: pip install --upgrade \"chromadb>={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT}\""
             )
             logger.error(error_message)
-            raise ImportError(error_message)
+            if strict_mode:
+                raise ImportError(error_message)
+            logger.warning("当前为 relaxed 模式，将降级继续运行。")
+            return False
+        if current_parsed >= compatibility_limit_parsed:
+            error_message = (
+                f"chromadb 主版本不兼容 (当前: {current_version}, 兼容范围: >={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT})。"
+                f"请手动安装兼容版本: pip install --upgrade \"chromadb>={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT}\""
+            )
+            logger.error(error_message)
+            if strict_mode:
+                raise ImportError(error_message)
+            logger.warning("当前为 relaxed 模式，将降级继续运行。")
+            return False
         else:
             logger.info(f"chromadb 版本检查通过 (版本: {current_version})")
+            return True
 
     except pkg_resources.DistributionNotFound:
         error_message = (
-            f"chromadb 未安装 (最低要求: {MINIMUM_CHROMADB_VERSION})。"
-            f"请手动安装: pip install chromadb>={MINIMUM_CHROMADB_VERSION}"
+            f"chromadb 未安装 (兼容范围: >={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT})。"
+            f"请手动安装: pip install \"chromadb>={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT}\""
         )
         logger.error(error_message)
-        raise ImportError(error_message)
+        if strict_mode:
+            raise ImportError(error_message)
+        logger.warning("当前为 relaxed 模式，将降级继续运行。")
+        return False
     except Exception as e:
         logger.error(f"检查 chromadb 版本时出错: {e}")
-        logger.warning("无法验证 chromadb 版本，插件可能无法正常工作。")
+        if strict_mode:
+            raise
+        logger.warning("无法验证 chromadb 版本，relaxed 模式下将降级继续运行。")
+        return False
 
 
 @register(
@@ -80,18 +132,22 @@ class AngelMemoryPlugin(Star):
     新架构特点：
     - 极速启动：毫秒级启动，所有耗时操作移至后台
     - 智能等待：后台自动检测提供商，有提供商时自动初始化
-    - 统一实例管理：所有核心实例在主线程创建，后台线程通过依赖注入使用
+    - 统一实例管理：核心实例在后台异步任务中于同一事件循环创建
     - 无重复初始化：彻底解决重复初始化和实例不一致问题
     - 线程安全：避免跨线程使用异步组件的竞态条件
 
-    插件启动时创建核心实例并启动后台线程，terminate时安全清理资源。
+    插件启动后异步初始化核心实例，terminate时安全清理资源。
     """
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
 
+        configure_logging_behavior()
+
         # 确保 chromadb 版本在初始化开始时检查
-        ensure_chromadb_version()
+        self.chromadb_available = ensure_chromadb_version(config or {})
+        if not self.chromadb_available:
+            logger.warning("chromadb 校验未通过，插件将以降级模式运行。")
 
         # 使用 astrbot.api 的 logger
         self.logger = logger
@@ -182,6 +238,11 @@ class AngelMemoryPlugin(Star):
     def update_components(self):
         """更新组件引用（在初始化完成后调用）"""
         if self.plugin_manager:
+            # 如果chromadb不可用，记录警告并跳过组件初始化
+            if not self.chromadb_available:
+                self.logger.warning("chromadb 不可用，跳过vector_store和相关记忆系统组件的初始化")
+                return
+
             # 从后台初始化器获取组件工厂
             component_factory = (
                 self.plugin_manager.background_initializer.get_component_factory()

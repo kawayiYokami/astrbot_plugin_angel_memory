@@ -8,6 +8,7 @@ InitializationManager - 初始化状态管理器
 from enum import Enum
 from threading import RLock, Event
 import time
+import asyncio
 
 try:
     from astrbot.api import logger
@@ -24,6 +25,7 @@ class InitializationState(Enum):
     WAITING_FOR_PROVIDERS = "waiting_for_providers"
     INITIALIZING = "initializing"
     READY = "ready"
+    FAILED = "failed"
 
 
 class InitializationManager:
@@ -40,6 +42,8 @@ class InitializationManager:
         self.current_state = InitializationState.NOT_STARTED
         self.state_lock = RLock()
         self.ready_event = Event()
+        self.failed_reason = ""
+        self.failed_at = None
         self.logger = logger
         self.logger.debug(
             "InitializationManager初始化完成 - 专注于状态管理和提供商检测"
@@ -105,11 +109,72 @@ class InitializationManager:
             # 等待10秒再检查
             time.sleep(check_interval)
 
+    async def wait_for_providers_and_initialize_async(self, check_interval=10):
+        """
+        异步等待提供商并初始化（不会阻塞事件循环）
+
+        Args:
+            check_interval: 检查提供商的间隔时间（秒）
+
+        Returns:
+            bool: True=应该开始初始化, False=被中断（目前不会发生）
+        """
+        self.transition_to(InitializationState.WAITING_FOR_PROVIDERS)
+        self.logger.info("🔍 开始等待LLM提供商（异步模式）...")
+
+        while True:
+            try:
+                llm_providers = self.context.get_all_providers()
+                llm_provider_count = len(llm_providers)
+
+                embedding_providers = (
+                    self.context.get_all_embedding_providers()
+                    if hasattr(self.context, "get_all_embedding_providers")
+                    else []
+                )
+                embedding_provider_count = len(embedding_providers)
+
+                total_providers = llm_provider_count + embedding_provider_count
+                self.logger.info(
+                    f"📊 检查提供商状态: 发现 {llm_provider_count} 个LLM提供商, {embedding_provider_count} 个嵌入提供商"
+                )
+
+                if total_providers > 0:
+                    provider_info = []
+
+                    if llm_providers:
+                        llm_ids = [p.meta().id for p in llm_providers]
+                        provider_info.append(f"LLM: {', '.join(llm_ids)}")
+
+                    if embedding_providers:
+                        embedding_ids = [p.meta().id for p in embedding_providers]
+                        provider_info.append(f"嵌入: {', '.join(embedding_ids)}")
+
+                    self.logger.info(
+                        f"✅ 检测到提供商: {' | '.join(provider_info)}，开始初始化"
+                    )
+                    self.transition_to(InitializationState.INITIALIZING)
+                    return True
+
+                self.logger.info(f"⏳ 暂无提供商，{check_interval}秒后再次检查...")
+
+            except Exception as e:
+                self.logger.error(f"❌ 检查提供商时出错: {e}")
+
+            await asyncio.sleep(check_interval)
+
     def mark_ready(self):
         """标记为准备就绪"""
         self.transition_to(InitializationState.READY)
         self.ready_event.set()
         self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
+
+    def mark_failed(self, reason: str):
+        """标记初始化失败并记录原因"""
+        self.failed_reason = reason or "unknown"
+        self.failed_at = time.time()
+        self.transition_to(InitializationState.FAILED)
+        self.logger.error(f"❌ 系统初始化失败，状态已标记为 FAILED: {self.failed_reason}")
 
     def wait_until_ready(self, timeout=None):
         """
@@ -121,12 +186,44 @@ class InitializationManager:
         Returns:
             bool: True=准备就绪, False=超时
         """
+        if self.get_current_state() == InitializationState.FAILED:
+            self.logger.warning("系统处于 FAILED 状态，跳过等待")
+            return False
+
         result = self.ready_event.wait(timeout)
         if result:
             self.logger.info("✅ 系统等待完成：准备就绪")
         else:
             self.logger.warning(f"⏰ 系统等待超时：{timeout}秒")
         return result
+
+    async def wait_until_ready_async(self, timeout=None):
+        """
+        异步等待系统准备就绪（不会阻塞事件循环）
+
+        Args:
+            timeout: 超时时间（秒），None表示无限等待
+
+        Returns:
+            bool: True=准备就绪, False=超时
+        """
+        start_time = time.time()
+        interval = 0.1
+
+        while True:
+            if self.ready_event.is_set():
+                self.logger.info("✅ 系统等待完成：准备就绪（异步）")
+                return True
+
+            if self.get_current_state() == InitializationState.FAILED:
+                self.logger.warning("系统处于 FAILED 状态，异步等待提前结束")
+                return False
+
+            if timeout is not None and (time.time() - start_time) >= timeout:
+                self.logger.warning(f"⏰ 系统等待超时：{timeout}秒（异步）")
+                return False
+
+            await asyncio.sleep(interval)
 
     def transition_to(self, new_state):
         """
@@ -151,3 +248,10 @@ class InitializationManager:
         current_state = self.current_state
         self.logger.debug(f"📋 当前状态: {current_state.value}")
         return current_state
+
+    def get_failed_info(self):
+        """获取失败信息"""
+        return {
+            "failed_reason": self.failed_reason,
+            "failed_at": self.failed_at,
+        }

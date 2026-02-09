@@ -17,6 +17,20 @@
     "default": false,
     "hint": "开启后首次使用时将自动安装本地模型依赖（约800MB）。"
   },
+  "dependency_policy": {
+    "type": "object",
+    "description": "[依赖检查] 第三方依赖检查策略",
+    "hint": "控制关键依赖（如 chromadb）版本检查失败时的行为。",
+    "items": {
+      "chromadb_mode": {
+        "type": "string",
+        "description": "chromadb 版本检查模式",
+        "default": "strict",
+        "hint": "strict=不满足即失败，relaxed=告警并降级",
+        "options": ["strict", "relaxed"]
+      }
+    }
+  },
   "enable_flashrank": {
     "type": "bool",
     "description": "[性能优化] 启用 FlashRank 极速重排 (推荐)",

@@ -21,14 +21,6 @@ except ImportError:
     import logging as logger_module
 
     logger = logger_module.getLogger(__name__)
-    if not logger.handlers:
-        handler = logger_module.StreamHandler()
-        formatter = logger_module.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.setLevel(logger_module.INFO)
 
 
 class EmbeddingCache:

@@ -2,7 +2,7 @@
 BackgroundInitializer - 后台初始化器（异步版本）
 
 使用 asyncio.create_task() 在后台异步执行初始化任务。
-按照 AstrBot 官方推荐的异步架构设计。
+所有核心组件在当前运行事件循环中创建，避免跨线程/跨事件循环问题。
 """
 
 import asyncio
@@ -72,14 +72,14 @@ class BackgroundInitializer:
         try:
             self.logger.info("🚀 启动异步后台初始化...")
 
-            # 等待提供商就绪（在线程池中执行同步方法）
-            should_initialize = await asyncio.to_thread(
-                self.init_manager.wait_for_providers_and_initialize
+            # 异步等待提供商就绪（不阻塞事件循环）
+            should_initialize = (
+                await self.init_manager.wait_for_providers_and_initialize_async()
             )
 
             if should_initialize:
-                # 开始真正的初始化（在线程池中执行）
-                await asyncio.to_thread(self._perform_initialization)
+                # 在当前事件循环中创建所有组件
+                await self._perform_initialization_async()
             else:
                 self.logger.info("⏹️ 初始化被中断")
                 return
@@ -90,41 +90,32 @@ class BackgroundInitializer:
             self.logger.error(f"❌ 异步后台初始化失败: {e}")
             import traceback
             self.logger.error(f"异常详情: {traceback.format_exc()}")
+            try:
+                self.init_manager.mark_failed(str(e))
+            except Exception:
+                pass
 
-    def _perform_initialization(self):
-        """执行真正的初始化工作"""
+    async def _perform_initialization_async(self):
+        """执行真正的初始化工作（同一事件循环）"""
         self.logger.info("🤖 开始执行完整的系统初始化...")
 
         try:
             # 配置已经在主线程中获取，直接使用
             self.logger.info(f"📋 使用配置: {list(self.config.keys())}")
 
-            # 2. 在主线程的事件循环中创建所有组件
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                components = loop.run_until_complete(
-                    self.component_factory.create_all_components(self.config)
-                )
-                self.logger.info("✅ 所有组件在后台线程中创建完成")
+            components = await self.component_factory.create_all_components(self.config)
+            self.logger.info("✅ 所有组件在当前事件循环中创建完成")
 
-                # 清理并禁用嵌入缓存（初始化完成后节省内存）
-                embedding_provider = components.get("embedding_provider")
-                if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):
-                    embedding_provider.clear_and_disable_cache()
-                    self.logger.info("🗑️ 嵌入缓存已清理并禁用（节省内存）")
+            embedding_provider = components.get("embedding_provider")
+            if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):
+                embedding_provider.clear_and_disable_cache()
+                self.logger.info("🗑️ 嵌入缓存已清理并禁用（节省内存）")
 
-                # 3. DeepMind初始化时已经执行了记忆巩固，这里不需要重复执行
-                deepmind = components.get("deepmind")
-                if deepmind and deepmind.is_enabled():
-                    self.logger.info(
-                        "🧠 DeepMind已在初始化时完成记忆巩固，跳过重复巩固"
-                    )
-                else:
-                    self.logger.warning("⚠️ DeepMind未启用")
-
-            finally:
-                loop.close()
+            deepmind = components.get("deepmind")
+            if deepmind and deepmind.is_enabled():
+                self.logger.info("🧠 DeepMind已在初始化时完成记忆巩固，跳过重复巩固")
+            else:
+                self.logger.warning("⚠️ DeepMind未启用")
 
         except Exception as e:
             self.logger.error(f"❌ 系统初始化失败: {e}")
