@@ -255,3 +255,14 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 ---
 
 *此简报面向资深开发者，聚焦核心架构和关键决策。完整API参考请查看各模块文档。*
+
+## 开发准则
+
+### 版本号维护
+- 任何影响运行行为、配置、依赖或接口语义的变更，提交前必须同步更新 `metadata.yaml` 的 `version`。
+- 版本号至少递增最末位，确保上游可识别到新版本并触发更新。
+
+### 提交信息规范
+- 采用约定式提交（Conventional Commits），推荐格式：`type(scope): 简要中文描述`。
+- 提交信息默认使用中文，便于与现有项目历史保持一致。
+- 常用类型：`feat`、`fix`、`perf`、`refactor`、`docs`、`chore`。
