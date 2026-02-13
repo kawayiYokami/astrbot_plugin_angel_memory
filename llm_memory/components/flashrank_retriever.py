@@ -81,7 +81,7 @@ class FlashRankRetriever:
             return []
 
         if not HAS_FLASHRANK or self._ranker is None:
-            logger.error("FlashRank 不可用，跳过重排")
+            logger.debug("FlashRank 不可用，跳过重排")
             return []
 
         try:

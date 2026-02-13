@@ -15,7 +15,7 @@
     "type": "bool",
     "description": "[核心模型设置] 启用本地嵌入模型支持",
     "default": false,
-    "hint": "开启后首次使用时将自动安装本地模型依赖（约800MB）。"
+    "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5，模型本体约96MB）。首次使用会自动安装运行依赖（如torch、sentence-transformers），总体占用通常为数百MB（与平台环境相关）。"
   },
   "enable_flashrank": {
     "type": "bool",

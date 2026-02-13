@@ -41,6 +41,7 @@ class VectorStore:
         self,
         embedding_provider: Optional[EmbeddingProvider] = None,
         db_path: Optional[str] = None,
+        enable_flashrank: bool = False,
     ):
         """
         初始化向量存储.
@@ -48,6 +49,7 @@ class VectorStore:
         Args:
             embedding_provider: 嵌入提供商实例.如果未提供,则使用默认本地模型.
             db_path: 数据库存储路径.如果未提供,则从系统配置中获取.
+            enable_flashrank: 是否启用FlashRank语义重排.
         """
         self.logger = logger
 
@@ -93,8 +95,8 @@ class VectorStore:
         # ChromaDB是线程安全的,不需要额外的线程锁
         # 移除了 self._db_lock = threading.RLock()
 
-        # FlashRank重排配置
-        self.flashrank_enabled = True  # 使用FlashRank进行语义重排
+        # FlashRank重排配置（默认关闭，按配置开启）
+        self.flashrank_enabled = enable_flashrank
 
         # 懒加载的标签管理器(用于基于 tag_ids 重建标签文本)
         self._tag_manager: Optional[TagManager] = None
@@ -104,6 +106,9 @@ class VectorStore:
 
     def _get_flashrank(self) -> Optional[FlashRankRetriever]:
         """懒加载 FlashRank 重排器"""
+        if not self.flashrank_enabled:
+            return None
+
         try:
             # 从 PluginContext 获取配置
             # 获取 PluginContext 实例有点 hack，但 PathManager 是单例且与 context 绑定

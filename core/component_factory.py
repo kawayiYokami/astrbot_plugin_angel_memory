@@ -168,7 +168,9 @@ class ComponentFactory:
         self.logger.info(f"📁 使用数据库路径: {db_path}")
 
         vector_store = VectorStore(
-            embedding_provider=embedding_provider, db_path=db_path
+            embedding_provider=embedding_provider,
+            db_path=db_path,
+            enable_flashrank=self.plugin_context.get_config("enable_flashrank", False),
         )
 
         # 获取提供商类型用于日志
