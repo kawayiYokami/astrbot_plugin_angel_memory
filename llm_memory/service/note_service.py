@@ -263,7 +263,6 @@ class NoteService:
         Returns:
             搜索结果列表
         """
-
         # 1. 第一阶段：过滤 (Filtering)
         # 使用 VectorStore 的笔记专用检索方法进行向量搜索
         if vector is not None:

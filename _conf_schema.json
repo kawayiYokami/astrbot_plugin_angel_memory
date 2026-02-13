@@ -2,8 +2,15 @@
   "provider_id": {
     "type": "string",
     "description": "[核心模型设置] 用于记忆整理的LLM提供商ID",
+    "_special": "select_provider",
     "default": "",
     "hint": "建议为拥有思考能力的模型。留空则只使用基础记忆功能。"
+  },
+  "rerank_provider_id": {
+    "type": "string",
+    "description": "[核心模型设置] 用于记忆二阶段重排的提供商ID（可选）",
+    "default": "",
+    "hint": "仅作用于记忆检索重排，笔记检索不会使用重排。留空则自动尝试复用 provider_id，若仍不可用则降级为 Chroma 向量相似度排序。"
   },
   "astrbot_embedding_provider_id": {
     "type": "string",
@@ -16,18 +23,6 @@
     "description": "[核心模型设置] 启用本地嵌入模型支持",
     "default": false,
     "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5，模型本体约96MB）。首次使用会自动安装运行依赖（如torch、sentence-transformers），总体占用通常为数百MB（与平台环境相关）。"
-  },
-  "enable_flashrank": {
-    "type": "bool",
-    "description": "[性能优化] 启用 FlashRank 极速重排 (推荐)",
-    "default": false,
-    "hint": "使用FlashRank进行语义重排，比传统方法快10倍且更精准。开启前请确保已安装依赖: pip install flashrank"
-  },
-  "flashrank_model": {
-    "type": "string",
-    "description": "[FlashRank] 重排模型名称",
-    "default": "ms-marco-MultiBERT-L-12",
-    "hint": "推荐：ms-marco-MultiBERT-L-12 (多语言最强，中文效果佳)。若追求极致速度，可降级为 ms-marco-MiniLM-L-12-v2。"
   },
   "memory_behavior": {
     "type": "object",

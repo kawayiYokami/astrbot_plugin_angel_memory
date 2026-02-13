@@ -166,6 +166,7 @@ class MemoryConfig:
 
         self._data_directory = config_get("data_directory", self.data_dir)
         self._provider_id = config_get("provider_id", "")
+        self._rerank_provider_id = config_get("rerank_provider_id", "")
 
         # Token预算配置 - 支持新旧格式兼容
         # 新格式：token_budget.small_model_budget
@@ -183,8 +184,6 @@ class MemoryConfig:
             max_value=64000,
         )
         self._enable_local_embedding = config_get("enable_local_embedding", False)
-        self._enable_flashrank = config_get("enable_flashrank", False)
-        self._flashrank_model = config_get("flashrank_model", "ms-marco-MultiBERT-L-12")
 
         # 灵魂系统配置 - 支持新旧格式兼容
         # 新格式：enable_soul_system.enabled, enable_soul_system.recall_depth_mid
@@ -318,6 +317,11 @@ class MemoryConfig:
         return self._provider_id
 
     @property
+    def rerank_provider_id(self) -> str:
+        """获取记忆二阶段重排提供商ID"""
+        return self._rerank_provider_id
+
+    @property
     def small_model_note_budget(self) -> int:
         """获取小模型笔记Token预算"""
         return self._small_model_note_budget
@@ -330,16 +334,6 @@ class MemoryConfig:
     def enable_local_embedding(self) -> bool:
         """是否启用本地嵌入模型"""
         return self._enable_local_embedding
-
-    @property
-    def enable_flashrank(self) -> bool:
-        """是否启用 FlashRank 重排"""
-        return self._enable_flashrank
-
-    @property
-    def flashrank_model(self) -> str:
-        """FlashRank 模型名称"""
-        return self._flashrank_model
 
     @property
     def enable_soul_system(self) -> bool:
@@ -396,11 +390,10 @@ class MemoryConfig:
             "sleep_interval": self.sleep_interval,
             "default_passive_strength": self.default_passive_strength,
             "enable_local_embedding": self.enable_local_embedding,
-            "enable_flashrank": self.enable_flashrank,
-            "flashrank_model": self.flashrank_model,
             "enable_soul_system": self.enable_soul_system,
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
+            "rerank_provider_id": self.rerank_provider_id,
             "small_model_note_budget": self.small_model_note_budget,
             "large_model_note_budget": self.large_model_note_budget,
         }
