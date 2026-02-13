@@ -21,9 +21,6 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
-# 导入版本检查相关模块
-import pkg_resources
-
 # 导入核心模块
 from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
@@ -49,72 +46,6 @@ def configure_logging_behavior():
             third_party_logger.propagate = False
         except Exception:
             continue
-
-
-def ensure_chromadb_version(config: dict | None = None) -> bool:
-    """确保 chromadb 版本符合要求，按策略决定严格失败或告警降级。"""
-    MINIMUM_CHROMADB_VERSION = "1.4.1"
-    MAJOR_COMPATIBILITY_LIMIT = "2"
-    runtime_config = config or {}
-    dependency_policy = runtime_config.get("dependency_policy", {})
-    chromadb_mode = dependency_policy.get("chromadb_mode", "strict")
-    strict_mode = chromadb_mode != "relaxed"
-
-    logger.info("开始检查 chromadb 版本...")
-    logger.info(
-        f"chromadb 依赖检查模式: {'strict' if strict_mode else 'relaxed'}"
-    )
-
-    try:
-        current_version = pkg_resources.get_distribution("chromadb").version
-        logger.info(f"当前安装的 chromadb 版本: {current_version}")
-
-        current_parsed = pkg_resources.parse_version(current_version)
-        minimum_parsed = pkg_resources.parse_version(MINIMUM_CHROMADB_VERSION)
-        compatibility_limit_parsed = pkg_resources.parse_version(
-            MAJOR_COMPATIBILITY_LIMIT
-        )
-
-        if current_parsed < minimum_parsed:
-            error_message = (
-                f"chromadb 版本过低 (当前: {current_version}, 最低要求: {MINIMUM_CHROMADB_VERSION})。"
-                f"请手动升级: pip install --upgrade \"chromadb>={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT}\""
-            )
-            logger.error(error_message)
-            if strict_mode:
-                raise ImportError(error_message)
-            logger.warning("当前为 relaxed 模式，将降级继续运行。")
-            return False
-        if current_parsed >= compatibility_limit_parsed:
-            error_message = (
-                f"chromadb 主版本不兼容 (当前: {current_version}, 兼容范围: >={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT})。"
-                f"请手动安装兼容版本: pip install --upgrade \"chromadb>={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT}\""
-            )
-            logger.error(error_message)
-            if strict_mode:
-                raise ImportError(error_message)
-            logger.warning("当前为 relaxed 模式，将降级继续运行。")
-            return False
-        else:
-            logger.info(f"chromadb 版本检查通过 (版本: {current_version})")
-            return True
-
-    except pkg_resources.DistributionNotFound:
-        error_message = (
-            f"chromadb 未安装 (兼容范围: >={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT})。"
-            f"请手动安装: pip install \"chromadb>={MINIMUM_CHROMADB_VERSION},<{MAJOR_COMPATIBILITY_LIMIT}\""
-        )
-        logger.error(error_message)
-        if strict_mode:
-            raise ImportError(error_message)
-        logger.warning("当前为 relaxed 模式，将降级继续运行。")
-        return False
-    except Exception as e:
-        logger.error(f"检查 chromadb 版本时出错: {e}")
-        if strict_mode:
-            raise
-        logger.warning("无法验证 chromadb 版本，relaxed 模式下将降级继续运行。")
-        return False
 
 
 @register(
@@ -143,11 +74,6 @@ class AngelMemoryPlugin(Star):
         super().__init__(context)
 
         configure_logging_behavior()
-
-        # 确保 chromadb 版本在初始化开始时检查
-        self.chromadb_available = ensure_chromadb_version(config or {})
-        if not self.chromadb_available:
-            logger.warning("chromadb 校验未通过，插件将以降级模式运行。")
 
         # 使用 astrbot.api 的 logger
         self.logger = logger
@@ -238,11 +164,6 @@ class AngelMemoryPlugin(Star):
     def update_components(self):
         """更新组件引用（在初始化完成后调用）"""
         if self.plugin_manager:
-            # 如果chromadb不可用，记录警告并跳过组件初始化
-            if not self.chromadb_available:
-                self.logger.warning("chromadb 不可用，跳过vector_store和相关记忆系统组件的初始化")
-                return
-
             # 从后台初始化器获取组件工厂
             component_factory = (
                 self.plugin_manager.background_initializer.get_component_factory()
