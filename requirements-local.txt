@@ -1,7 +1,10 @@
 # Angel Memory Plugin - 本地模型支持（可选）
 # 
 # 安装此文件以启用本地嵌入模型（完全离线运行）
-# 警告：这将安装重量级依赖 (~800MB+)
+# 说明：
+# - 模型本体（BAAI/bge-small-zh-v1.5）约 96MB
+# - 首次启用会安装运行依赖（torch/sentence-transformers 等）
+# - 整体磁盘占用通常为数百MB（与平台、缓存和轮子版本有关）
 #
 # 使用方法：
 # pip install -r requirements-local.txt
