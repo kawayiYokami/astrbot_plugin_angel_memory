@@ -5,7 +5,8 @@
 """
 
 import chromadb
-from typing import List, Optional, Tuple
+import inspect
+from typing import Any, Dict, List, Optional, Tuple
 import traceback
 from pathlib import Path
 from .embedding_provider import EmbeddingProvider
@@ -22,7 +23,6 @@ except ImportError:
 from ..models.data_models import BaseMemory
 from ..models.note_models import NoteData
 from ..config.system_config import system_config
-from .flashrank_retriever import FlashRankRetriever
 
 
 class VectorStore:
@@ -41,7 +41,7 @@ class VectorStore:
         self,
         embedding_provider: Optional[EmbeddingProvider] = None,
         db_path: Optional[str] = None,
-        enable_flashrank: bool = False,
+        rerank_provider: Optional[Any] = None,
     ):
         """
         初始化向量存储.
@@ -49,7 +49,6 @@ class VectorStore:
         Args:
             embedding_provider: 嵌入提供商实例.如果未提供,则使用默认本地模型.
             db_path: 数据库存储路径.如果未提供,则从系统配置中获取.
-            enable_flashrank: 是否启用FlashRank语义重排.
         """
         self.logger = logger
 
@@ -74,6 +73,9 @@ class VectorStore:
                 self.logger.error(f"指定的嵌入提供商不可用: {provider_info}")
                 raise ValueError(f"指定的嵌入提供商不可用: {provider_info.get('model_name', 'Unknown')}")
 
+        # 可选：上游重排提供商（仅用于记忆重排）
+        self.rerank_provider = rerank_provider
+
         # 根据提供商类型确定数据库路径
         if db_path is None:
             provider_id = None
@@ -95,34 +97,8 @@ class VectorStore:
         # ChromaDB是线程安全的,不需要额外的线程锁
         # 移除了 self._db_lock = threading.RLock()
 
-        # FlashRank重排配置（默认关闭，按配置开启）
-        self.flashrank_enabled = enable_flashrank
-
         # 懒加载的标签管理器(用于基于 tag_ids 重建标签文本)
         self._tag_manager: Optional[TagManager] = None
-
-        # FlashRank 重排器
-        self._flashrank = None
-
-    def _get_flashrank(self) -> Optional[FlashRankRetriever]:
-        """懒加载 FlashRank 重排器"""
-        if not self.flashrank_enabled:
-            return None
-
-        try:
-            # 从 PluginContext 获取配置
-            # 获取 PluginContext 实例有点 hack，但 PathManager 是单例且与 context 绑定
-            # 更好的方式是 VectorStore 应该持有 plugin_context 的引用，但这需要较大的重构
-            # 这里我们通过检查环境变量或配置来决定
-
-            # 由于无法直接访问配置，我们检查类级别的配置或默认行为
-            # 如果 FlashRank 可用且已安装，我们就实例化它
-            if self._flashrank is None and FlashRankRetriever.is_available():
-                self._flashrank = FlashRankRetriever()
-            return self._flashrank
-        except Exception as e:
-            self.logger.warning(f"FlashRank 初始化失败: {e}")
-            return None
 
     def _get_tag_manager(self) -> Optional[TagManager]:
         """懒加载 TagManager(基于 PathManager 当前 provider 和索引目录)."""
@@ -343,7 +319,7 @@ class VectorStore:
                         break
 
         # FlashRank语义重排
-        final_results = self._rerank_results(query, vector_results, collection, limit)
+        final_results = await self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
 
@@ -421,7 +397,7 @@ class VectorStore:
                         break
 
         # FlashRank语义重排
-        final_results = self._rerank_results(query, vector_results, collection, limit)
+        final_results = await self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
 
@@ -978,102 +954,135 @@ class VectorStore:
 
     # ===== 混合检索集成方法 =====
 
-    def _rerank_results(
+    async def _rerank_results(
         self, query: str, vector_results: List[BaseMemory], collection, limit: int
     ) -> List[BaseMemory]:
-        """
-        通用重排入口（使用 FlashRank 语义重排）.
-
-        Args:
-            query: 查询文本
-            vector_results: 向量检索结果
-            collection: ChromaDB集合
-            limit: 返回结果数量限制
-
-        Returns:
-            精排后的记忆列表
-        """
+        """记忆二阶段重排（优先使用上游 rerank_provider，失败时降级为向量排序）。"""
         if not vector_results:
             return []
 
+        # 没有可用重排器：直接采用向量相似度排序结果
+        if not self.rerank_provider or not hasattr(self.rerank_provider, "rerank"):
+            return vector_results[:limit]
+
         try:
-            # 准备候选文档数据
-            candidates = []
-            for memory in vector_results:
-                # 获取记忆的语义核心文本用于重排
-                content = memory.get_semantic_core()
-                if content:
-                    # 将完整 metadata 传递给 candidates，供 FlashRank 使用
-                    candidates.append({
-                        "id": memory.id,
-                        "content": content,
-                        "metadata": memory.to_dict()
-                    })
+            passages = []
+            documents: List[str] = []
+            id_to_index: Dict[str, int] = {}
+            for idx, mem in enumerate(vector_results):
+                mem_id = getattr(mem, "id", f"mem_{idx}")
+                id_to_index[mem_id] = idx
 
-            if not candidates:
-                return vector_results
+                text = ""
+                if hasattr(mem, "get_semantic_core"):
+                    text = mem.get_semantic_core() or ""
+                if not text:
+                    judgment = getattr(mem, "judgment", "") or ""
+                    reasoning = getattr(mem, "reasoning", "") or ""
+                    text = f"{judgment}\n{reasoning}".strip()
 
-            # 使用 FlashRank
-            flashrank = self._get_flashrank()
-            if flashrank:
-                ranked_scores = flashrank.rerank(query, candidates, limit)
-                # 使用 3:7 加权融合策略 (0.3 * Vector + 0.7 * FlashRank)
-                return self._reorder_results_by_score(vector_results, ranked_scores, collection)
+                safe_text = str(text or "").strip()
+                passages.append({"id": mem_id, "text": safe_text})
+                documents.append(safe_text)
 
-            # 如果 FlashRank 不可用，直接返回向量结果
-            return vector_results
+            rerank_method = self.rerank_provider.rerank
+            safe_query = str(query or "")
 
+            # 只使用标准签名：query + documents
+            rerank_resp = rerank_method(
+                query=safe_query,
+                documents=documents,
+                top_n=limit,
+            )
+
+            if inspect.isawaitable(rerank_resp):
+                rerank_resp = await rerank_resp
+
+            if isinstance(rerank_resp, dict) and rerank_resp.get("code") not in (None, 0, 200, "0", "200"):
+                self.logger.warning(f"记忆重排接口返回非成功状态，降级为向量排序: {rerank_resp}")
+                return vector_results[:limit]
+
+            ranked_scores = self._extract_ranked_scores(rerank_resp, passages, id_to_index)
+            if not ranked_scores:
+                return vector_results[:limit]
+
+            reordered = self._reorder_results_by_score(vector_results, ranked_scores, collection)
+            return reordered[:limit]
         except Exception as e:
-            self.logger.error(f"重排失败: {e}")
-            return vector_results
+            self.logger.warning(f"记忆重排失败，降级为向量排序: {e}")
+            return vector_results[:limit]
 
     def _rerank_notes(
         self, query: str, vector_results: List[NoteData], collection, limit: int
     ) -> List[NoteData]:
-        """
-        对笔记进行重排.
+        """笔记检索不做二阶段重排，直接返回向量结果。"""
+        return vector_results[:limit] if vector_results else []
 
-        Args:
-            query: 查询文本
-            vector_results: 向量检索的笔记结果
-            collection: ChromaDB集合
-            limit: 返回结果数量限制
-
-        Returns:
-            精排后的笔记列表
-        """
-        if not vector_results:
+    def _extract_ranked_scores(
+        self,
+        rerank_resp: Any,
+        passages: List[Dict[str, str]],
+        id_to_index: Dict[str, int],
+    ) -> List[Tuple[str, float]]:
+        """兼容多种上游 rerank 返回格式，归一化为 [(doc_id, score)]。"""
+        if rerank_resp is None:
             return []
 
-        try:
-            # 准备候选文档数据
-            candidates = []
-            for note in vector_results:
-                # 获取笔记内容
-                content = note.content
-                if content:
-                    candidates.append({
-                        "id": note.id,
-                        "content": content,
-                        "metadata": note.to_dict()
-                    })
+        # 常见返回：{"results": [...]}
+        if isinstance(rerank_resp, dict):
+            items = rerank_resp.get("results")
+            if items is None:
+                data = rerank_resp.get("data")
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    items = data.get("results") or data.get("items")
+        else:
+            items = rerank_resp
 
-            if not candidates:
-                return vector_results
+        if not isinstance(items, list):
+            return []
 
-            # 使用 FlashRank
-            flashrank = self._get_flashrank()
-            if flashrank:
-                ranked_scores = flashrank.rerank(query, candidates, limit)
-                # 使用 3:7 加权融合策略 (0.3 * Vector + 0.7 * FlashRank)
-                return self._reorder_notes_by_score(vector_results, ranked_scores, collection)
+        ranked_scores: List[Tuple[str, float]] = []
+        for item in items:
+            if item is None:
+                continue
 
-            # 如果 FlashRank 不可用，直接返回向量结果
-            return vector_results
+            doc_id = None
+            score = None
 
-        except Exception as e:
-            self.logger.error(f"笔记重排失败: {e}")
-            return vector_results
+            if isinstance(item, dict):
+                doc_id = item.get("id")
+                score = item.get("score")
+
+                # 兼容 index 返回
+                if doc_id is None and "index" in item:
+                    idx = item.get("index")
+                    if isinstance(idx, int) and 0 <= idx < len(passages):
+                        doc_id = passages[idx]["id"]
+
+                # 兼容 text/document 返回
+                if doc_id is None:
+                    text = item.get("text") or item.get("document") or ""
+                    for p in passages:
+                        if p["text"] == text:
+                            doc_id = p["id"]
+                            break
+            else:
+                doc_id = getattr(item, "id", None)
+                score = getattr(item, "score", None)
+                if doc_id is None and hasattr(item, "index"):
+                    idx = getattr(item, "index")
+                    if isinstance(idx, int) and 0 <= idx < len(passages):
+                        doc_id = passages[idx]["id"]
+
+            if doc_id in id_to_index and score is not None:
+                try:
+                    ranked_scores.append((doc_id, float(score)))
+                except Exception:
+                    continue
+
+        return ranked_scores
 
     def _reorder_results_by_score(
         self,

@@ -5,7 +5,7 @@ ComponentFactory - 组件工厂
 避免后台线程和主线程之间的实例不一致问题。
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pathlib import Path
 
 try:
@@ -167,10 +167,12 @@ class ComponentFactory:
         db_path = str(self.plugin_context.get_chroma_db_path())
         self.logger.info(f"📁 使用数据库路径: {db_path}")
 
+        rerank_provider = self._resolve_rerank_provider()
+
         vector_store = VectorStore(
             embedding_provider=embedding_provider,
             db_path=db_path,
-            enable_flashrank=self.plugin_context.get_config("enable_flashrank", False),
+            rerank_provider=rerank_provider,
         )
 
         # 获取提供商类型用于日志
@@ -185,6 +187,62 @@ class ComponentFactory:
             self.logger.info(f"✅ 向量存储创建完成 (使用本地模型: {model_name})")
 
         return vector_store
+
+    def _resolve_rerank_provider(self) -> Optional[Any]:
+        """
+        解析上游重排提供商（可选）。
+
+        优先级：
+        1. 配置项 rerank_provider_id（如果存在）
+        2. 配置项 provider_id（LLM 提供商ID）
+        3. 上游 context 中第一个具备 rerank() 方法的提供商
+        """
+        try:
+            rerank_provider_id = self.plugin_context.get_config("rerank_provider_id", None)
+            llm_provider_id = self.plugin_context.get_llm_provider_id()
+            candidate_ids = [
+                pid
+                for pid in [
+                    rerank_provider_id,
+                    llm_provider_id,
+                ]
+                if pid
+            ]
+
+            # 先按显式 ID 查找
+            for pid in candidate_ids:
+                if hasattr(self.context, "get_rerank_provider_by_id"):
+                    provider = self.context.get_rerank_provider_by_id(pid)
+                    if provider and hasattr(provider, "rerank"):
+                        self.logger.info(f"✅ 使用上游重排提供商: {pid}")
+                        return provider
+
+                if hasattr(self.context, "get_provider_by_id"):
+                    provider = self.context.get_provider_by_id(pid)
+                    if provider and hasattr(provider, "rerank"):
+                        self.logger.info(f"✅ 使用上游可重排提供商: {pid}")
+                        return provider
+
+            # 再从列表中兜底挑选
+            if hasattr(self.context, "get_all_rerank_providers"):
+                providers = self.context.get_all_rerank_providers() or []
+                for p in providers:
+                    if hasattr(p, "rerank"):
+                        self.logger.info("✅ 使用上游重排提供商: <auto>")
+                        return p
+
+            if hasattr(self.context, "get_all_providers"):
+                providers = self.context.get_all_providers() or []
+                for p in providers:
+                    if hasattr(p, "rerank"):
+                        self.logger.info("✅ 使用上游可重排提供商: <auto>")
+                        return p
+
+            self.logger.info("ℹ️ 未启用记忆二阶段重排，当前使用 Chroma 向量相似度排序结果")
+            return None
+        except Exception as e:
+            self.logger.warning(f"解析上游重排提供商失败，自动降级为 Chroma 向量相似度排序: {e}")
+            return None
 
     def _create_cognitive_service(self, vector_store):
         """创建认知服务"""
