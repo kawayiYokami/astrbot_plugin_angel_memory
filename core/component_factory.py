@@ -137,7 +137,7 @@ class ComponentFactory:
             self.plugin_context.set_vector_store(vector_store)
 
             # 3. 创建认知服务
-            cognitive_service = self._create_cognitive_service(vector_store)
+            cognitive_service = self._create_cognitive_service(vector_store, memory_sql_manager)
             self._components["cognitive_service"] = cognitive_service
 
             # 4. 创建统一记忆运行时（Phase A: 向量实现）
@@ -287,11 +287,14 @@ class ComponentFactory:
             self.logger.warning(f"解析上游重排提供商失败，自动降级为 Chroma 向量相似度排序: {e}")
             return None
 
-    def _create_cognitive_service(self, vector_store):
+    def _create_cognitive_service(self, vector_store, memory_sql_manager: MemorySqlManager = None):
         """创建认知服务"""
         self.logger.info("🧠 创建认知服务...")
 
-        cognitive_service = CognitiveService(vector_store=vector_store)
+        cognitive_service = CognitiveService(
+            vector_store=vector_store,
+            memory_sql_manager=memory_sql_manager,
+        )
         self.logger.info("✅ 认知服务创建完成")
 
         return cognitive_service

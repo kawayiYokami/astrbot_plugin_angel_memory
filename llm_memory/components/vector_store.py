@@ -659,6 +659,82 @@ class VectorStore:
 
         return timings if _return_timings else None
 
+    async def upsert_memory_index_rows(
+        self,
+        collection,
+        rows: List[Dict[str, str]],
+    ) -> None:
+        """
+        轻量记忆索引写入：仅写 id + vector_text + embedding。
+
+        rows: [{"id": "...", "vector_text": "..."}]
+        """
+        if not rows:
+            return
+
+        ids: List[str] = []
+        texts: List[str] = []
+        metadatas: List[Dict[str, str]] = []
+
+        for row in rows:
+            memory_id = str(row.get("id") or "").strip()
+            vector_text = str(row.get("vector_text") or "").strip()
+            if not memory_id or not vector_text:
+                continue
+            ids.append(memory_id)
+            texts.append(vector_text)
+            # 仅保留最小冗余字段，业务数据回 SQL 查。
+            metadatas.append({"memory_id": memory_id})
+
+        if not ids:
+            return
+
+        await self.upsert_documents(
+            collection=collection,
+            ids=ids,
+            embedding_texts=texts,
+            documents=texts,
+            metadatas=metadatas,
+        )
+
+    async def recall_memory_ids(
+        self,
+        collection,
+        query: str,
+        limit: int = 10,
+        vector: Optional[List[float]] = None,
+        similarity_threshold: float = 0.5,
+    ) -> List[Tuple[str, float]]:
+        """
+        轻量记忆索引召回：仅返回 (memory_id, similarity)。
+        """
+        query_vector = vector
+        if query_vector is None:
+            query_vector = await self.embed_single_document(query, is_query=True)
+        if query_vector is None:
+            return []
+
+        results = collection.query(
+            query_embeddings=[query_vector],
+            n_results=max(1, int(limit)),
+        )
+
+        ids = (results or {}).get("ids", [[]])
+        distances = (results or {}).get("distances", [[]])
+        flat_ids = ids[0] if ids else []
+        flat_distances = distances[0] if distances else []
+
+        recalled: List[Tuple[str, float]] = []
+        for idx, memory_id in enumerate(flat_ids):
+            distance = (
+                flat_distances[idx] if idx < len(flat_distances) else 2.0
+            )
+            similarity = max(0.0, 1.0 - (float(distance) / 2.0))
+            if similarity < similarity_threshold:
+                continue
+            recalled.append((str(memory_id), similarity))
+        return recalled
+
     async def embed_documents(
         self, documents: List[str], is_query: bool = False, timeout: int = 3
     ) -> Optional[List[List[float]]]:

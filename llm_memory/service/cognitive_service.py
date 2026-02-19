@@ -35,7 +35,7 @@ class CognitiveService:
     - 清醒睡眠：支持清醒模式（学习强化）和睡眠模式（巩固遗忘）
     """
 
-    def __init__(self, vector_store: VectorStore):
+    def __init__(self, vector_store: VectorStore, memory_sql_manager=None):
         """
         初始化认知服务。
 
@@ -48,6 +48,7 @@ class CognitiveService:
         if not vector_store:
             raise ValueError("必须提供一个 VectorStore 实例。")
         self.vector_store = vector_store
+        self.memory_sql_manager = memory_sql_manager
 
         # 为认知服务获取主集合
         self.main_collection = (
@@ -55,14 +56,28 @@ class CognitiveService:
                 system_config.collection_name
             )
         )
+        # 轻量记忆索引集合（仅 id + vector_text + embedding）
+        self.memory_index_collection = (
+            self.vector_store.get_or_create_collection_with_dimension_check(
+                "memory_index"
+            )
+        )
 
         # 创建记忆处理器工厂
         self.memory_handler_factory = MemoryHandlerFactory(
-            self.main_collection, self.vector_store
+            self.main_collection,
+            self.vector_store,
+            self.memory_sql_manager,
+            self.memory_index_collection,
         )
 
         # 创建记忆管理器，并传入具体的 collection 对象
-        self.memory_manager = MemoryManager(self.main_collection, self.vector_store)
+        self.memory_manager = MemoryManager(
+            self.main_collection,
+            self.vector_store,
+            memory_sql_manager=self.memory_sql_manager,
+            memory_index_collection=self.memory_index_collection,
+        )
 
         # 记录初始化状态以验证VectorStore
         self.logger.info(
