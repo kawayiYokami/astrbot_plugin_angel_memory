@@ -15,7 +15,6 @@ try:
 except ImportError:
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
-from ..components.association_manager import AssociationManager, MemorySnapshot
 from ..config.system_config import system_config
 
 # 导入查询处理器（用于统一检索词预处理）
@@ -30,20 +29,16 @@ class MemoryManager:
     这些功能不直接与特定记忆类型绑定，而是处理记忆的通用行为。
     """
 
-    def __init__(
-        self, main_collection, vector_store, association_manager: AssociationManager
-    ):
+    def __init__(self, main_collection, vector_store):
         """
         初始化记忆管理器。
 
         Args:
             main_collection: 用于操作的主集合实例
             vector_store: 向量存储实例 (用于调用 recall, update_memory 等高级方法)
-            association_manager: 关联管理器实例
         """
         self.collection = main_collection
         self.store = vector_store
-        self.association_manager = association_manager
         self.logger = logger
 
         # 初始化查询处理器（用于统一检索词预处理）
@@ -58,7 +53,6 @@ class MemoryManager:
         清理规则：
         - 删除被动记忆中强度 ≤ 0 的记忆
         - 主动记忆永不删除（不受强度影响）
-        - 清理弱关联
         """
         self.logger.debug("开始记忆清理过程...")
 
@@ -73,9 +67,6 @@ class MemoryManager:
                 self.collection.delete(ids=weak_results["ids"])
                 deleted_count = len(weak_results["ids"])
                 self.logger.debug(f"已删除 {deleted_count} 条被动记忆（强度≤0）")
-
-            # 清理弱关联
-            await self.association_manager.cleanup_weak_associations()
 
             self.logger.debug(f"记忆清理完成: 删除{deleted_count}条被动记忆")
 
@@ -300,9 +291,6 @@ class MemoryManager:
                 id=memory_id,
                 strength=metadata.get("strength", 1),
                 is_active=metadata.get("is_active", False),
-                associations=BaseMemory._parse_associations(
-                    metadata.get("associations", {})
-                ),
                 memory_scope=metadata.get("memory_scope", "public"),
             )
         except Exception as e:
@@ -453,10 +441,9 @@ class MemoryManager:
             新创建的记忆对象列表
 
         功能：
-        1. 标记有用回忆 → 强化 + 两两建立关联（双向、去重、累加）
-        2. 批量创建新记忆 → 两两建立关联（初始强度1）
-        3. 新记忆和有用回忆建立关联
-        4. 合并重复记忆 → 继承并累加关联
+        1. 标记有用回忆并强化
+        2. 批量创建新记忆
+        3. 合并重复记忆
         """
         useful_memory_ids = useful_memory_ids or []
         new_memories = new_memories or []
@@ -468,27 +455,10 @@ class MemoryManager:
 
         created_memories = []  # 新增：收集创建的记忆对象
 
-        association_cache: Dict[str, MemorySnapshot] = {}
-        if useful_memory_ids:
-            association_cache = self.association_manager.preload_memories(
-                useful_memory_ids
-            )
         if useful_memory_ids:
             # 强化记忆强度
             await self.reinforce_memories(useful_memory_ids)
-
-            # 有用回忆之间两两建立关联（双向、去重、累加）
-            for i in range(len(useful_memory_ids)):
-                for j in range(i + 1, len(useful_memory_ids)):
-                    id1, id2 = useful_memory_ids[i], useful_memory_ids[j]
-                    await self.association_manager._add_or_update_association(
-                        id1, id2, strength_increase=1, cache=association_cache
-                    )
-                    await self.association_manager._add_or_update_association(
-                        id2, id1, strength_increase=1, cache=association_cache
-                    )
         # 2. 批量创建新记忆
-        created_ids = []
         for mem_data in new_memories:
             mem_type = mem_data.get("type", "knowledge")
 
@@ -516,40 +486,13 @@ class MemoryManager:
                 self.logger.warning(f"未找到记忆类型 {mem_type} 的处理器，跳过创建")
 
             if new_memory_object:
-                created_ids.append(new_memory_object.id)
                 created_memories.append(new_memory_object)  # 收集创建的对象
 
                 # 任务记忆特殊状态管理：新任务记忆创建时，将之前最新的任务记忆转为已巩固状态
                 if mem_type == "task":
                     await self._consolidate_previous_task_memory(new_memory_object.id)
 
-        if created_ids:
-            association_cache = self.association_manager.preload_memories(
-                created_ids, association_cache
-            )
-
-        # 3. 新记忆之间两两建立关联（初始强度1）
-        for i in range(len(created_ids)):
-            for j in range(i + 1, len(created_ids)):
-                id1, id2 = created_ids[i], created_ids[j]
-                await self.association_manager._add_or_update_association(
-                    id1, id2, strength_increase=1, cache=association_cache
-                )
-                await self.association_manager._add_or_update_association(
-                    id2, id1, strength_increase=1, cache=association_cache
-                )
-
-        # 4. 新记忆和有用回忆之间建立关联
-        for new_id in created_ids:
-            for useful_id in useful_memory_ids:
-                await self.association_manager._add_or_update_association(
-                    new_id, useful_id, strength_increase=1, cache=association_cache
-                )
-                await self.association_manager._add_or_update_association(
-                    useful_id, new_id, strength_increase=1, cache=association_cache
-                )
-
-        # 5. 合并重复记忆
+        # 3. 合并重复记忆
         for group in merge_groups:
             # 验证格式：必须是列表且至少包含2个元素
             if not isinstance(group, list):

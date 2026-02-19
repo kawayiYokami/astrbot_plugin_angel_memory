@@ -351,7 +351,7 @@ astrbot_plugin_angel_memory/
 │   ├── components/
 │   │   ├── vector_store.py         # 向量存储
 │   │   ├── embedding_provider.py   # 嵌入提供商
-│   │   └── association_manager.py  # 关联管理
+│   │   └── tag_manager.py          # 标签管理
 │   └── models/
 │       └── data_models.py          # 数据模型
 └── tools/                      # LLM工具

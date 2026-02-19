@@ -54,10 +54,6 @@ class MemorySystemConfig:
         default_factory=lambda: int(os.getenv("MEMORY_STRENGTH_THRESHOLD", "2"))
     )
 
-    association_threshold: int = field(
-        default_factory=lambda: int(os.getenv("MEMORY_ASSOCIATION_THRESHOLD", "1"))
-    )
-
     # 检索限制
     default_recall_limit: int = field(
         default_factory=lambda: int(os.getenv("MEMORY_DEFAULT_RECALL_LIMIT", "10"))
@@ -94,8 +90,6 @@ class MemorySystemConfig:
         # 验证配置
         if self.strength_threshold < 1:
             raise ValueError("strength_threshold 必须 >= 1")
-        if self.association_threshold < 0:
-            raise ValueError("association_threshold 必须 >= 0")
         if self.consolidation_interval_hours < 1:
             raise ValueError("consolidation_interval_hours 必须 >= 1")
 
@@ -108,7 +102,6 @@ class MemorySystemConfig:
             "storage_dir": str(self.storage_dir),
             "index_dir": str(self.index_dir),
             "strength_threshold": self.strength_threshold,
-            "association_threshold": self.association_threshold,
             "default_recall_limit": self.default_recall_limit,
             "fresh_recall_limit": self.fresh_recall_limit,
             "consolidated_recall_limit": self.consolidated_recall_limit,
@@ -118,6 +111,9 @@ class MemorySystemConfig:
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "MemorySystemConfig":
         """从字典创建配置"""
+        config_dict = dict(config_dict)
+        # 兼容历史废弃字段，避免旧配置反序列化时报错
+        config_dict.pop("association_threshold", None)
         if "storage_dir" in config_dict:
             config_dict["storage_dir"] = Path(config_dict["storage_dir"])
         if "index_dir" in config_dict:

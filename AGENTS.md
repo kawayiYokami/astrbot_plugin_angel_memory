@@ -219,10 +219,7 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 ### 3. 扩展检索策略
 修改[`chained_recall()`](llm_memory/service/memory_manager.py:183)方法，添加新的检索阶段。
 
-### 4. 增强关联算法
-优化[`AssociationManager`](llm_memory/components/association_manager.py:30)的关联计算逻辑。
-
-### 5. 灵魂系统扩展
+### 4. 灵魂系统扩展
 - **新增能量维度**：扩展SoulState.energy字典添加新维度
 - **自定义映射函数**：替换Tanh函数实现特定映射曲线
 - **状态编码扩展**：扩展16态编码为更多状态表示

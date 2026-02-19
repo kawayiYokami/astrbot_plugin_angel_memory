@@ -14,6 +14,7 @@ from enum import Enum
 from typing import List, Optional
 import uuid
 import time
+import json
 
 from ..config.system_config import KNOWLEDGE_CORE_SEPARATOR
 
@@ -74,7 +75,6 @@ class BaseMemory:
         id: str = None,
         strength: int = 1,
         is_active: bool = False,
-        associations: dict = None,
         created_at: float = None,
         is_consolidated: bool = None,  # 废弃字段，仅保留兼容性
         state_snapshot: dict = None,   # 灵魂状态快照
@@ -87,7 +87,6 @@ class BaseMemory:
         self.tags = tags if isinstance(tags, list) else []
         self.strength = strength
         self.is_active = is_active  # True=主动记忆(不衰减), False=被动记忆(会衰减)
-        self.associations = associations or {}  # 记忆关联字段：{memory_id: strength}
         self.created_at = created_at or time.time()  # 自动记录创建时间
         self.state_snapshot = state_snapshot or {} # 记录生成该记忆时的灵魂状态
         self.memory_scope = memory_scope or "public"
@@ -100,11 +99,6 @@ class BaseMemory:
 
     def to_dict(self) -> dict:
         """转换为字典以进行JSON序列化。"""
-        import json
-
-        # ChromaDB不支持嵌套字典，需要将associations序列化为JSON字符串
-        associations_str = json.dumps(self.associations) if self.associations else "{}"
-
         # 将tags列表转换为字符串以兼容ChromaDB
         tags_str = ", ".join(self.tags) if isinstance(self.tags, list) else ""
 
@@ -116,24 +110,22 @@ class BaseMemory:
             "tags": tags_str,
             "strength": self.strength,
             "is_active": self.is_active,
-            "associations": associations_str,
             "created_at": self.created_at,
             "state_snapshot": json.dumps(self.state_snapshot) if self.state_snapshot else "{}",
             "memory_scope": self.memory_scope,
         }
 
     @staticmethod
-    def _parse_associations(associations_data) -> dict:
-        """解析associations字段（可能是JSON字符串或字典）"""
-        import json
-
-        if isinstance(associations_data, str):
+    def _parse_json_dict(data) -> dict:
+        """解析 JSON 字典字段（可能是JSON字符串或字典）"""
+        if isinstance(data, str):
             try:
-                return json.loads(associations_data)
+                parsed = json.loads(data)
+                return parsed if isinstance(parsed, dict) else {}
             except (json.JSONDecodeError, ValueError):
                 return {}
-        elif isinstance(associations_data, dict):
-            return associations_data
+        elif isinstance(data, dict):
+            return data
         else:
             return {}
 
@@ -187,9 +179,8 @@ class BaseMemory:
                 id=data.get("id", str(uuid.uuid4())),
                 strength=data.get("strength", 1),
                 is_active=data.get("is_active", False),
-                associations=cls._parse_associations(data.get("associations", {})),
                 created_at=data.get("created_at", time.time()),
-                state_snapshot=cls._parse_associations(data.get("state_snapshot", {})), # 复用json解析逻辑
+                state_snapshot=cls._parse_json_dict(data.get("state_snapshot", {})),
                 memory_scope=data.get("memory_scope", "public"),
             )
         except (KeyError, TypeError, ValueError) as e:
