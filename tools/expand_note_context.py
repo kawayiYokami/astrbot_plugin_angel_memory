@@ -77,6 +77,11 @@ class ExpandNoteContextTool(FunctionTool):
         plugin_context = event.plugin_context
 
         try:
+            if plugin_context.get_config("enable_simple_memory", False):
+                return (
+                    "当前处于简化记忆模式（enable_simple_memory=true），"
+                    "笔记检索功能不可用。请关闭简化记忆模式后再使用该工具。"
+                )
             # 获取 note_service
             note_service = plugin_context.get_component("note_service")
             if not note_service:

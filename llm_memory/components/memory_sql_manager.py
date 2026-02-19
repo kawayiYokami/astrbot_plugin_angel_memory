@@ -1,0 +1,430 @@
+from __future__ import annotations
+
+import sqlite3
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+from ..config.system_config import system_config
+from ..models.data_models import BaseMemory, MemoryType, ValidationError
+
+
+class MemorySqlManager:
+    """SimpleMemory 的 SQL 存储管理器。"""
+
+    def __init__(self, db_path: Path):
+        self.logger = logger
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._tag_names: set[str] = set()
+
+        self._init_db()
+        self._load_tag_cache()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS memory_records (
+                    id TEXT PRIMARY KEY,
+                    memory_type TEXT NOT NULL,
+                    judgment TEXT NOT NULL,
+                    reasoning TEXT NOT NULL,
+                    strength INTEGER NOT NULL,
+                    is_active INTEGER NOT NULL,
+                    memory_scope TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS memory_tags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE
+                );
+
+                CREATE TABLE IF NOT EXISTS memory_tag_rel (
+                    memory_id TEXT NOT NULL,
+                    tag_id INTEGER NOT NULL,
+                    UNIQUE(memory_id, tag_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_scope_created_at
+                    ON memory_records(memory_scope, created_at);
+                CREATE INDEX IF NOT EXISTS idx_memory_active_strength
+                    ON memory_records(is_active, strength);
+                CREATE INDEX IF NOT EXISTS idx_memory_tag_rel_tag_memory
+                    ON memory_tag_rel(tag_id, memory_id);
+                """
+            )
+            conn.commit()
+
+    def _load_tag_cache(self) -> None:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT name FROM memory_tags").fetchall()
+            with self._lock:
+                self._tag_names = {str(row["name"]) for row in rows if row["name"]}
+        self.logger.info(f"SimpleMemory 标签缓存加载完成: {len(self._tag_names)} 个")
+
+    @staticmethod
+    def _normalize_scope(memory_scope: str) -> str:
+        scope = str(memory_scope or "").strip()
+        if not scope:
+            raise ValidationError("memory_scope 为空，拒绝执行")
+        return scope
+
+    @staticmethod
+    def _normalize_tags(tags: Iterable[str]) -> List[str]:
+        normalized: List[str] = []
+        seen = set()
+        for tag in tags or []:
+            t = str(tag).strip()
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            normalized.append(t)
+        return normalized
+
+    @staticmethod
+    def _to_memory_type(memory_type: str) -> MemoryType:
+        raw = str(memory_type or "").strip()
+        mapping = {
+            "knowledge": MemoryType.KNOWLEDGE,
+            "event": MemoryType.EVENT,
+            "skill": MemoryType.SKILL,
+            "task": MemoryType.TASK,
+            "emotional": MemoryType.EMOTIONAL,
+        }
+        if raw in mapping:
+            return mapping[raw]
+        try:
+            return MemoryType(raw)
+        except ValueError:
+            return MemoryType.KNOWLEDGE
+
+    @staticmethod
+    def _scope_sql(memory_scope: str, alias: str = "mr") -> Tuple[str, List[str]]:
+        scope = MemorySqlManager._normalize_scope(memory_scope)
+        if scope == "public":
+            return f"{alias}.memory_scope = ?", ["public"]
+        return f"({alias}.memory_scope = ? OR {alias}.memory_scope = 'public')", [scope]
+
+    @staticmethod
+    def _row_to_memory(row: sqlite3.Row, tags: List[str]) -> BaseMemory:
+        return BaseMemory(
+            memory_type=MemorySqlManager._to_memory_type(row["memory_type"]),
+            judgment=row["judgment"],
+            reasoning=row["reasoning"],
+            tags=tags,
+            id=row["id"],
+            strength=int(row["strength"]),
+            is_active=bool(row["is_active"]),
+            created_at=float(row["created_at"]),
+            memory_scope=row["memory_scope"],
+        )
+
+    def _fetch_tags_for_memory_ids(
+        self, conn: sqlite3.Connection, memory_ids: Sequence[str]
+    ) -> Dict[str, List[str]]:
+        if not memory_ids:
+            return {}
+        placeholders = ",".join(["?" for _ in memory_ids])
+        sql = f"""
+            SELECT mtr.memory_id AS memory_id, mt.name AS tag_name
+            FROM memory_tag_rel mtr
+            JOIN memory_tags mt ON mt.id = mtr.tag_id
+            WHERE mtr.memory_id IN ({placeholders})
+        """
+        rows = conn.execute(sql, tuple(memory_ids)).fetchall()
+        result: Dict[str, List[str]] = {mid: [] for mid in memory_ids}
+        for row in rows:
+            memory_id = str(row["memory_id"])
+            tag_name = str(row["tag_name"])
+            result.setdefault(memory_id, []).append(tag_name)
+        return result
+
+    def _upsert_tags_and_bind(
+        self, conn: sqlite3.Connection, memory_id: str, tags: List[str]
+    ) -> None:
+        if tags:
+            conn.executemany(
+                "INSERT OR IGNORE INTO memory_tags(name) VALUES (?)",
+                [(tag,) for tag in tags],
+            )
+            placeholders = ",".join(["?" for _ in tags])
+            rows = conn.execute(
+                f"SELECT id, name FROM memory_tags WHERE name IN ({placeholders})",
+                tuple(tags),
+            ).fetchall()
+            tag_id_by_name = {str(row["name"]): int(row["id"]) for row in rows}
+
+            rel_rows = [
+                (memory_id, tag_id_by_name[tag])
+                for tag in tags
+                if tag in tag_id_by_name
+            ]
+            if rel_rows:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO memory_tag_rel(memory_id, tag_id) VALUES (?, ?)",
+                    rel_rows,
+                )
+            with self._lock:
+                self._tag_names.update(tags)
+
+    async def remember(
+        self,
+        memory_type: str,
+        judgment: str,
+        reasoning: str,
+        tags: List[str],
+        is_active: bool = False,
+        strength: Optional[int] = None,
+        memory_scope: str = "public",
+    ) -> BaseMemory:
+        scope = self._normalize_scope(memory_scope)
+        normalized_tags = self._normalize_tags(tags)
+        now = time.time()
+        memory = BaseMemory(
+            memory_type=self._to_memory_type(memory_type),
+            judgment=str(judgment or "").strip(),
+            reasoning=str(reasoning or "").strip(),
+            tags=normalized_tags,
+            id=str(uuid.uuid4()),
+            strength=int(
+                strength
+                if strength is not None
+                else system_config.default_passive_strength
+            ),
+            is_active=bool(is_active),
+            created_at=now,
+            memory_scope=scope,
+        )
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_records(
+                    id, memory_type, judgment, reasoning, strength, is_active,
+                    memory_scope, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    memory.id,
+                    memory.memory_type.value,
+                    memory.judgment,
+                    memory.reasoning,
+                    memory.strength,
+                    1 if memory.is_active else 0,
+                    scope,
+                    memory.created_at,
+                    now,
+                ),
+            )
+            self._upsert_tags_and_bind(conn, memory.id, normalized_tags)
+            conn.commit()
+
+        return memory
+
+    async def recall_by_tags(
+        self,
+        query: str,
+        limit: int,
+        memory_scope: str,
+    ) -> List[BaseMemory]:
+        scope_sql, scope_params = self._scope_sql(memory_scope)
+        text = str(query or "")
+        with self._lock:
+            matched_tags = [tag for tag in self._tag_names if tag and tag in text]
+
+        if not text.strip():
+            return []
+
+        if not matched_tags:
+            return []
+
+        placeholders = ",".join(["?" for _ in matched_tags])
+        sql = f"""
+            SELECT
+                mr.id,
+                mr.memory_type,
+                mr.judgment,
+                mr.reasoning,
+                mr.strength,
+                mr.is_active,
+                mr.memory_scope,
+                mr.created_at,
+                COUNT(DISTINCT mt.id) AS hit_count,
+                CAST(mr.created_at / 86400 AS INTEGER) AS day_bucket
+            FROM memory_records mr
+            JOIN memory_tag_rel mtr ON mtr.memory_id = mr.id
+            JOIN memory_tags mt ON mt.id = mtr.tag_id
+            WHERE {scope_sql}
+              AND mt.name IN ({placeholders})
+            GROUP BY mr.id
+            ORDER BY hit_count DESC, day_bucket DESC, mr.strength DESC, mr.created_at DESC
+            LIMIT ?
+        """
+
+        params: List[Any] = [*scope_params, *matched_tags, int(limit)]
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+            memory_ids = [str(row["id"]) for row in rows]
+            tags_map = self._fetch_tags_for_memory_ids(conn, memory_ids)
+            memories = [
+                self._row_to_memory(row, tags_map.get(str(row["id"]), []))
+                for row in rows
+            ]
+        return memories
+
+    async def reinforce_memories(self, memory_ids: List[str], delta: int = 3) -> None:
+        ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
+        if not ids:
+            return
+        placeholders = ",".join(["?" for _ in ids])
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE memory_records
+                SET strength = strength + ?, updated_at = ?
+                WHERE id IN ({placeholders})
+                """,
+                tuple([int(delta), now, *ids]),
+            )
+            conn.commit()
+
+    async def decay_memories(self, memory_ids: List[str], delta: int = 1) -> None:
+        ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
+        if not ids:
+            return
+        placeholders = ",".join(["?" for _ in ids])
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE memory_records
+                SET strength = CASE WHEN strength - ? < 0 THEN 0 ELSE strength - ? END,
+                    updated_at = ?
+                WHERE id IN ({placeholders}) AND is_active = 0
+                """,
+                tuple([int(delta), int(delta), now, *ids]),
+            )
+            conn.commit()
+
+    async def consolidate_memories(self) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM memory_records WHERE is_active = 0 AND strength <= 0")
+            conn.execute(
+                """
+                DELETE FROM memory_tag_rel
+                WHERE memory_id NOT IN (SELECT id FROM memory_records)
+                """
+            )
+            conn.commit()
+
+    async def _get_memories_by_ids(self, memory_ids: List[str]) -> List[BaseMemory]:
+        ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
+        if not ids:
+            return []
+        placeholders = ",".join(["?" for _ in ids])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, memory_type, judgment, reasoning, strength,
+                       is_active, memory_scope, created_at
+                FROM memory_records
+                WHERE id IN ({placeholders})
+                """,
+                tuple(ids),
+            ).fetchall()
+            tags_map = self._fetch_tags_for_memory_ids(conn, [str(row["id"]) for row in rows])
+        return [self._row_to_memory(row, tags_map.get(str(row["id"]), [])) for row in rows]
+
+    async def merge_group(self, memory_ids: List[str]) -> Optional[BaseMemory]:
+        memories = await self._get_memories_by_ids(memory_ids)
+        if len(memories) < 2:
+            return None
+
+        non_public_scopes = {
+            str(mem.memory_scope or "public").strip()
+            for mem in memories
+            if str(mem.memory_scope or "public").strip() != "public"
+        }
+        if len(non_public_scopes) > 1:
+            raise ValidationError("禁止合并不同私有分类域的记忆")
+
+        merged_scope = next(iter(non_public_scopes), "public")
+        first = memories[0]
+        merged_strength = sum(mem.strength for mem in memories)
+
+        new_memory = await self.remember(
+            memory_type="knowledge",
+            judgment=first.judgment or "合并记忆",
+            reasoning=first.reasoning or "合并多个相似记忆",
+            tags=first.tags,
+            is_active=False,
+            strength=merged_strength,
+            memory_scope=merged_scope,
+        )
+
+        ids = [mem.id for mem in memories]
+        placeholders = ",".join(["?" for _ in ids])
+        with self._connect() as conn:
+            conn.execute(f"DELETE FROM memory_records WHERE id IN ({placeholders})", tuple(ids))
+            conn.execute(f"DELETE FROM memory_tag_rel WHERE memory_id IN ({placeholders})", tuple(ids))
+            conn.commit()
+
+        return new_memory
+
+    async def process_feedback(
+        self,
+        useful_memory_ids: Optional[List[str]] = None,
+        new_memories: Optional[List[Dict[str, Any]]] = None,
+        merge_groups: Optional[List[List[str]]] = None,
+        memory_scope: str = "public",
+    ) -> List[BaseMemory]:
+        resolved_scope = self._normalize_scope(memory_scope)
+        created_memories: List[BaseMemory] = []
+
+        if useful_memory_ids:
+            await self.reinforce_memories(useful_memory_ids, delta=3)
+
+        for mem_data in (new_memories or []):
+            judgment = str(mem_data.get("judgment") or "").strip()
+            reasoning = str(mem_data.get("reasoning") or "").strip()
+            if not judgment or not reasoning:
+                continue
+            memory = await self.remember(
+                memory_type=str(mem_data.get("type") or "knowledge"),
+                judgment=judgment,
+                reasoning=reasoning,
+                tags=mem_data.get("tags") or [],
+                is_active=bool(mem_data.get("is_active", False)),
+                strength=mem_data.get("strength"),
+                memory_scope=resolved_scope,
+            )
+            created_memories.append(memory)
+
+        for group in (merge_groups or []):
+            if not isinstance(group, list) or len(group) < 2:
+                continue
+            merged = await self.merge_group(group)
+            if merged:
+                created_memories.append(merged)
+
+        return created_memories
