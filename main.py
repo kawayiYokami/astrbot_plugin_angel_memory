@@ -93,6 +93,8 @@ class AngelMemoryPlugin(Star):
         self.deepmind = None
         self.note_service = None
         self.file_monitor = None
+        # 会话ID日志提示：插件启动后每个会话只提示一次（群聊/私聊统一）
+        self._conversation_id_logged_once: set[str] = set()
 
         # 3. 在主线程获取完整配置（包含提供商信息）
         self._load_complete_config()
@@ -202,6 +204,7 @@ class AngelMemoryPlugin(Star):
             request: LLM请求对象
         """
         self.logger.debug("开始执行 on_llm_request")
+        self._log_group_id_once(event)
         try:
             # 检查LLM工具是否可用
             if not self.are_llm_tools_enabled():
@@ -230,6 +233,22 @@ class AngelMemoryPlugin(Star):
 
         except (AttributeError, ValueError, RuntimeError) as e:
             self.logger.error(f"LLM_REQUEST failed: {e}")
+
+    def _log_group_id_once(self, event: AstrMessageEvent) -> None:
+        """插件启动后每个会话仅记录一次会话ID，便于用户确认配置键。"""
+        try:
+            conversation_id = str(getattr(event, "unified_msg_origin", "") or "").strip()
+            if not conversation_id:
+                return
+            if conversation_id in self._conversation_id_logged_once:
+                return
+
+            self._conversation_id_logged_once.add(conversation_id)
+            self.logger.info(
+                f"[会话分类提示] 当前会话ID键: {conversation_id}。可在配置中设置 conversation_scope_map: {{\"{conversation_id}\": \"家人\"}}"
+            )
+        except Exception as e:
+            self.logger.debug(f"会话ID日志记录失败（已忽略）: {e}")
 
     @filter.on_llm_response(priority=-100)
     async def on_llm_response(self, event: AstrMessageEvent, response):

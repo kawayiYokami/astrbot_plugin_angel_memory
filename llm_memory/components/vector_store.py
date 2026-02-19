@@ -244,6 +244,26 @@ class VectorStore:
             metadatas=memory.to_dict(),
         )
 
+    @staticmethod
+    def _build_query_where_clause(where_filter: Optional[dict]) -> Optional[dict]:
+        """
+        统一组装 Chroma where 条件。
+
+        约定：
+        - 顶层已是操作符（如 $and/$or）时，直接透传。
+        - 普通 KV 条件按历史逻辑拼接。
+        """
+        if not where_filter:
+            return None
+
+        if any(str(key).startswith("$") for key in where_filter.keys()):
+            return where_filter
+
+        if len(where_filter) == 1:
+            return where_filter
+
+        return {"$and": [{k: v} for k, v in where_filter.items()]}
+
     async def recall(
         self,
         collection,
@@ -282,13 +302,9 @@ class VectorStore:
         }
 
         # 如果提供了过滤器,则添加到查询参数
-        if where_filter:
-            if len(where_filter) == 1:
-                query_params["where"] = where_filter
-            else:
-                query_params["where"] = {
-                    "$and": [{k: v} for k, v in where_filter.items()]
-                }
+        where_clause = self._build_query_where_clause(where_filter)
+        if where_clause:
+            query_params["where"] = where_clause
 
         # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
         results = collection.query(**query_params)
@@ -360,13 +376,9 @@ class VectorStore:
         }
 
         # 如果提供了过滤器,则添加到查询参数
-        if where_filter:
-            if len(where_filter) == 1:
-                query_params["where"] = where_filter
-            else:
-                query_params["where"] = {
-                    "$and": [{k: v} for k, v in where_filter.items()]
-                }
+        where_clause = self._build_query_where_clause(where_filter)
+        if where_clause:
+            query_params["where"] = where_clause
 
         # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
         results = collection.query(**query_params)
@@ -1254,13 +1266,9 @@ class VectorStore:
         query_params = {"query_embeddings": [vector], "n_results": limit}
 
         # 如果提供了过滤器,则添加到查询参数
-        if where_filter:
-            if len(where_filter) == 1:
-                query_params["where"] = where_filter
-            else:
-                query_params["where"] = {
-                    "$and": [{k: v} for k, v in where_filter.items()]
-                }
+        where_clause = self._build_query_where_clause(where_filter)
+        if where_clause:
+            query_params["where"] = where_clause
 
         # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
         results = collection.query(**query_params)
@@ -1344,13 +1352,9 @@ class VectorStore:
         query_params = {"query_embeddings": [query_embedding], "n_results": limit}
 
         # 如果提供了过滤器,则添加到查询参数
-        if where_filter:
-            if len(where_filter) == 1:
-                query_params["where"] = where_filter
-            else:
-                query_params["where"] = {
-                    "$and": [{k: v} for k, v in where_filter.items()]
-                }
+        where_clause = self._build_query_where_clause(where_filter)
+        if where_clause:
+            query_params["where"] = where_clause
 
         # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
         results = collection.query(**query_params)

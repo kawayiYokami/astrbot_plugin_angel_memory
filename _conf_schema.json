@@ -24,6 +24,15 @@
     "default": false,
     "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5，模型本体约96MB）。首次使用会自动安装运行依赖（如torch、sentence-transformers），总体占用通常为数百MB（与平台环境相关）。"
   },
+  "conversation_scope_map": {
+    "type": "text",
+    "description": "[记忆分类] 会话ID到记忆分类域的映射",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark",
+    "hint": "JSON格式配置，键为会话ID，值为记忆分类域。示例：{\"aiocqhttp:group:12345\":\"家人\",\"aiocqhttp:friend:67890\":\"公司\"}。未配置会话默认 public。scope 名仅允许字母/数字/中文/下划线/短横线。"
+  },
   "memory_behavior": {
     "type": "object",
     "description": "[记忆行为参数] 记忆系统的行为配置",

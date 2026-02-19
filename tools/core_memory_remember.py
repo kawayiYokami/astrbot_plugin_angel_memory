@@ -95,9 +95,11 @@ class CoreMemoryRememberTool(FunctionTool):
             cognitive_service: CognitiveService = plugin_context.get_component("cognitive_service")
             if not cognitive_service:
                 raise ValueError("CognitiveService 未在 PluginContext 中注册。")
+            conversation_id = plugin_context.get_event_conversation_id(event)
+            memory_scope = plugin_context.resolve_memory_scope(conversation_id)
         except Exception as e:
-            self.logger.error(f"{self.name}: 无法获取 CognitiveService 实例: {e}")
-            return "错误：内部服务错误，无法初始化记忆系统。"
+            self.logger.error(f"{self.name}: 无法获取上下文信息或 CognitiveService 实例: {e}")
+            return "错误：无法确定当前会话ID，记忆写入已拒绝（严格隔离模式）。"
 
         # --- 调用服务 ---
         try:
@@ -108,6 +110,7 @@ class CoreMemoryRememberTool(FunctionTool):
                 tags=tags,
                 strength=strength,
                 is_active=True,
+                memory_scope=memory_scope,
             )
             self.logger.info(f"{self.name}: 成功铭记记忆。ID: {memory_id}, judgment='{judgment[:50]}...', strength={strength}")
             return f"好的，我已将关于「{judgment}」的论断铭记于心，重要性设为 {strength}。记忆ID: {memory_id}"

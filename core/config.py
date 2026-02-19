@@ -184,6 +184,7 @@ class MemoryConfig:
             max_value=64000,
         )
         self._enable_local_embedding = config_get("enable_local_embedding", False)
+        self._conversation_scope_map = config_get("conversation_scope_map", {}) or {}
 
         # 灵魂系统配置 - 支持新旧格式兼容
         # 新格式：enable_soul_system.enabled, enable_soul_system.recall_depth_mid
@@ -336,6 +337,11 @@ class MemoryConfig:
         return self._enable_local_embedding
 
     @property
+    def conversation_scope_map(self) -> Dict[str, Any]:
+        """会话ID到记忆分类域的映射表（原始值，校验由PluginContext负责）。"""
+        return self._conversation_scope_map
+
+    @property
     def enable_soul_system(self) -> bool:
         """是否启用灵魂系统"""
         return self._enable_soul_system
@@ -390,6 +396,7 @@ class MemoryConfig:
             "sleep_interval": self.sleep_interval,
             "default_passive_strength": self.default_passive_strength,
             "enable_local_embedding": self.enable_local_embedding,
+            "conversation_scope_map": self.conversation_scope_map,
             "enable_soul_system": self.enable_soul_system,
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,

@@ -8,6 +8,7 @@ BackgroundInitializer - 后台初始化器（异步版本）
 import asyncio
 from .initialization_manager import InitializationManager
 from .component_factory import ComponentFactory
+from .migrations.memory_scope_migration import MemoryScopeMigration
 
 try:
     from astrbot.api import logger
@@ -37,6 +38,7 @@ class BackgroundInitializer:
         self.logger = logger
         self.config = config
         self.plugin_context = plugin_context
+        self._migration_tasks = []
 
         self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
         self.logger.info(
@@ -106,6 +108,24 @@ class BackgroundInitializer:
             components = await self.component_factory.create_all_components(self.config)
             self.logger.info("✅ 所有组件在当前事件循环中创建完成")
 
+            # 后台迁移：补齐历史缺失 memory_scope 的记录（不阻塞启动）
+            cognitive_service = components.get("cognitive_service")
+            if cognitive_service and hasattr(cognitive_service, "main_collection"):
+                async def _run_memory_scope_migration():
+                    try:
+                        migrator = MemoryScopeMigration(self.logger)
+                        await migrator.migrate_missing_memory_scope(
+                            collection=cognitive_service.main_collection
+                        )
+                    except Exception as e:
+                        self.logger.error(f"❌ memory_scope 后台迁移失败: {e}", exc_info=True)
+
+                migration_task = asyncio.create_task(_run_memory_scope_migration())
+                self._migration_tasks.append(migration_task)
+                self.logger.info("🛠️ memory_scope 后台迁移任务已调度（异步分离）")
+            else:
+                self.logger.warning("⚠️ memory_scope 迁移跳过：cognitive_service/main_collection 不可用")
+
             embedding_provider = components.get("embedding_provider")
             if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):
                 embedding_provider.clear_and_disable_cache()
@@ -140,6 +160,13 @@ class BackgroundInitializer:
         if self.background_task and not self.background_task.done():
             self.background_task.cancel()
             self.logger.info("后台初始化任务已取消")
+
+        # 取消后台迁移任务（如果仍在运行）
+        for task in self._migration_tasks:
+            if task and not task.done():
+                task.cancel()
+        if self._migration_tasks:
+            self.logger.info("后台迁移任务已取消")
 
         # 关闭所有由ComponentFactory创建的组件
         if self.component_factory:

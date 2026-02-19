@@ -61,9 +61,11 @@ class CoreMemoryRecallTool(FunctionTool):
             cognitive_service: CognitiveService = plugin_context.get_component("cognitive_service")
             if not cognitive_service:
                 raise ValueError("CognitiveService 未在 PluginContext 中注册。")
+            conversation_id = plugin_context.get_event_conversation_id(event)
+            memory_scope = plugin_context.resolve_memory_scope(conversation_id)
         except Exception as e:
-            self.logger.error(f"{self.name}: 无法获取 CognitiveService 实例: {e}")
-            return "错误：内部服务错误，无法初始化记忆系统。"
+            self.logger.error(f"{self.name}: 无法获取上下文信息或 CognitiveService 实例: {e}")
+            return "错误：无法确定当前会话ID，主动回忆已拒绝（严格隔离模式）。"
 
         # --- 调用服务 ---
         try:
@@ -72,7 +74,8 @@ class CoreMemoryRecallTool(FunctionTool):
             all_memories: List[BaseMemory] = await cognitive_service.memory_manager.comprehensive_recall(
                 query=query or "",
                 limit=candidate_limit,
-                event=event
+                event=event,
+                memory_scope=memory_scope,
             )
 
             all_active_memories = [mem for mem in all_memories if mem.is_active]

@@ -41,7 +41,15 @@ class MemoryHandler:
         self.system_config = global_system_config
 
 
-    async def remember(self, judgment: str, reasoning: str, tags: List[str], is_active: bool = False, strength: Optional[int] = None) -> BaseMemory:
+    async def remember(
+        self,
+        judgment: str,
+        reasoning: str,
+        tags: List[str],
+        is_active: bool = False,
+        strength: Optional[int] = None,
+        memory_scope: str = "public",
+    ) -> BaseMemory:
         """
         记住一条记忆。
 
@@ -64,6 +72,7 @@ class MemoryHandler:
             tags=tags,
             is_active=is_active,
             strength=actual_strength, # 将实际强度传递给 BaseMemory 构造函数
+            memory_scope=memory_scope,
         )
         await self.store.remember(self.collection, memory)
         return memory
@@ -74,6 +83,7 @@ class MemoryHandler:
         limit: int = 10,
         include_consolidated: bool = True,
         similarity_threshold: float = 0.6,
+        memory_scope: Optional[str] = None,
     ) -> List[BaseMemory]:
         """
         回忆相关记忆。
@@ -87,9 +97,20 @@ class MemoryHandler:
         Returns:
             相关的记忆列表
         """
-        where_filter = {"memory_type": self.memory_type.value}
+        clauses = [{"memory_type": self.memory_type.value}]
         if not include_consolidated:
-            where_filter["is_consolidated"] = False
+            clauses.append({"is_consolidated": False})
+
+        scope = str(memory_scope or "").strip()
+        if scope:
+            if scope == "public":
+                clauses.append({"memory_scope": "public"})
+            else:
+                clauses.append(
+                    {"$or": [{"memory_scope": scope}, {"memory_scope": "public"}]}
+                )
+
+        where_filter = clauses[0] if len(clauses) == 1 else {"$and": clauses}
         return await self.store.recall(
             self.collection,
             query,

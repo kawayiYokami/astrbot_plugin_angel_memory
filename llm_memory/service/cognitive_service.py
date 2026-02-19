@@ -112,7 +112,14 @@ class CognitiveService:
     # ===== 记忆接口 =====
 
     async def remember(
-        self, memory_type: str, judgment: str, reasoning: str, tags: List[str], is_active: bool = False, strength: Optional[int] = None
+        self,
+        memory_type: str,
+        judgment: str,
+        reasoning: str,
+        tags: List[str],
+        is_active: bool = False,
+        strength: Optional[int] = None,
+        memory_scope: str = "public",
     ) -> str:
         """
         记住一条记忆。
@@ -129,7 +136,9 @@ class CognitiveService:
             创建的记忆ID
         """
         handler = self.memory_handler_factory.get_handler(memory_type)
-        memory = await handler.remember(judgment, reasoning, tags, is_active, strength)
+        memory = await handler.remember(
+            judgment, reasoning, tags, is_active, strength, memory_scope
+        )
         return memory.id
 
     async def recall(
@@ -138,6 +147,7 @@ class CognitiveService:
         query: str,
         limit: int = 10,
         include_consolidated: bool = True,
+        memory_scope: Optional[str] = None,
     ) -> List[BaseMemory]:
         """
         回忆记忆。
@@ -152,16 +162,27 @@ class CognitiveService:
             记忆列表
         """
         handler = self.memory_handler_factory.get_handler(memory_type)
-        return await handler.recall(query, limit, include_consolidated)
+        return await handler.recall(
+            query, limit, include_consolidated, memory_scope=memory_scope
+        )
 
     # ===== 高级记忆功能 =====
 
     async def comprehensive_recall(
-        self, query: str, fresh_limit: int = None, consolidated_limit: int = None
+        self,
+        query: str,
+        fresh_limit: int = None,
+        event=None,
+        vector: Optional[List[float]] = None,
+        memory_scope: str = "public",
     ) -> List[BaseMemory]:
         """实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容"""
         return await self.memory_manager.comprehensive_recall(
-            query, fresh_limit, consolidated_limit
+            query=query,
+            limit=fresh_limit,
+            event=event,
+            vector=vector,
+            memory_scope=memory_scope,
         )
 
     async def consolidate_memories(self):
@@ -169,7 +190,15 @@ class CognitiveService:
         return await self.memory_manager.consolidate_memories()
 
     async def chained_recall(
-        self, query: str, entities: List[str], per_type_limit: int = 7, final_limit: int = 7, vector: Optional[List[float]] = None, event=None, memory_handlers: Dict[str, Any] = None
+        self,
+        query: str,
+        entities: List[str],
+        per_type_limit: int = 7,
+        final_limit: int = 7,
+        vector: Optional[List[float]] = None,
+        event=None,
+        memory_handlers: Dict[str, Any] = None,
+        memory_scope: str = "public",
     ) -> Dict[str, List[BaseMemory]]:
         """链式多通道回忆 - 基于关联网络的多轮回忆
 
@@ -193,7 +222,8 @@ class CognitiveService:
             final_limit=final_limit, 
             memory_handlers=memory_handlers, 
             vector=vector,
-            event=event
+            event=event,
+            memory_scope=memory_scope,
         )
 
     async def feedback(
@@ -201,11 +231,16 @@ class CognitiveService:
         useful_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
         merge_groups: List[List[str]] = None,
+        memory_scope: str = "public",
     ) -> List[BaseMemory]:
         """统一反馈接口 - 处理回忆后的反馈（核心工作流）"""
         memory_handlers = self.memory_handler_factory.handlers
         return await self.memory_manager.process_feedback(
-            useful_memory_ids, new_memories, merge_groups, memory_handlers
+            useful_memory_ids,
+            new_memories,
+            merge_groups,
+            memory_handlers,
+            memory_scope=memory_scope,
         )
 
     # ===== 管理功能 =====
