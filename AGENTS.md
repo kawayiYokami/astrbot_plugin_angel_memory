@@ -27,6 +27,13 @@
 - 通过[`PluginContext`](core/plugin_context.py:23)统一资源管理
 - 组件间依赖关系清晰，便于测试和维护
 
+### 统一记忆运行时
+通过[`MemoryRuntime`](core/memory_runtime/protocol.py)协议统一记忆接口：
+- **VectorMemoryRuntime**：向量实现，内部委托`CognitiveService`
+- **SimpleMemoryRuntime**：SQL+tags实现，基于`MemorySqlManager`
+- `ComponentFactory`根据`enable_simple_memory`开关在初始化时选择实现
+- 上层（DeepMind/tools）仅依赖统一接口，不感知底层实现
+
 ### 异步初始化架构
 采用「极速启动+后台预初始化」模式：
 - [`InitializationManager`](core/initialization_manager.py:29)管理状态转换
@@ -38,27 +45,32 @@
 ### LLM工具调用流程
 ```
 LLM决策调用工具 → FunctionTool.run()
-→ 从event.plugin_context获取服务实例
-→ 调用CognitiveService/NoteService/DeepMind
+→ 从event.plugin_context获取memory_runtime组件
+→ 调用统一记忆接口（MemoryRuntime）
 → 返回结果给LLM
 ```
 
 ### 记忆存储流程
 ```
 用户输入 → DeepMind.organize_and_inject_memories()
-→ 向量化存储 → ChromaDB → 建立关联网络
+→ memory_runtime.remember() → 底层实现（向量/SQL）
 ```
 
 ### 记忆检索流程
 ```
-查询输入 → 预处理(实体提取) → 链式召回
-→ 向量检索+FlashRank语义重排 → 结果融合
+查询输入 → 预处理(实体提取) → memory_runtime.chained_recall()
+→ 向量模式（VectorMemoryRuntime）：
+  向量相似度检索 → FlashRank语义重排 → 实体优先召回 → 类型分组 → 结果融合
+→ Simple模式（SimpleMemoryRuntime）：
+  实体提取结果会并入查询词（query + entities）后执行标签子串匹配
+  当前不执行 FlashRank 语义重排；保留实体优先与类型分组阶段；最终返回合并结果
+  排序依据为命中次数/日期桶/强度（SQL侧排序）
 ```
 
 ### 记忆反馈流程
 ```
 LLM响应 → DeepMind.async_analyze_and_update_memory()
-→ 小模型分析 → 记忆强化/新增/合并 → 睡眠巩固
+→ 小模型分析 → memory_runtime.feedback() → 记忆强化/新增/合并 → 睡眠巩固
 ```
 
 ### 灵魂状态流程
@@ -118,13 +130,12 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - **错误处理**：友好的错误提示，指导LLM正确使用工具
 
 ### 存储层
-- **ChromaDB**：向量数据库，存储记忆和笔记
-- **SQLite**：标签管理、文件索引、关联网络
+- **ChromaDB**：向量数据库，存储记忆和笔记（向量模式）
+- **SQLite**：标签管理、文件索引、SimpleMemory存储（`MemorySqlManager`）
 
 ### 检索层
-- **语义检索**：向量相似度+FlashRank重排
-- **链式召回**：基于实体和类型的分阶段检索
-- **关联网络**：记忆间的双向关联图
+- **向量模式**：语义检索（向量相似度+FlashRank重排）+ 链式召回（实体优先+类型分组）
+- **Simple模式**：标签子串匹配 → 命中次数/日期/强度排序
 
 ### 嵌入层
 - **本地模型**：SentenceTransformers（BAAI/bge-small-zh-v1.5）
@@ -177,7 +188,12 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - 批量处理提升性能
 - 失败重试保证可靠性
 
-### 6. 文件监控与笔记系统
+### 6. 向量↔Simple双向同步
+- **备份（向量→SQL）**：每次睡眠巩固后，自动将向量库记忆备份到`simple_memory.db`
+- **回灌（SQL→向量）**：在睡眠维护管线中按模式/供应商变更条件触发，将SQL库中缺失的记忆回灌到向量库并重新向量化
+- 实现供应商无关的记忆持久化，切换嵌入模型不丢数据
+
+### 7. 文件监控与笔记系统
 - 自动监控文档变化，实时更新索引
 - 支持Markdown、文本等多种格式
 - 与记忆系统协同，提供结构化知识库
