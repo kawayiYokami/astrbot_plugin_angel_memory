@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import threading
 import time
@@ -386,6 +387,53 @@ class MemorySqlManager:
             "upserted": upserted,
             "failed": failed,
         }
+
+    async def list_all_memories_for_vector_sync(self) -> List[Dict[str, Any]]:
+        """导出 simple 库全部记忆（含 tags）用于向量回灌。"""
+        return await asyncio.to_thread(self._list_all_memories_for_vector_sync_sync)
+
+    def _list_all_memories_for_vector_sync_sync(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            sql = """
+                SELECT
+                    mr.id,
+                    mr.memory_type,
+                    mr.judgment,
+                    mr.reasoning,
+                    mr.strength,
+                    mr.is_active,
+                    mr.memory_scope,
+                    mr.created_at,
+                    IFNULL(tags.tags_text, '') AS tags
+                FROM memory_records mr
+                LEFT JOIN (
+                    SELECT
+                        mtr.memory_id AS memory_id,
+                        GROUP_CONCAT(mt.name, ', ') AS tags_text
+                    FROM memory_tag_rel mtr
+                    JOIN memory_tags mt ON mt.id = mtr.tag_id
+                    GROUP BY mtr.memory_id
+                ) tags ON tags.memory_id = mr.id
+                ORDER BY mr.created_at DESC
+            """
+            rows = conn.execute(sql).fetchall()
+
+        records: List[Dict[str, Any]] = []
+        for row in rows:
+            records.append(
+                {
+                    "id": row["id"],
+                    "memory_type": row["memory_type"],
+                    "judgment": row["judgment"],
+                    "reasoning": row["reasoning"],
+                    "strength": int(row["strength"] or 1),
+                    "is_active": bool(row["is_active"]),
+                    "memory_scope": row["memory_scope"] or "public",
+                    "created_at": float(row["created_at"] or 0),
+                    "tags": BaseMemory._parse_tags(row["tags"] or ""),
+                }
+            )
+        return records
 
     async def recall_by_tags(
         self,
