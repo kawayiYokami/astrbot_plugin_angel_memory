@@ -6,12 +6,6 @@ import ast
 from typing import List, Dict, Any
 from .embedding import create_embedding_function
 
-try:
-    from flashrank import Ranker, RerankRequest
-    FLASHRANK_AVAILABLE = True
-except ImportError:
-    FLASHRANK_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
 
 class DBManager:
@@ -24,7 +18,6 @@ class DBManager:
         self.tag_conn = None
         self._connect()
         self._connect_tag_db()
-        self.ranker = Ranker() if FLASHRANK_AVAILABLE else None
 
     def _connect_tag_db(self):
         """Connect to SQLite Tag Database."""
@@ -77,17 +70,28 @@ class DBManager:
         colls = self.client.list_collections()
         return [c.name for c in colls]
 
-    def query_collections(self, query_text: str, collection_names: List[str], n_results: int = 5, use_flashrank: bool = False, flashrank_ratio: float = 0.0) -> Dict[str, List[Dict[str, Any]]]:
+    def query_collections(
+        self,
+        query_text: str,
+        collection_names: List[str],
+        n_results: int = 5,
+        where_filter: Dict[str, Any] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
         results = {}
         for name in collection_names:
             try:
                 collection = self.client.get_collection(name=name, embedding_function=self.embedding_fn)
 
-                candidate_limit = n_results * 5  # Get more candidates for re-ranking
+                query_params = {
+                    "query_texts": [query_text],
+                    "n_results": n_results,
+                    "include": ["documents", "metadatas", "distances"],
+                }
+                if where_filter:
+                    query_params["where"] = where_filter
+
                 initial_results = collection.query(
-                    query_texts=[query_text],
-                    n_results=candidate_limit,
-                    include=["documents", "metadatas", "distances"]
+                    **query_params
                 )
 
                 if not initial_results['ids'] or not initial_results['ids'][0]:
@@ -99,58 +103,16 @@ class DBManager:
                 metas = initial_results['metadatas'][0]
                 dists = initial_results['distances'][0]
 
-                # Prepare for re-ranking
-                passages = [{"id": str(_id), "text": doc} for _id, doc in zip(ids, docs)]
-
-                reranked_passages = []
-                if use_flashrank and FLASHRANK_AVAILABLE and self.ranker:
-                    try:
-                        rerank_request = RerankRequest(query=query_text, passages=passages)
-                        reranked_passages = self.ranker.rerank(rerank_request)
-                    except Exception as e:
-                        logger.error(f"FlashRank failed for collection {name}: {e}. Falling back to vector search.")
-                        reranked_passages = [] # Reset to fallback
-
-                # Merge results
                 formatted_res = []
-                if reranked_passages:
-                    # Build a map from id to original data
-                    original_data_map = {
-                        str(_id): {"meta": meta, "dist": dist, "base_score": max(0.0, 1.0 - (dist / 2.0))}
-                        for _id, meta, dist in zip(ids, metas, dists)
-                    }
-
-                    for p in reranked_passages[:n_results]:
-                        orig = original_data_map.get(p['id'])
-                        if not orig:
-                            continue
-
-                        base_score = orig['base_score']
-                        rerank_score = p['score']
-                        final_score = (base_score * (1 - flashrank_ratio)) + (rerank_score * flashrank_ratio)
-
-                        formatted_res.append({
-                            "id": p['id'],
-                            "document": p['text'],
-                            "metadata": orig['meta'],
-                            "distance": orig['dist'],
-                            "score": final_score,
-                            "base_score": base_score,
-                            "rerank_score": rerank_score
-                        })
-
-                else: # Fallback to standard vector search
-                    for i, _id in enumerate(ids[:n_results]):
-                        base_score = max(0.0, 1.0 - (dists[i] / 2.0))
-                        formatted_res.append({
-                            "id": _id,
-                            "document": docs[i] if docs else "",
-                            "metadata": metas[i] if (metas and metas[i]) else {},
-                            "distance": dists[i] if dists else 0.0,
-                            "score": base_score,
-                            "base_score": base_score,
-                            "rerank_score": 0.0
-                        })
+                for i, _id in enumerate(ids[:n_results]):
+                    base_score = max(0.0, 1.0 - (dists[i] / 2.0))
+                    formatted_res.append({
+                        "id": _id,
+                        "document": docs[i] if docs else "",
+                        "metadata": metas[i] if (metas and metas[i]) else {},
+                        "distance": dists[i] if dists else 0.0,
+                        "score": base_score,
+                    })
 
                 results[name] = formatted_res
 
@@ -167,14 +129,26 @@ class DBManager:
         except Exception:
             return {"count": 0}
 
-    def browse_collection(self, collection_name: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+    def browse_collection(
+        self,
+        collection_name: str,
+        limit: int = 10,
+        offset: int = 0,
+        where_filter: Dict[str, Any] = None,
+    ) -> List[Dict[str, Any]]:
         """Browse items in a collection without query."""
         try:
             collection = self.client.get_collection(name=collection_name)
+            get_params = {
+                "limit": limit,
+                "offset": offset,
+                "include": ["documents", "metadatas"],
+            }
+            if where_filter:
+                get_params["where"] = where_filter
+
             res = collection.get(
-                limit=limit,
-                offset=offset,
-                include=["documents", "metadatas"]
+                **get_params
             )
 
             formatted = []

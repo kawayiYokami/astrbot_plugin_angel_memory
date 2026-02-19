@@ -77,7 +77,24 @@ with st.sidebar:
 
 # --- 3. 主界面逻辑 ---
 
-def render_item(item, type="memory", use_flashrank=False):
+def build_scope_where_filter(scope_mode: str, scope_name: str):
+    """构建 memory_scope 过滤条件。"""
+    mode = (scope_mode or "").strip()
+    scope = (scope_name or "").strip()
+
+    if mode == "不筛选":
+        return None
+    if mode == "仅 public":
+        return {"memory_scope": "public"}
+    if not scope:
+        return {"memory_scope": "public"}
+    if mode == "scope + public":
+        return {"$or": [{"memory_scope": scope}, {"memory_scope": "public"}]}
+    if mode == "仅 scope":
+        return {"memory_scope": scope}
+    return None
+
+def render_item(item, type="memory"):
     """智能渲染单个条目"""
     meta = item.get('metadata', {}) or {}
     doc = item.get('document')
@@ -122,24 +139,14 @@ def render_item(item, type="memory", use_flashrank=False):
     if meta.get('tags'):
         header_parts.append(f"🔖 {meta['tags']}")
 
-    # 标签 (ID格式，需要解析) - FlashRank 可选
+    # 标签 (ID格式)
     tag_ids = meta.get('tag_ids')
     if tag_ids:
-        # If FlashRank is used, it might be a list, otherwise might be a string.
         if isinstance(tag_ids, list):
              tag_ids_str = str(tag_ids)
         else:
              tag_ids_str = tag_ids
 
-        header_parts.append(f"🔖 {tag_ids_str}")
-
-    # FlashRank 可选显示
-    if use_flashrank and item.get('final_ranked_score'):
-        # 显示原始分数和重排后分数
-        original_score = item.get('original_score', 0.0)
-        final_score = item.get('final_ranked_score', 0.0)
-        header_parts.append(f"⚖️ 向量分: {original_score:.3f} | 重排: {final_score:.3f}")
-    elif tag_ids and not use_flashrank:
         header_parts.append(f"🔖 {tag_ids_str}")
 
     # 标签 (文本格式)
@@ -166,10 +173,17 @@ def render_item(item, type="memory", use_flashrank=False):
 if mode == "🔍 混合检索":
     st.subheader("🔍 语义与关键词检索")
 
-    # FlashRank 控制
     with st.sidebar:
-        use_flashrank = st.checkbox("启用 FlashRank 重排", value=False, help="对向量检索结果进行重排序")
-        flashrank_weight = st.slider("重排权重", min_value=0.0, max_value=1.0, value=0.5, help="越高越信赖FlashRank结果，越低越信赖向量相似度")
+        st.divider()
+        st.caption("记忆 scope 过滤（仅作用于记忆集合）")
+        scope_mode = st.selectbox(
+            "scope 过滤模式",
+            ["不筛选", "仅 public", "scope + public", "仅 scope"],
+            index=0
+        )
+        scope_name = st.text_input("scope 名称", value="", placeholder="例如：家人")
+
+    memory_scope_filter = build_scope_where_filter(scope_mode, scope_name)
 
     query = st.text_input("输入查询内容", placeholder="例如：海豹的性格、关于绝区零的笔记...")
 
@@ -180,7 +194,12 @@ if mode == "🔍 混合检索":
         with col1:
             st.info("🧠 记忆库匹配")
             if mem_cols:
-                results = db_mgr.query_collections(query, mem_cols, n_results=5, use_flashrank=use_flashrank, flashrank_ratio=flashrank_weight)
+                results = db_mgr.query_collections(
+                    query,
+                    mem_cols,
+                    n_results=5,
+                    where_filter=memory_scope_filter,
+                )
                 found = False
                 for c_name, items in results.items():
                     if items:
@@ -191,7 +210,7 @@ if mode == "🔍 混合检索":
                             color = "green" if score > 0.7 else "orange"
                             with st.container(border=True):
                                 st.markdown(f"**最终得分:** :{color}[{score:.3f}]")
-                                render_item(item, type="memory", use_flashrank=use_flashrank)
+                                render_item(item, type="memory")
                                 with st.expander("元数据"):
                                     st.json(item['metadata'])
                 if not found:
@@ -203,7 +222,7 @@ if mode == "🔍 混合检索":
         with col2:
             st.success("📝 笔记库匹配")
             if note_cols:
-                results = db_mgr.query_collections(query, note_cols, n_results=5, use_flashrank=use_flashrank, flashrank_ratio=flashrank_weight)
+                results = db_mgr.query_collections(query, note_cols, n_results=5)
                 found = False
                 for c_name, items in results.items():
                     if items:
@@ -213,7 +232,7 @@ if mode == "🔍 混合检索":
                             score = item['score']
                             with st.container(border=True):
                                 st.markdown(f"**最终得分:** {score:.3f}")
-                                render_item(item, type="note", use_flashrank=use_flashrank)
+                                render_item(item, type="note")
                                 with st.expander("元数据"):
                                     st.json(item.get('metadata'))
                 if not found:
@@ -233,6 +252,22 @@ elif mode == "📖 浏览记忆":
         st.stop()
 
     selected_col = st.selectbox("选择集合", mem_cols)
+    col_f1, col_f2 = st.columns([2, 3])
+    with col_f1:
+        browse_scope_mode = st.selectbox(
+            "scope 过滤模式",
+            ["不筛选", "仅 public", "scope + public", "仅 scope"],
+            index=0,
+            key="browse_scope_mode"
+        )
+    with col_f2:
+        browse_scope_name = st.text_input(
+            "scope 名称",
+            value="",
+            placeholder="例如：家人",
+            key="browse_scope_name"
+        )
+    browse_scope_filter = build_scope_where_filter(browse_scope_mode, browse_scope_name)
 
     # 分页逻辑
     stats = db_mgr.get_collection_stats(selected_col)
@@ -245,7 +280,12 @@ elif mode == "📖 浏览记忆":
         page = st.number_input(f"页码 (共 {total_pages} 页)", min_value=1, max_value=max(1, total_pages), value=1)
 
     offset = (page - 1) * page_size
-    items = db_mgr.browse_collection(selected_col, limit=page_size, offset=offset)
+    items = db_mgr.browse_collection(
+        selected_col,
+        limit=page_size,
+        offset=offset,
+        where_filter=browse_scope_filter,
+    )
 
     st.caption(f"显示第 {offset+1} - {min(offset+page_size, total_count)} 条，共 {total_count} 条")
 

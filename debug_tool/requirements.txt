@@ -7,8 +7,6 @@ mistune>=2.0.0
 markitdown[all]>=0.1.0
 openai
 watchdog
-# FlashRank 用于极速语义重排 (RAG 优化)
-flashrank>=0.2.0
 
 # 本项目依赖的llm_memory模块已包含在插件内部
 # 无需额外依赖，使用AstrBot内置的模块
