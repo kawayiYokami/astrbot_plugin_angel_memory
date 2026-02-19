@@ -25,9 +25,10 @@
 
 ### ⚡ 智能记忆系统
 - **双轨记忆架构**：主动记忆（永久保存）+ 被动记忆（自然衰减）
+- **双模式运行**：向量模式（语义检索）或 Simple模式（SQL+tags，无需向量依赖）
 - **链式召回机制**：混合检索（向量+FlashRank重排）+ 实体优先 + 类型分组
-- **关联网络**：记忆间双向关联，使用强化，遗忘淘汰
 - **睡眠巩固**：定期清理弱记忆，强化重要内容
+- **双向同步（已实现）**：向量↔Simple 自动备份与回灌；默认随睡眠周期触发（见“高级配置 > 双向同步配置”），无需额外开关，切换嵌入模型可依赖 SQL 库回灌降低丢数风险
 
 ### 🎨 灵魂状态系统
 通过4维能量槽实现**情感化AI行为**：
@@ -87,10 +88,47 @@
 | `provider_id` | "" | 记忆整理LLM提供商ID |
 | `astrbot_embedding_provider_id` | "local" | 嵌入模型提供商ID |
 | `enable_local_embedding` | false | 是否启用本地嵌入模型 |
+| `enable_simple_memory` | false | 启用简化记忆模式（SQL+tags，无需向量） |
 | `min_message_length` | 5 | 触发记忆处理的最小消息长度 |
 | `sleep_interval` | 3600 | 记忆巩固间隔（秒） |
 | `short_term_memory_capacity` | 1.0 | 短期记忆容量倍数（0.1-10.0） |
 | `soul_*_mid` | - | 灵魂系统各维度的默认值 |
+
+## 🧰 Debug Tool（查看记忆 + 导入导出）
+
+在插件根目录执行：
+
+```bash
+streamlit run debug_tool/app.py
+```
+
+打开页面（默认）：
+
+- `http://localhost:8501`
+
+左侧模式说明：
+
+- `📖 浏览记忆`：查看向量记忆集合内容（支持 scope 过滤）
+- `🧾 浏览Simple记忆`：查看 `simple_memory.db` 中的记忆（支持 scope/关键词）
+- `🔄 导入导出`：对 Simple 记忆进行 JSON 导出/导入
+
+导出步骤：
+
+1. 进入 `🔄 导入导出`
+2. 可选填写 `scope`（留空导出全部）
+3. 点击“生成导出文件”
+4. 点击“下载 JSON”
+
+导入步骤：
+
+1. 进入 `🔄 导入导出`
+2. 上传 JSON 文件
+3. 点击“执行导入”
+
+导入规则：
+
+- 支持两种格式：`{"memories":[...]}` 或 `[...]`
+- 按 `judgment` 去重 upsert（较新 `created_at` 覆盖较旧）
 
 ## 📖 使用指南
 
@@ -265,19 +303,6 @@ raw/
     └─ 睡眠巩固：定期清理和优化
 ```
 
-### 核心组件
-
-- **PluginContext**：统一资源管理
-- **ComponentFactory**：依赖注入与组件创建
-- **InitializationManager**：异步初始化状态管理
-- **BackgroundInitializer**：后台预初始化
-- **DeepMind**：潜意识核心逻辑
-- **CognitiveService**：记忆管理服务
-- **SoulState**：灵魂状态管理
-- **NoteService**：笔记服务
-- **VectorStore**：向量存储封装
-- **FlashRank**：超快速语义重排算法
-
 ## 🎯 使用场景
 
 ### 1. 个性化AI助手
@@ -301,6 +326,25 @@ raw/
 - 形成稳定的认知体系
 
 ## 🔧 高级配置
+
+### 双向同步配置
+
+当前状态：`已实现`（无需额外功能开关，随睡眠维护管线自动执行）。
+
+触发与模式：
+- `向量 -> Simple 备份`：在向量模式（`enable_simple_memory=false`）下，每次睡眠后维护阶段自动执行。
+- `Simple -> 向量 回灌`：在向量模式下，睡眠前维护阶段按“provider 变化”触发；若与上次同步 provider 相同则跳过。
+- `Simple 模式`（`enable_simple_memory=true`）：不执行上述双向同步任务。
+
+是否需要用户配置：
+- 常规使用无需额外配置双向同步开关。
+- 频率由 `sleep_interval` 决定；当睡眠周期触发时，维护任务随之触发。
+- 若需要 `SQL->向量回灌`，必须可用嵌入提供商（向量化写入需要 embedding）。
+
+频率与性能影响：
+- 默认频率：随 `sleep_interval`（默认 `3600` 秒）周期执行。
+- 吞吐/延迟：备份与回灌会增加一次睡眠周期内的 I/O 与向量化耗时；规模越大，单次维护耗时越高。
+- 失败与重试：单次失败会记录错误日志；后续睡眠周期会再次尝试，不阻塞主对话流程。
 
 ### 灵魂系统调优
 
@@ -327,39 +371,21 @@ sleep_interval: 3600            # 巩固间隔（秒）
 
 ### 嵌入模型选择
 
-- **本地模型**：`enable_local_embedding: true`（使用BAAI/bge-small-zh-v1.5）
-- **API提供商**：配置`astrbot_embedding_provider_id`使用云服务
+**推荐新手直接用 Simple 模式：**
 
-## 📁 项目结构
+- `enable_simple_memory: true`
+- 不需要配置嵌入模型
+- 可直接使用记忆查看、导入导出、睡眠维护
 
-```
-astrbot_plugin_angel_memory/
-├── main.py                      # 插件入口
-├── metadata.yaml                # 插件元数据
-├── core/                        # 核心系统
-│   ├── plugin_manager.py       # 插件管理
-│   ├── plugin_context.py       # 上下文管理
-│   ├── component_factory.py    # 组件工厂
-│   ├── deepmind.py             # 潜意识核心
-│   └── soul/
-│       └── soul_state.py       # 灵魂状态
-├── llm_memory/                 # 记忆系统
-│   ├── service/
-│   │   ├── cognitive_service.py    # 认知服务
-│   │   ├── memory_manager.py       # 记忆管理
-│   │   └── note_service.py         # 笔记服务
-│   ├── components/
-│   │   ├── vector_store.py         # 向量存储
-│   │   ├── embedding_provider.py   # 嵌入提供商
-│   │   └── tag_manager.py          # 标签管理
-│   └── models/
-│       └── data_models.py          # 数据模型
-└── tools/                      # LLM工具
-    ├── core_memory_remember.py
-    ├── core_memory_recall.py
-    ├── expand_note_context.py
-    └── research_tool.py
-```
+**进阶再用向量模式：**
+
+- `enable_simple_memory: false`
+- 需要配置可用的嵌入 provider（本地或 API）
+- 适合追求语义检索效果的场景
+
+补充：
+- 只用 Simple 模式时，不需要关心向量回灌。
+- 只有启用向量模式时，`SQL → 向量` 回灌才会执行（回灌时会重新向量化）。
 
 ## 🐛 故障排查
 
@@ -408,11 +434,6 @@ ruff format .
 ```
 
 ### 扩展开发
-
-- **新增LLM工具**：继承`FunctionTool`，实现`run()`方法
-- **自定义记忆类型**：扩展`MemoryType`枚举和处理器
-- **扩展检索策略**：修改`chained_recall()`方法
-- **灵魂系统扩展**：添加新的能量维度或映射函数
 
 详见[AGENTS.md](AGENTS.md)开发文档。
 
