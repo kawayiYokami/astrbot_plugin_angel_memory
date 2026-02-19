@@ -29,7 +29,13 @@ class MemoryManager:
     这些功能不直接与特定记忆类型绑定，而是处理记忆的通用行为。
     """
 
-    def __init__(self, main_collection, vector_store):
+    def __init__(
+        self,
+        main_collection,
+        vector_store,
+        memory_sql_manager=None,
+        memory_index_collection=None,
+    ):
         """
         初始化记忆管理器。
 
@@ -39,6 +45,8 @@ class MemoryManager:
         """
         self.collection = main_collection
         self.store = vector_store
+        self.memory_sql_manager = memory_sql_manager
+        self.memory_index_collection = memory_index_collection
         self.logger = logger
 
         # 初始化查询处理器（用于统一检索词预处理）
@@ -55,6 +63,10 @@ class MemoryManager:
         - 主动记忆永不删除（不受强度影响）
         """
         self.logger.debug("开始记忆清理过程...")
+
+        if self.memory_sql_manager is not None:
+            await self.memory_sql_manager.consolidate_memories()
+            return
 
         try:
             # 删除被动记忆中强度 ≤ 0 的记忆
@@ -83,6 +95,10 @@ class MemoryManager:
         Args:
             memory_ids: 要强化的记忆ID列表
         """
+        if self.memory_sql_manager is not None:
+            await self.memory_sql_manager.reinforce_memories(memory_ids, delta=3)
+            return
+
         for memory_id in memory_ids:
             try:
                 # 根据 metadata 中的 id 查找记忆
@@ -112,6 +128,14 @@ class MemoryManager:
             return {"memory_scope": "public"}
 
         return {"$or": [{"memory_scope": scope}, {"memory_scope": "public"}]}
+
+    @staticmethod
+    def _is_scope_allowed(memory_scope: str, target_scope: str) -> bool:
+        scope = str(memory_scope or "").strip() or "public"
+        target = str(target_scope or "").strip()
+        if target == "public":
+            return scope == "public"
+        return scope in {target, "public"}
 
     async def comprehensive_recall(
         self,
@@ -143,6 +167,28 @@ class MemoryManager:
         if limit is None:
             limit = system_config.fresh_recall_limit
         where_filter = self._build_scope_where_filter(memory_scope)
+
+        if self.memory_sql_manager is not None and self.memory_index_collection is not None:
+            id_scores = await self.store.recall_memory_ids(
+                collection=self.memory_index_collection,
+                query=processed_query,
+                limit=limit * 3,
+                vector=vector,
+                similarity_threshold=0.5,
+            )
+            if not id_scores:
+                return []
+            score_map = {mid: score for mid, score in id_scores}
+            ordered_ids = [mid for mid, _ in id_scores]
+            sql_memories = await self.memory_sql_manager.get_memories_by_ids(ordered_ids)
+            filtered: List[BaseMemory] = []
+            for mem in sql_memories:
+                if not self._is_scope_allowed(getattr(mem, "memory_scope", "public"), memory_scope):
+                    continue
+                mem.similarity = float(score_map.get(mem.id, 0.0))
+                filtered.append(mem)
+            filtered.sort(key=lambda m: getattr(m, "similarity", 0.0), reverse=True)
+            return filtered[:limit]
 
         # 直接使用混合检索，相似度阈值0.5
         if vector is not None:
@@ -263,7 +309,17 @@ class MemoryManager:
                     batch_updates.append({"id": mem.id, "updates": {"strength": new_strength}})
 
         if batch_updates:
-            await self.store.update_memory(self.collection, batch_updates)
+            if self.memory_sql_manager is not None:
+                await self.memory_sql_manager.decay_memories(
+                    [item["id"] for item in batch_updates], delta=1
+                )
+                refreshed = await self.memory_sql_manager.get_memories_by_ids(
+                    [item["id"] for item in batch_updates]
+                )
+                refreshed_map = {mem.id: mem for mem in refreshed}
+                all_memories = [refreshed_map.get(mem.id, mem) for mem in all_memories]
+            else:
+                await self.store.update_memory(self.collection, batch_updates)
 
         self.logger.debug(f"链式回忆: 实体记忆={len(entity_memories)}, 类型记忆={sum(len(v) for v in type_memories.values())}, 总计={len(all_memories)}")
 
@@ -445,6 +501,14 @@ class MemoryManager:
         2. 批量创建新记忆
         3. 合并重复记忆
         """
+        if self.memory_sql_manager is not None:
+            return await self.memory_sql_manager.process_feedback(
+                useful_memory_ids=useful_memory_ids,
+                new_memories=new_memories,
+                merge_groups=merge_groups,
+                memory_scope=memory_scope,
+            )
+
         useful_memory_ids = useful_memory_ids or []
         new_memories = new_memories or []
         merge_groups = merge_groups or []

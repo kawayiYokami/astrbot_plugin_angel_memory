@@ -115,21 +115,13 @@ class BackgroundInitializer:
 
             deepmind = components.get("deepmind")
             if deepmind and deepmind.is_enabled():
-                memory_behavior = self.config.get("memory_behavior", {})
-                if isinstance(memory_behavior, dict):
-                    sleep_interval = int(memory_behavior.get("sleep_interval", 3600))
-                else:
-                    sleep_interval = int(self.config.get("sleep_interval", 3600))
-
                 async def _trigger_sleep_once_after_init():
                     try:
                         self.logger.info(
                             f"[simple_backup] trigger_sleep_after_init provider={self.plugin_context.get_current_provider()}"
                         )
-                        if sleep_interval > 0:
-                            await deepmind.check_and_sleep_if_needed(sleep_interval)
-                        else:
-                            await deepmind.sleep()
+                        # 启动后无条件执行一次睡眠维护，便于立即完成迁移/备份校验。
+                        await deepmind.sleep()
                     except Exception as e:
                         self.logger.error(f"初始化后触发睡眠失败: {e}", exc_info=True)
 

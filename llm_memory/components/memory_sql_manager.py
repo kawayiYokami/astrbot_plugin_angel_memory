@@ -54,7 +54,7 @@ class MemorySqlManager:
                     updated_at REAL NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS memory_tags (
+                CREATE TABLE IF NOT EXISTS global_tags (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE
                 );
@@ -65,6 +65,12 @@ class MemorySqlManager:
                     UNIQUE(memory_id, tag_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS note_tag_rel (
+                    source_id TEXT NOT NULL,
+                    tag_id INTEGER NOT NULL,
+                    UNIQUE(source_id, tag_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_memory_scope_created_at
                     ON memory_records(memory_scope, created_at);
                 CREATE INDEX IF NOT EXISTS idx_memory_active_strength
@@ -73,13 +79,23 @@ class MemorySqlManager:
                     ON memory_records(judgment);
                 CREATE INDEX IF NOT EXISTS idx_memory_tag_rel_tag_memory
                     ON memory_tag_rel(tag_id, memory_id);
+                CREATE INDEX IF NOT EXISTS idx_note_tag_rel_tag_source
+                    ON note_tag_rel(tag_id, source_id);
                 """
             )
+            # 兼容迁移：若旧表 memory_tags 存在，则迁移到 global_tags
+            has_legacy = cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_tags'"
+            ).fetchone()
+            if has_legacy:
+                cur.execute(
+                    "INSERT OR IGNORE INTO global_tags(name) SELECT name FROM memory_tags"
+                )
             conn.commit()
 
     def _load_tag_cache(self) -> None:
         with self._connect() as conn:
-            rows = conn.execute("SELECT name FROM memory_tags").fetchall()
+            rows = conn.execute("SELECT name FROM global_tags").fetchall()
             with self._lock:
                 self._tag_names = {str(row["name"]) for row in rows if row["name"]}
         self.logger.info(f"SimpleMemory 标签缓存加载完成: {len(self._tag_names)} 个")
@@ -150,7 +166,7 @@ class MemorySqlManager:
         sql = f"""
             SELECT mtr.memory_id AS memory_id, mt.name AS tag_name
             FROM memory_tag_rel mtr
-            JOIN memory_tags mt ON mt.id = mtr.tag_id
+            JOIN global_tags mt ON mt.id = mtr.tag_id
             WHERE mtr.memory_id IN ({placeholders})
         """
         rows = conn.execute(sql, tuple(memory_ids)).fetchall()
@@ -166,12 +182,12 @@ class MemorySqlManager:
     ) -> None:
         if tags:
             conn.executemany(
-                "INSERT OR IGNORE INTO memory_tags(name) VALUES (?)",
+                "INSERT OR IGNORE INTO global_tags(name) VALUES (?)",
                 [(tag,) for tag in tags],
             )
             placeholders = ",".join(["?" for _ in tags])
             rows = conn.execute(
-                f"SELECT id, name FROM memory_tags WHERE name IN ({placeholders})",
+                f"SELECT id, name FROM global_tags WHERE name IN ({placeholders})",
                 tuple(tags),
             ).fetchall()
             tag_id_by_name = {str(row["name"]): int(row["id"]) for row in rows}
@@ -195,6 +211,123 @@ class MemorySqlManager:
         conn.execute("DELETE FROM memory_tag_rel WHERE memory_id = ?", (memory_id,))
         self._upsert_tags_and_bind(conn, memory_id, tags)
 
+    def _get_or_create_tag_ids_sync(self, tag_names: List[str]) -> List[int]:
+        normalized = self._normalize_tags(tag_names)
+        if not normalized:
+            return []
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO global_tags(name) VALUES (?)",
+                [(tag,) for tag in normalized],
+            )
+            placeholders = ",".join(["?" for _ in normalized])
+            rows = conn.execute(
+                f"SELECT id, name FROM global_tags WHERE name IN ({placeholders})",
+                tuple(normalized),
+            ).fetchall()
+        by_name = {str(row["name"]): int(row["id"]) for row in rows}
+        return [by_name[tag] for tag in normalized if tag in by_name]
+
+    async def get_or_create_tag_ids(self, tag_names: List[str]) -> List[int]:
+        return await asyncio.to_thread(self._get_or_create_tag_ids_sync, tag_names)
+
+    async def bind_note_tags(self, source_id: str, tag_names: List[str]) -> None:
+        await asyncio.to_thread(self._bind_note_tags_sync, source_id, tag_names)
+
+    def bind_note_tags_sync(self, source_id: str, tag_names: List[str]) -> None:
+        self._bind_note_tags_sync(source_id, tag_names)
+
+    def _bind_note_tags_sync(self, source_id: str, tag_names: List[str]) -> None:
+        sid = str(source_id or "").strip()
+        if not sid:
+            return
+        tag_ids = self._get_or_create_tag_ids_sync(tag_names)
+        with self._connect() as conn:
+            conn.execute("DELETE FROM note_tag_rel WHERE source_id = ?", (sid,))
+            if tag_ids:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO note_tag_rel(source_id, tag_id) VALUES (?, ?)",
+                    [(sid, tid) for tid in tag_ids],
+                )
+            conn.commit()
+
+    async def find_matched_tag_ids(self, query_text: str) -> List[int]:
+        return await asyncio.to_thread(self._find_matched_tag_ids_sync, query_text)
+
+    def _find_matched_tag_ids_sync(self, query_text: str) -> List[int]:
+        text = str(query_text or "")
+        if not text.strip():
+            return []
+        with self._lock:
+            matched_names = [name for name in self._tag_names if name and name in text]
+        if not matched_names:
+            return []
+        placeholders = ",".join(["?" for _ in matched_names])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT id FROM global_tags WHERE name IN ({placeholders})",
+                tuple(matched_names),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    async def search_memory_ids_by_tag_ids(self, tag_ids: List[int]) -> List[str]:
+        return await asyncio.to_thread(self._search_memory_ids_by_tag_ids_sync, tag_ids)
+
+    def _search_memory_ids_by_tag_ids_sync(self, tag_ids: List[int]) -> List[str]:
+        ids = [int(tid) for tid in (tag_ids or [])]
+        if not ids:
+            return []
+        placeholders = ",".join(["?" for _ in ids])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT memory_id
+                FROM memory_tag_rel
+                WHERE tag_id IN ({placeholders})
+                GROUP BY memory_id
+                ORDER BY COUNT(DISTINCT tag_id) DESC
+                """,
+                tuple(ids),
+            ).fetchall()
+        return [str(row["memory_id"]) for row in rows]
+
+    async def search_note_source_ids_by_tag_ids(self, tag_ids: List[int]) -> List[str]:
+        return await asyncio.to_thread(self._search_note_source_ids_by_tag_ids_sync, tag_ids)
+
+    def _search_note_source_ids_by_tag_ids_sync(self, tag_ids: List[int]) -> List[str]:
+        ids = [int(tid) for tid in (tag_ids or [])]
+        if not ids:
+            return []
+        placeholders = ",".join(["?" for _ in ids])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT source_id
+                FROM note_tag_rel
+                WHERE tag_id IN ({placeholders})
+                GROUP BY source_id
+                ORDER BY COUNT(DISTINCT tag_id) DESC
+                """,
+                tuple(ids),
+            ).fetchall()
+        return [str(row["source_id"]) for row in rows]
+
+    async def unified_tag_hit_search(self, query_text: str) -> Dict[str, Any]:
+        """
+        统一 tags 命中入口：一次解析，返回命中 tag_ids + 记忆ID + 笔记source_id。
+        """
+        return await asyncio.to_thread(self._unified_tag_hit_search_sync, query_text)
+
+    def _unified_tag_hit_search_sync(self, query_text: str) -> Dict[str, Any]:
+        tag_ids = self._find_matched_tag_ids_sync(query_text)
+        memory_ids = self._search_memory_ids_by_tag_ids_sync(tag_ids)
+        note_source_ids = self._search_note_source_ids_by_tag_ids_sync(tag_ids)
+        return {
+            "tag_ids": tag_ids,
+            "memory_ids": memory_ids,
+            "note_source_ids": note_source_ids,
+        }
+
     async def remember(
         self,
         memory_type: str,
@@ -215,6 +348,12 @@ class MemorySqlManager:
             strength,
             memory_scope,
         )
+
+    async def upsert_memory(self, memory: BaseMemory) -> BaseMemory:
+        """
+        用指定ID将记忆写入中央库（用于向量模式镜像写入）。
+        """
+        return await asyncio.to_thread(self._upsert_memory_sync, memory)
 
     def _remember_sync(
         self,
@@ -268,6 +407,49 @@ class MemorySqlManager:
             self._upsert_tags_and_bind(conn, memory.id, normalized_tags)
             conn.commit()
 
+        return memory
+
+    def _upsert_memory_sync(self, memory: BaseMemory) -> BaseMemory:
+        scope = self._normalize_scope(getattr(memory, "memory_scope", "public"))
+        normalized_tags = self._normalize_tags(getattr(memory, "tags", []))
+        now = time.time()
+        memory_id = str(getattr(memory, "id", "") or uuid.uuid4())
+        created_at = float(getattr(memory, "created_at", now) or now)
+        memory_type = getattr(getattr(memory, "memory_type", None), "value", None)
+        if not memory_type:
+            memory_type = "知识记忆"
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_records(
+                    id, memory_type, judgment, reasoning, strength, is_active,
+                    memory_scope, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    memory_type=excluded.memory_type,
+                    judgment=excluded.judgment,
+                    reasoning=excluded.reasoning,
+                    strength=excluded.strength,
+                    is_active=excluded.is_active,
+                    memory_scope=excluded.memory_scope,
+                    created_at=excluded.created_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    memory_id,
+                    str(memory_type),
+                    str(getattr(memory, "judgment", "") or "").strip(),
+                    str(getattr(memory, "reasoning", "") or "").strip(),
+                    int(getattr(memory, "strength", 1) or 1),
+                    1 if bool(getattr(memory, "is_active", False)) else 0,
+                    scope,
+                    created_at,
+                    now,
+                ),
+            )
+            self._replace_memory_tags(conn, memory_id, normalized_tags)
+            conn.commit()
         return memory
 
     async def upsert_memories_by_judgment(self, memories: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -436,7 +618,7 @@ class MemorySqlManager:
                         mtr.memory_id AS memory_id,
                         GROUP_CONCAT(mt.name, ', ') AS tags_text
                     FROM memory_tag_rel mtr
-                    JOIN memory_tags mt ON mt.id = mtr.tag_id
+                    JOIN global_tags mt ON mt.id = mtr.tag_id
                     GROUP BY mtr.memory_id
                 ) tags ON tags.memory_id = mr.id
                 ORDER BY mr.created_at DESC
@@ -459,6 +641,83 @@ class MemorySqlManager:
                 }
             )
         return records
+
+    @staticmethod
+    def _build_vector_text(judgment: str, tags: List[str]) -> str:
+        """构建轻量向量索引文本。"""
+        safe_judgment = str(judgment or "").strip()
+        safe_tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
+        if safe_tags:
+            return f"{safe_judgment} {' '.join(safe_tags)}".strip()
+        return safe_judgment
+
+    async def list_memory_index_rows(self) -> List[Dict[str, str]]:
+        """
+        导出记忆轻量向量索引数据（仅 id + vector_text）。
+        """
+        return await asyncio.to_thread(self._list_memory_index_rows_sync)
+
+    def _list_memory_index_rows_sync(self) -> List[Dict[str, str]]:
+        with self._connect() as conn:
+            sql = """
+                SELECT
+                    mr.id,
+                    mr.judgment,
+                    IFNULL(tags.tags_text, '') AS tags
+                FROM memory_records mr
+                LEFT JOIN (
+                    SELECT
+                        mtr.memory_id AS memory_id,
+                        GROUP_CONCAT(gt.name, ' ') AS tags_text
+                    FROM memory_tag_rel mtr
+                    JOIN global_tags gt ON gt.id = mtr.tag_id
+                    GROUP BY mtr.memory_id
+                ) tags ON tags.memory_id = mr.id
+            """
+            rows = conn.execute(sql).fetchall()
+
+        result: List[Dict[str, str]] = []
+        for row in rows:
+            memory_id = str(row["id"])
+            judgment = str(row["judgment"] or "")
+            tag_tokens = [t for t in str(row["tags"] or "").split(" ") if t]
+            vector_text = self._build_vector_text(judgment, tag_tokens)
+            if not vector_text:
+                continue
+            result.append({"id": memory_id, "vector_text": vector_text})
+        return result
+
+    async def export_backup_snapshot(self) -> Dict[str, Any]:
+        """导出中央记忆库快照（JSON冷备份使用）。"""
+        return await asyncio.to_thread(self._export_backup_snapshot_sync)
+
+    def _export_backup_snapshot_sync(self) -> Dict[str, Any]:
+        with self._connect() as conn:
+            records_rows = conn.execute(
+                """
+                SELECT id, memory_type, judgment, reasoning, strength, is_active,
+                       memory_scope, created_at, updated_at
+                FROM memory_records
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+            tags_rows = conn.execute(
+                "SELECT id, name FROM global_tags ORDER BY id ASC"
+            ).fetchall()
+            rel_rows = conn.execute(
+                "SELECT memory_id, tag_id FROM memory_tag_rel"
+            ).fetchall()
+
+        records = [dict(row) for row in records_rows]
+        tags = [dict(row) for row in tags_rows]
+        relations = [dict(row) for row in rel_rows]
+        return {
+            "schema_version": 1,
+            "exported_at": int(time.time()),
+            "records": records,
+            "global_tags": tags,
+            "memory_tag_rel": relations,
+        }
 
     async def recall_by_tags(
         self,
@@ -492,7 +751,7 @@ class MemorySqlManager:
                 CAST(mr.created_at / 86400 AS INTEGER) AS day_bucket
             FROM memory_records mr
             JOIN memory_tag_rel mtr ON mtr.memory_id = mr.id
-            JOIN memory_tags mt ON mt.id = mtr.tag_id
+            JOIN global_tags mt ON mt.id = mtr.tag_id
             WHERE {scope_sql}
               AND mt.name IN ({placeholders})
             GROUP BY mr.id

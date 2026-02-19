@@ -24,7 +24,14 @@ class MemoryHandler:
     处理所有类型的记忆存储和检索，基于统一的三元组结构。
     """
 
-    def __init__(self, memory_type: MemoryType, main_collection, vector_store):
+    def __init__(
+        self,
+        memory_type: MemoryType,
+        main_collection,
+        vector_store,
+        memory_sql_manager=None,
+        memory_index_collection=None,
+    ):
         """
         初始化记忆处理器。
 
@@ -36,6 +43,8 @@ class MemoryHandler:
         self.memory_type = memory_type
         self.collection = main_collection
         self.store = vector_store
+        self.memory_sql_manager = memory_sql_manager
+        self.memory_index_collection = memory_index_collection
         self.logger = logger
         from ..config.system_config import system_config as global_system_config # 导入全局配置
         self.system_config = global_system_config
@@ -65,13 +74,40 @@ class MemoryHandler:
         """
         actual_strength = strength if strength is not None else self.system_config.default_passive_strength # 获取实际强度
         
+        # 新架构：中央 SQL 为真相源，向量层仅做轻量索引。
+        if self.memory_sql_manager is not None:
+            memory = await self.memory_sql_manager.remember(
+                memory_type=self.memory_type.value,
+                judgment=judgment,
+                reasoning=reasoning,
+                tags=tags,
+                is_active=is_active,
+                strength=actual_strength,
+                memory_scope=memory_scope,
+            )
+            if self.memory_index_collection is not None:
+                try:
+                    vector_text = self.memory_sql_manager._build_vector_text(
+                        judgment=memory.judgment,
+                        tags=memory.tags,
+                    )
+                    if vector_text:
+                        await self.store.upsert_memory_index_rows(
+                            collection=self.memory_index_collection,
+                            rows=[{"id": memory.id, "vector_text": vector_text}],
+                        )
+                except Exception as e:
+                    self.logger.warning(f"写入轻量向量索引失败（不影响主流程）: {e}")
+            return memory
+
+        # 兼容旧路径（无中央 SQL 时）
         memory = BaseMemory(
             memory_type=self.memory_type,
             judgment=judgment,
             reasoning=reasoning,
             tags=tags,
             is_active=is_active,
-            strength=actual_strength, # 将实际强度传递给 BaseMemory 构造函数
+            strength=actual_strength,
             memory_scope=memory_scope,
         )
         await self.store.remember(self.collection, memory)
@@ -110,6 +146,19 @@ class MemoryHandler:
                     {"$or": [{"memory_scope": scope}, {"memory_scope": "public"}]}
                 )
 
+        # 新架构下 recall 统一走中央 SQL 的 tags 召回。
+        if self.memory_sql_manager is not None:
+            recalled = await self.memory_sql_manager.recall_by_tags(
+                query=query,
+                limit=limit,
+                memory_scope=memory_scope or "public",
+            )
+            filtered = [
+                mem for mem in recalled
+                if getattr(mem.memory_type, "value", str(mem.memory_type)) == self.memory_type.value
+            ]
+            return filtered
+
         where_filter = clauses[0] if len(clauses) == 1 else {"$and": clauses}
         return await self.store.recall(
             self.collection,
@@ -123,7 +172,13 @@ class MemoryHandler:
 class MemoryHandlerFactory:
     """记忆处理器工厂 - 创建和管理各种记忆处理器"""
 
-    def __init__(self, main_collection, vector_store):
+    def __init__(
+        self,
+        main_collection,
+        vector_store,
+        memory_sql_manager=None,
+        memory_index_collection=None,
+    ):
         """
         初始化记忆处理器工厂。
 
@@ -137,15 +192,41 @@ class MemoryHandlerFactory:
 
         # 创建各种记忆处理器
         self.handlers = {
-            "event": MemoryHandler(MemoryType.EVENT, self.collection, self.store),
+            "event": MemoryHandler(
+                MemoryType.EVENT,
+                self.collection,
+                self.store,
+                memory_sql_manager,
+                memory_index_collection,
+            ),
             "knowledge": MemoryHandler(
-                MemoryType.KNOWLEDGE, self.collection, self.store
+                MemoryType.KNOWLEDGE,
+                self.collection,
+                self.store,
+                memory_sql_manager,
+                memory_index_collection,
             ),
-            "skill": MemoryHandler(MemoryType.SKILL, self.collection, self.store),
+            "skill": MemoryHandler(
+                MemoryType.SKILL,
+                self.collection,
+                self.store,
+                memory_sql_manager,
+                memory_index_collection,
+            ),
             "emotional": MemoryHandler(
-                MemoryType.EMOTIONAL, self.collection, self.store
+                MemoryType.EMOTIONAL,
+                self.collection,
+                self.store,
+                memory_sql_manager,
+                memory_index_collection,
             ),
-            "task": MemoryHandler(MemoryType.TASK, self.collection, self.store),
+            "task": MemoryHandler(
+                MemoryType.TASK,
+                self.collection,
+                self.store,
+                memory_sql_manager,
+                memory_index_collection,
+            ),
         }
 
     def get_handler(self, memory_type: str) -> MemoryHandler:

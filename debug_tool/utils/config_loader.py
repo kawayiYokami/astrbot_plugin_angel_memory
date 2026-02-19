@@ -43,6 +43,26 @@ class ConfigLoader:
         base_data_dir = os.path.abspath(os.path.join(self.base_path, "../../../plugin_data/astrbot_plugin_angel_memory"))
         return os.path.join(base_data_dir, f"memory_{provider_id}", "chromadb")
 
+    def get_plugin_data_dir(self) -> str:
+        return os.path.abspath(
+            os.path.join(self.base_path, "../../../plugin_data/astrbot_plugin_angel_memory")
+        )
+
+    def get_memory_center_dir(self) -> str:
+        return os.path.join(self.get_plugin_data_dir(), "memory_center")
+
+    def get_memory_center_index_dir(self) -> str:
+        return os.path.join(self.get_memory_center_dir(), "index")
+
+    def get_simple_memory_db_path(self) -> str:
+        return os.path.join(self.get_memory_center_index_dir(), "simple_memory.db")
+
+    def get_maintenance_state_path(self) -> str:
+        return os.path.join(self.get_memory_center_dir(), "maintenance_state.json")
+
+    def get_backup_dir(self) -> str:
+        return os.path.join(self.get_memory_center_dir(), "backups")
+
     def get_raw_notes_dir(self) -> str:
         # data/plugins/astrbot_plugin_angel_memory/debug_tool -> data/plugin_data/astrbot_plugin_angel_memory/raw
         base_data_dir = os.path.abspath(os.path.join(self.base_path, "../../../plugin_data/astrbot_plugin_angel_memory"))

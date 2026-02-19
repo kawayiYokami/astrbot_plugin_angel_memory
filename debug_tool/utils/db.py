@@ -1,420 +1,503 @@
-import chromadb
-import logging
-import sqlite3
-import os
 import ast
-import uuid
+import datetime
+import json
+import logging
+import os
+import sqlite3
 import time
-from typing import List, Dict, Any, Tuple, Union
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
+
+import chromadb
+
+from .config_loader import ConfigLoader
 from .embedding import create_embedding_function
 
 logger = logging.getLogger(__name__)
 
+
 class DBManager:
-    def __init__(self, db_path: str, provider_config: dict):
-        self.db_path = db_path
-        self.provider_config = provider_config
-        self.provider_id = provider_config.get('id', 'default')
-        self.embedding_fn = create_embedding_function(provider_config)
+    def __init__(self, loader: ConfigLoader, provider_config: Optional[dict]):
+        self.loader = loader
+        self.provider_config = provider_config or {}
+        self.provider_id = self.provider_config.get("id", "")
+        self.embedding_fn = None
         self.client = None
-        self.tag_conn = None
-        self.simple_conn = None
-        self._connect()
-        self._connect_tag_db()
-        self._connect_simple_db()
+        self.central_conn = None
 
-    def _connect_tag_db(self):
-        """Connect to SQLite Tag Database."""
+        self.chromadb_path = ""
+        self.simple_db_path = self.loader.get_simple_memory_db_path()
+        self.maintenance_state_path = self.loader.get_maintenance_state_path()
+        self.backup_dir = self.loader.get_backup_dir()
+
+        self._connect_central_db()
+        self._connect_vector_db()
+
+    # ===== connect =====
+
+    def _connect_central_db(self):
         try:
-            base_dir = os.path.dirname(self.db_path)
-            tag_db_path = os.path.join(base_dir, "index", f"tag_index_{self.provider_id}.db")
-
-            if os.path.exists(tag_db_path):
-                self.tag_conn = sqlite3.connect(tag_db_path, check_same_thread=False)
-                logger.info(f"Connected to Tag DB at {tag_db_path}")
+            if os.path.exists(self.simple_db_path):
+                self.central_conn = sqlite3.connect(
+                    self.simple_db_path, check_same_thread=False
+                )
+                self.central_conn.row_factory = sqlite3.Row
+                logger.info("Connected to central memory DB: %s", self.simple_db_path)
             else:
-                logger.warning(f"Tag DB not found at {tag_db_path}")
+                logger.warning("Central memory DB not found: %s", self.simple_db_path)
         except Exception as e:
-            logger.error(f"Failed to connect to Tag DB: {e}")
+            logger.error("Failed to connect central memory DB: %s", e)
 
-    def _connect_simple_db(self):
-        """Connect to simple_memory.db."""
+    def _connect_vector_db(self):
+        if not self.provider_id:
+            return
         try:
-            base_dir = os.path.dirname(self.db_path)
-            simple_db_path = os.path.join(base_dir, "index", "simple_memory.db")
-            if os.path.exists(simple_db_path):
-                self.simple_conn = sqlite3.connect(simple_db_path, check_same_thread=False)
-                self.simple_conn.row_factory = sqlite3.Row
-                logger.info(f"Connected to Simple Memory DB at {simple_db_path}")
-            else:
-                logger.warning(f"Simple Memory DB not found at {simple_db_path}")
+            self.chromadb_path = self.loader.get_data_dir(self.provider_id)
+            if not os.path.exists(self.chromadb_path):
+                logger.warning("ChromaDB path not found: %s", self.chromadb_path)
+                return
+            self.client = chromadb.PersistentClient(path=self.chromadb_path)
+            try:
+                self.embedding_fn = create_embedding_function(self.provider_config)
+            except Exception as e:
+                logger.warning("Embedding function init failed, query mode disabled: %s", e)
+            logger.info("Connected to ChromaDB: %s", self.chromadb_path)
         except Exception as e:
-            logger.error(f"Failed to connect to Simple Memory DB: {e}")
+            logger.error("Failed to connect ChromaDB: %s", e)
 
-    def resolve_tag_ids(self, tag_ids_str: str) -> List[str]:
-        """Convert '[1, 2, 3]' string to list of tag names."""
-        if not self.tag_conn or not tag_ids_str:
-            return []
+    # ===== status =====
 
-        try:
-            tag_ids = ast.literal_eval(tag_ids_str)
-            if not isinstance(tag_ids, list) or not tag_ids:
-                return []
+    def has_vector_db(self) -> bool:
+        return self.client is not None
 
-            placeholders = ",".join("?" * len(tag_ids))
-            query = f"SELECT name FROM tag_{self.provider_id} WHERE id IN ({placeholders})"
-            cursor = self.tag_conn.cursor()
-            cursor.execute(query, tag_ids)
-            names = [row[0] for row in cursor.fetchall()]
-            logger.info(f"Resolved tag IDs {tag_ids} to names: {names}")
-            return names
+    def has_central_db(self) -> bool:
+        return self.central_conn is not None
 
-        except Exception as e:
-            logger.error(f"Error resolving tags: {e}")
-            return []
+    def get_overview(self) -> Dict[str, Any]:
+        out = {
+            "provider_id": self.provider_id or "(未检测到可用 embedding provider)",
+            "chromadb_path": self.chromadb_path or "(未连接)",
+            "simple_db_path": self.simple_db_path,
+            "maintenance_state_path": self.maintenance_state_path,
+            "backup_dir": self.backup_dir,
+        }
+        if self.has_vector_db():
+            cols = self.get_collections()
+            out["vector_collections"] = cols
+            out["memory_index_count"] = self.get_collection_stats("memory_index").get("count", 0)
+        else:
+            out["vector_collections"] = []
+            out["memory_index_count"] = 0
+        if self.has_central_db():
+            out.update(self.get_central_stats())
+        else:
+            out.update({"memory_count": 0, "global_tag_count": 0, "scopes": []})
+        return out
 
-    def _connect(self):
-        try:
-            self.client = chromadb.PersistentClient(path=self.db_path)
-            logger.info(f"Connected to ChromaDB at {self.db_path}")
-        except Exception as e:
-            logger.error(f"Failed to connect to DB: {e}")
-            raise e
+    # ===== vector =====
 
     def get_collections(self) -> List[str]:
-        """List all collection names."""
         if not self.client:
             return []
-        colls = self.client.list_collections()
-        return [c.name for c in colls]
-
-    def query_collections(
-        self,
-        query_text: str,
-        collection_names: List[str],
-        n_results: int = 5,
-        where_filter: Dict[str, Any] = None,
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        results = {}
-        for name in collection_names:
-            try:
-                collection = self.client.get_collection(name=name, embedding_function=self.embedding_fn)
-
-                query_params = {
-                    "query_texts": [query_text],
-                    "n_results": n_results,
-                    "include": ["documents", "metadatas", "distances"],
-                }
-                if where_filter:
-                    query_params["where"] = where_filter
-
-                initial_results = collection.query(
-                    **query_params
-                )
-
-                if not initial_results['ids'] or not initial_results['ids'][0]:
-                    results[name] = []
-                    continue
-
-                ids = initial_results['ids'][0]
-                docs = initial_results['documents'][0]
-                metas = initial_results['metadatas'][0]
-                dists = initial_results['distances'][0]
-
-                formatted_res = []
-                for i, _id in enumerate(ids[:n_results]):
-                    base_score = max(0.0, 1.0 - (dists[i] / 2.0))
-                    formatted_res.append({
-                        "id": _id,
-                        "document": docs[i] if docs else "",
-                        "metadata": metas[i] if (metas and metas[i]) else {},
-                        "distance": dists[i] if dists else 0.0,
-                        "score": base_score,
-                    })
-
-                results[name] = formatted_res
-
-            except Exception as e:
-                logger.error(f"Error querying collection {name}: {e}")
-                results[name] = [{"error": str(e)}]
-
-        return results
-
-    def get_collection_stats(self, collection_name: str) -> dict:
         try:
-            collection = self.client.get_collection(name=collection_name)
-            return {"count": collection.count()}
+            return [c.name for c in self.client.list_collections()]
+        except Exception as e:
+            logger.error("list_collections failed: %s", e)
+            return []
+
+    def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
+        if not self.client:
+            return {"count": 0}
+        try:
+            collection = self.client.get_collection(collection_name)
+            return {"count": int(collection.count())}
         except Exception:
             return {"count": 0}
 
-    def browse_collection(
-        self,
-        collection_name: str,
-        limit: int = 10,
-        offset: int = 0,
-        where_filter: Dict[str, Any] = None,
-    ) -> List[Dict[str, Any]]:
-        """Browse items in a collection without query."""
+    def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
+        if not self.client:
+            return []
         try:
-            collection = self.client.get_collection(name=collection_name)
-            get_params = {
-                "limit": limit,
-                "offset": offset,
-                "include": ["documents", "metadatas"],
-            }
-            if where_filter:
-                get_params["where"] = where_filter
-
+            collection = self.client.get_collection(collection_name)
             res = collection.get(
-                **get_params
+                limit=int(limit),
+                offset=int(offset),
+                include=["documents", "metadatas"],
             )
-
-            formatted = []
-            if res['ids']:
-                for i, _id in enumerate(res['ids']):
-                    meta = res['metadatas'][i] if (res['metadatas'] and res['metadatas'][i]) else {}
-                    doc = res['documents'][i] if (res['documents'] and res['documents'][i]) else ""
-                    formatted.append({
+            out = []
+            for i, _id in enumerate(res.get("ids", []) or []):
+                out.append(
+                    {
                         "id": _id,
-                        "document": doc,
-                        "metadata": meta
-                    })
-            return formatted
+                        "document": (res.get("documents", []) or [""])[i]
+                        if i < len(res.get("documents", []) or [])
+                        else "",
+                        "metadata": (res.get("metadatas", []) or [{}])[i]
+                        if i < len(res.get("metadatas", []) or [])
+                        else {},
+                    }
+                )
+            return out
         except Exception as e:
-            logger.error(f"Error browsing collection {collection_name}: {e}")
+            logger.error("browse_collection failed: %s", e)
             return []
 
-    def has_simple_memory_db(self) -> bool:
-        return self.simple_conn is not None
-
-    def get_simple_memory_stats(self) -> Dict[str, Any]:
-        if not self.simple_conn:
-            return {"count": 0, "scopes": []}
+    def query_collection(
+        self,
+        collection_name: str,
+        query_text: str,
+        n_results: int = 10,
+        where_filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        if not self.client:
+            return []
+        if not self.embedding_fn:
+            return [{"error": "当前 provider 无法初始化 embedding，无法执行向量查询"}]
         try:
-            cursor = self.simple_conn.cursor()
-            cursor.execute("SELECT COUNT(*) AS cnt FROM memory_records")
-            total = int(cursor.fetchone()["cnt"])
-            cursor.execute(
+            collection = self.client.get_collection(
+                name=collection_name, embedding_function=self.embedding_fn
+            )
+            query_params: Dict[str, Any] = {
+                "query_texts": [query_text],
+                "n_results": int(n_results),
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where_filter:
+                query_params["where"] = where_filter
+            res = collection.query(**query_params)
+            out = []
+            ids = (res.get("ids") or [[]])[0]
+            docs = (res.get("documents") or [[]])[0]
+            metas = (res.get("metadatas") or [[]])[0]
+            dists = (res.get("distances") or [[]])[0]
+            for i, _id in enumerate(ids):
+                distance = float(dists[i]) if i < len(dists) else 2.0
+                out.append(
+                    {
+                        "id": _id,
+                        "document": docs[i] if i < len(docs) else "",
+                        "metadata": metas[i] if i < len(metas) else {},
+                        "distance": distance,
+                        "score": max(0.0, 1.0 - distance / 2.0),
+                    }
+                )
+            return out
+        except Exception as e:
+            logger.error("query_collection failed: %s", e)
+            return [{"error": str(e)}]
+
+    # ===== central memory =====
+
+    def get_central_stats(self) -> Dict[str, Any]:
+        if not self.central_conn:
+            return {"memory_count": 0, "global_tag_count": 0, "scopes": []}
+        try:
+            c = self.central_conn.cursor()
+            c.execute("SELECT COUNT(*) AS cnt FROM memory_records")
+            memory_count = int(c.fetchone()["cnt"])
+            c.execute("SELECT COUNT(*) AS cnt FROM global_tags")
+            tag_count = int(c.fetchone()["cnt"])
+            c.execute(
                 "SELECT DISTINCT memory_scope FROM memory_records ORDER BY memory_scope ASC"
             )
-            scopes = [row["memory_scope"] for row in cursor.fetchall() if row["memory_scope"]]
-            return {"count": total, "scopes": scopes}
+            scopes = [row["memory_scope"] for row in c.fetchall() if row["memory_scope"]]
+            return {
+                "memory_count": memory_count,
+                "global_tag_count": tag_count,
+                "scopes": scopes,
+            }
         except Exception as e:
-            logger.error(f"Error reading simple memory stats: {e}")
-            return {"count": 0, "scopes": []}
+            logger.error("get_central_stats failed: %s", e)
+            return {"memory_count": 0, "global_tag_count": 0, "scopes": []}
 
-    def browse_simple_memories(
+    def browse_central_memories(
         self,
         limit: int = 20,
         offset: int = 0,
         scope: str = "",
         keyword: str = "",
         return_total: bool = False,
-    ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
-        if not self.simple_conn:
+    ):
+        if not self.central_conn:
             return ([], 0) if return_total else []
         try:
-            where_clauses = []
+            where = []
             params: List[Any] = []
 
-            scope_text = (scope or "").strip()
-            if scope_text:
-                where_clauses.append("mr.memory_scope = ?")
-                params.append(scope_text)
+            if (scope or "").strip():
+                where.append("mr.memory_scope = ?")
+                params.append(scope.strip())
 
-            keyword_text = (keyword or "").strip()
-            if keyword_text:
-                escaped_keyword_text = (
-                    keyword_text.replace("\\", "\\\\")
+            if (keyword or "").strip():
+                kw = (
+                    keyword.strip()
+                    .replace("\\", "\\\\")
                     .replace("%", "\\%")
                     .replace("_", "\\_")
                 )
-                where_clauses.append(
+                where.append(
                     "(mr.judgment LIKE ? ESCAPE '\\' OR mr.reasoning LIKE ? ESCAPE '\\' OR IFNULL(tags.tags_text, '') LIKE ? ESCAPE '\\')"
                 )
-                like_val = f"%{escaped_keyword_text}%"
-                params.extend([like_val, like_val, like_val])
+                like = f"%{kw}%"
+                params.extend([like, like, like])
 
-            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-            total_count = 0
+            where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+            total = 0
             if return_total:
-                count_sql = f"""
+                sql_count = f"""
                     SELECT COUNT(*) AS cnt
                     FROM memory_records mr
                     LEFT JOIN (
-                        SELECT
-                            mtr.memory_id AS memory_id,
-                            GROUP_CONCAT(mt.name, ', ') AS tags_text
+                        SELECT mtr.memory_id, GROUP_CONCAT(gt.name, ', ') AS tags_text
                         FROM memory_tag_rel mtr
-                        JOIN memory_tags mt ON mt.id = mtr.tag_id
+                        JOIN global_tags gt ON gt.id = mtr.tag_id
                         GROUP BY mtr.memory_id
                     ) tags ON tags.memory_id = mr.id
                     {where_sql}
                 """
-                count_cursor = self.simple_conn.cursor()
-                count_cursor.execute(count_sql, list(params))
-                count_row = count_cursor.fetchone()
-                total_count = int((count_row["cnt"] if count_row else 0) or 0)
+                cur = self.central_conn.cursor()
+                cur.execute(sql_count, list(params))
+                total = int((cur.fetchone() or {"cnt": 0})["cnt"])
 
             sql = f"""
                 SELECT
-                    mr.id,
-                    mr.memory_type,
-                    mr.judgment,
-                    mr.reasoning,
-                    mr.strength,
-                    mr.is_active,
-                    mr.memory_scope,
-                    mr.created_at,
-                    mr.updated_at,
+                    mr.id, mr.memory_type, mr.judgment, mr.reasoning,
+                    mr.strength, mr.is_active, mr.memory_scope,
+                    mr.created_at, mr.updated_at,
                     IFNULL(tags.tags_text, '') AS tags
                 FROM memory_records mr
                 LEFT JOIN (
-                    SELECT
-                        mtr.memory_id AS memory_id,
-                        GROUP_CONCAT(mt.name, ', ') AS tags_text
+                    SELECT mtr.memory_id, GROUP_CONCAT(gt.name, ', ') AS tags_text
                     FROM memory_tag_rel mtr
-                    JOIN memory_tags mt ON mt.id = mtr.tag_id
+                    JOIN global_tags gt ON gt.id = mtr.tag_id
                     GROUP BY mtr.memory_id
                 ) tags ON tags.memory_id = mr.id
                 {where_sql}
                 ORDER BY mr.created_at DESC, mr.strength DESC
                 LIMIT ? OFFSET ?
             """
-            params.extend([int(limit), int(offset)])
-            cursor = self.simple_conn.cursor()
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
-
-            formatted: List[Dict[str, Any]] = []
+            query_params = list(params) + [int(limit), int(offset)]
+            cur = self.central_conn.cursor()
+            cur.execute(sql, query_params)
+            rows = cur.fetchall()
+            out = []
             for row in rows:
-                metadata = {
-                    "memory_type": row["memory_type"],
-                    "judgment": row["judgment"],
-                    "reasoning": row["reasoning"],
-                    "strength": row["strength"],
-                    "is_active": bool(row["is_active"]),
-                    "memory_scope": row["memory_scope"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                    "tags": row["tags"],
-                }
-                formatted.append(
+                out.append(
                     {
                         "id": row["id"],
                         "document": row["judgment"],
-                        "metadata": metadata,
+                        "metadata": {
+                            "memory_type": row["memory_type"],
+                            "judgment": row["judgment"],
+                            "reasoning": row["reasoning"],
+                            "strength": row["strength"],
+                            "is_active": bool(row["is_active"]),
+                            "memory_scope": row["memory_scope"],
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"],
+                            "tags": row["tags"],
+                        },
                     }
                 )
-            if return_total:
-                return formatted, total_count
-            return formatted
+            return (out, total) if return_total else out
         except Exception as e:
-            logger.error(f"Error browsing simple memories: {e}")
+            logger.error("browse_central_memories failed: %s", e)
             return ([], 0) if return_total else []
 
+    def get_global_tags(self, limit: int = 200, offset: int = 0, keyword: str = ""):
+        if not self.central_conn:
+            return []
+        try:
+            where_sql = ""
+            params: List[Any] = []
+            if (keyword or "").strip():
+                where_sql = "WHERE gt.name LIKE ? ESCAPE '\\'"
+                kw = keyword.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                params.append(f"%{kw}%")
+
+            sql = f"""
+                SELECT
+                    gt.id,
+                    gt.name,
+                    (
+                        SELECT COUNT(*) FROM memory_tag_rel mtr WHERE mtr.tag_id = gt.id
+                    ) AS memory_refs,
+                    (
+                        SELECT COUNT(*) FROM note_tag_rel ntr WHERE ntr.tag_id = gt.id
+                    ) AS note_refs
+                FROM global_tags gt
+                {where_sql}
+                ORDER BY (memory_refs + note_refs) DESC, gt.id ASC
+                LIMIT ? OFFSET ?
+            """
+            params.extend([int(limit), int(offset)])
+            cur = self.central_conn.cursor()
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error("get_global_tags failed: %s", e)
+            return []
+
+    def unified_tag_hit_search(
+        self, query_text: str, limit: int = 50, scope: str = ""
+    ) -> Dict[str, Any]:
+        if not self.central_conn:
+            return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": []}
+        query = str(query_text or "")
+        if not query.strip():
+            return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": []}
+
+        try:
+            cur = self.central_conn.cursor()
+            cur.execute("SELECT id, name FROM global_tags ORDER BY id ASC")
+            all_tags = cur.fetchall()
+            matched = [row for row in all_tags if row["name"] and row["name"] in query]
+            if not matched:
+                return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": []}
+
+            tag_ids = [int(row["id"]) for row in matched]
+            tag_names = [str(row["name"]) for row in matched]
+
+            placeholders = ",".join(["?" for _ in tag_ids])
+            scope_clause = ""
+            scope_params: List[Any] = []
+            if (scope or "").strip():
+                s = scope.strip()
+                if s == "public":
+                    scope_clause = "AND mr.memory_scope = ?"
+                    scope_params = ["public"]
+                else:
+                    scope_clause = "AND (mr.memory_scope = ? OR mr.memory_scope = 'public')"
+                    scope_params = [s]
+
+            sql = f"""
+                SELECT
+                    mr.id, mr.memory_type, mr.judgment, mr.reasoning,
+                    mr.strength, mr.is_active, mr.memory_scope,
+                    mr.created_at, mr.updated_at,
+                    COUNT(DISTINCT gt.id) AS hit_count,
+                    CAST(mr.created_at / 86400 AS INTEGER) AS day_bucket,
+                    IFNULL(tags.tags_text, '') AS tags
+                FROM memory_records mr
+                JOIN memory_tag_rel mtr ON mtr.memory_id = mr.id
+                JOIN global_tags gt ON gt.id = mtr.tag_id
+                LEFT JOIN (
+                    SELECT mtr2.memory_id, GROUP_CONCAT(gt2.name, ', ') AS tags_text
+                    FROM memory_tag_rel mtr2
+                    JOIN global_tags gt2 ON gt2.id = mtr2.tag_id
+                    GROUP BY mtr2.memory_id
+                ) tags ON tags.memory_id = mr.id
+                WHERE gt.id IN ({placeholders})
+                {scope_clause}
+                GROUP BY mr.id
+                ORDER BY hit_count DESC, day_bucket DESC, mr.strength DESC, mr.created_at DESC
+                LIMIT ?
+            """
+            params: List[Any] = [*tag_ids, *scope_params, int(limit)]
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            memory_hits = []
+            for row in rows:
+                memory_hits.append(
+                    {
+                        "id": row["id"],
+                        "hit_count": int(row["hit_count"] or 0),
+                        "document": row["judgment"],
+                        "metadata": {
+                            "memory_type": row["memory_type"],
+                            "judgment": row["judgment"],
+                            "reasoning": row["reasoning"],
+                            "strength": row["strength"],
+                            "is_active": bool(row["is_active"]),
+                            "memory_scope": row["memory_scope"],
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"],
+                            "tags": row["tags"],
+                        },
+                    }
+                )
+            return {
+                "matched_tags": tag_names,
+                "matched_tag_ids": tag_ids,
+                "memory_hits": memory_hits,
+            }
+        except Exception as e:
+            logger.error("unified_tag_hit_search failed: %s", e)
+            return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": [], "error": str(e)}
+
+    # ===== import / export =====
+
     @staticmethod
-    def _parse_simple_tags(value: Any) -> List[str]:
+    def _parse_tags(value: Any) -> List[str]:
         if isinstance(value, list):
             return [str(x).strip() for x in value if str(x).strip()]
         if isinstance(value, str):
-            return [x.strip() for x in value.split(",") if x.strip()]
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("[") and stripped.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(stripped)
+                    if isinstance(parsed, list):
+                        return [str(x).strip() for x in parsed if str(x).strip()]
+                except Exception:
+                    pass
+            return [x.strip() for x in stripped.split(",") if x.strip()]
         return []
 
-    def _replace_simple_tags(self, conn: sqlite3.Connection, memory_id: str, tags: List[str]) -> None:
-        normalized = [t for t in tags if t]
+    def _replace_tags(self, conn: sqlite3.Connection, memory_id: str, tags: List[str]):
         conn.execute("DELETE FROM memory_tag_rel WHERE memory_id = ?", (memory_id,))
-        if not normalized:
+        if not tags:
             return
-
-        conn.executemany(
-            "INSERT OR IGNORE INTO memory_tags(name) VALUES (?)",
-            [(t,) for t in normalized],
-        )
-        placeholders = ",".join(["?" for _ in normalized])
+        conn.executemany("INSERT OR IGNORE INTO global_tags(name) VALUES (?)", [(t,) for t in tags])
+        placeholders = ",".join(["?" for _ in tags])
         rows = conn.execute(
-            f"SELECT id, name FROM memory_tags WHERE name IN ({placeholders})",
-            tuple(normalized),
+            f"SELECT id, name FROM global_tags WHERE name IN ({placeholders})", tuple(tags)
         ).fetchall()
-        id_map = {row["name"]: int(row["id"]) for row in rows}
-
-        conn.executemany(
-            "INSERT OR IGNORE INTO memory_tag_rel(memory_id, tag_id) VALUES (?, ?)",
-            [(memory_id, id_map[t]) for t in normalized if t in id_map],
-        )
-
-    def export_simple_memories_payload(self, scope: str = "") -> Dict[str, Any]:
-        if not self.simple_conn:
-            return {"exported_at": time.time(), "count": 0, "memories": []}
-
-        scope_text = (scope or "").strip()
-        where_sql = "WHERE mr.memory_scope = ?" if scope_text else ""
-        params: List[Any] = [scope_text] if scope_text else []
-        sql = f"""
-            SELECT
-                mr.id,
-                mr.memory_type,
-                mr.judgment,
-                mr.reasoning,
-                mr.strength,
-                mr.is_active,
-                mr.memory_scope,
-                mr.created_at,
-                mr.updated_at,
-                IFNULL(tags.tags_text, '') AS tags
-            FROM memory_records mr
-            LEFT JOIN (
-                SELECT
-                    mtr.memory_id AS memory_id,
-                    GROUP_CONCAT(mt.name, ', ') AS tags_text
-                FROM memory_tag_rel mtr
-                JOIN memory_tags mt ON mt.id = mtr.tag_id
-                GROUP BY mtr.memory_id
-            ) tags ON tags.memory_id = mr.id
-            {where_sql}
-            ORDER BY mr.created_at DESC
-        """
-        cursor = self.simple_conn.cursor()
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-
-        memories: List[Dict[str, Any]] = []
-        for row in rows:
-            memories.append(
-                {
-                    "id": row["id"],
-                    "memory_type": row["memory_type"],
-                    "judgment": row["judgment"],
-                    "reasoning": row["reasoning"],
-                    "strength": int(row["strength"] or 1),
-                    "is_active": bool(row["is_active"]),
-                    "memory_scope": row["memory_scope"],
-                    "created_at": float(row["created_at"] or 0),
-                    "updated_at": float(row["updated_at"] or 0),
-                    "tags": self._parse_simple_tags(row["tags"] or ""),
-                }
+        id_map = {str(r["name"]): int(r["id"]) for r in rows}
+        rel = [(memory_id, id_map[t]) for t in tags if t in id_map]
+        if rel:
+            conn.executemany(
+                "INSERT OR IGNORE INTO memory_tag_rel(memory_id, tag_id) VALUES (?, ?)", rel
             )
 
-        return {"exported_at": time.time(), "count": len(memories), "memories": memories}
+    def export_central_snapshot(self) -> Dict[str, Any]:
+        if not self.central_conn:
+            return {"schema_version": 1, "exported_at": int(time.time()), "records": [], "global_tags": [], "memory_tag_rel": []}
+        cur = self.central_conn.cursor()
+        records = [
+            dict(row)
+            for row in cur.execute(
+                """
+                SELECT id, memory_type, judgment, reasoning, strength, is_active,
+                       memory_scope, created_at, updated_at
+                FROM memory_records
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+        ]
+        tags = [dict(row) for row in cur.execute("SELECT id, name FROM global_tags ORDER BY id ASC").fetchall()]
+        rel = [dict(row) for row in cur.execute("SELECT memory_id, tag_id FROM memory_tag_rel").fetchall()]
+        return {
+            "schema_version": 1,
+            "exported_at": int(time.time()),
+            "records": records,
+            "global_tags": tags,
+            "memory_tag_rel": rel,
+        }
 
-    def _upsert_simple_memory_by_judgment(self, conn: sqlite3.Connection, item: Dict[str, Any]) -> str:
+    def _upsert_by_judgment(self, conn: sqlite3.Connection, item: Dict[str, Any]) -> str:
         judgment = str(item.get("judgment") or "").strip()
         if not judgment:
             return "skip"
-
-        incoming_created_at = float(item.get("created_at") or time.time())
         now = time.time()
+        created_at = float(item.get("created_at") or now)
         rows = conn.execute(
-            """
-            SELECT id, created_at
-            FROM memory_records
-            WHERE judgment = ?
-            ORDER BY created_at DESC, updated_at DESC
-            """,
+            "SELECT id, created_at FROM memory_records WHERE judgment = ? ORDER BY created_at DESC, updated_at DESC",
             (judgment,),
         ).fetchall()
-
-        tags = self._parse_simple_tags(item.get("tags", []))
+        tags = self._parse_tags(item.get("tags", []))
         memory_type = str(item.get("memory_type") or "知识记忆").strip() or "知识记忆"
         reasoning = str(item.get("reasoning") or "").strip()
         strength = int(item.get("strength", 1) or 1)
@@ -422,9 +505,9 @@ class DBManager:
         memory_scope = str(item.get("memory_scope") or "public").strip() or "public"
 
         if rows:
-            keep_id = rows[0]["id"]
-            existing_created_at = float(rows[0]["created_at"] or 0)
-            if incoming_created_at >= existing_created_at:
+            keep_id = str(rows[0]["id"])
+            old_created = float(rows[0]["created_at"] or 0)
+            if created_at >= old_created:
                 conn.execute(
                     """
                     UPDATE memory_records
@@ -438,20 +521,20 @@ class DBManager:
                         strength,
                         is_active,
                         memory_scope,
-                        incoming_created_at,
+                        created_at,
                         now,
                         keep_id,
                     ),
                 )
-                self._replace_simple_tags(conn, keep_id, tags)
-            dup_ids = [row["id"] for row in rows[1:]]
+                self._replace_tags(conn, keep_id, tags)
+            dup_ids = [str(x["id"]) for x in rows[1:]]
             if dup_ids:
                 placeholders = ",".join(["?" for _ in dup_ids])
                 conn.execute(f"DELETE FROM memory_records WHERE id IN ({placeholders})", tuple(dup_ids))
                 conn.execute(f"DELETE FROM memory_tag_rel WHERE memory_id IN ({placeholders})", tuple(dup_ids))
             return "upsert"
 
-        memory_id = str(item.get("id") or uuid.uuid4())
+        memory_id = str(uuid.uuid4())
         conn.execute(
             """
             INSERT INTO memory_records(
@@ -459,63 +542,110 @@ class DBManager:
                 memory_scope, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                memory_id,
-                memory_type,
-                judgment,
-                reasoning,
-                strength,
-                is_active,
-                memory_scope,
-                incoming_created_at,
-                now,
-            ),
+            (memory_id, memory_type, judgment, reasoning, strength, is_active, memory_scope, created_at, now),
         )
-        self._replace_simple_tags(conn, memory_id, tags)
+        self._replace_tags(conn, memory_id, tags)
         return "insert"
 
-    def import_simple_memories_payload(self, payload: Any) -> Dict[str, int]:
-        if not self.simple_conn:
+    def import_central_payload(self, payload: Any) -> Dict[str, int]:
+        if not self.central_conn:
             return {"inserted": 0, "upserted": 0, "skipped": 0, "failed": 1}
 
-        if isinstance(payload, dict) and isinstance(payload.get("memories"), list):
+        if isinstance(payload, dict) and isinstance(payload.get("records"), list):
+            records = payload["records"]
+            rel_map: Dict[str, List[str]] = {}
+            tags_map: Dict[int, str] = {}
+            for row in payload.get("global_tags", []) or []:
+                try:
+                    tags_map[int(row.get("id"))] = str(row.get("name"))
+                except Exception:
+                    continue
+            for row in payload.get("memory_tag_rel", []) or []:
+                mid = str(row.get("memory_id") or "").strip()
+                tid = row.get("tag_id")
+                if not mid:
+                    continue
+                if isinstance(tid, int) and tid in tags_map:
+                    rel_map.setdefault(mid, []).append(tags_map[tid])
+            memories = []
+            for r in records:
+                item = dict(r)
+                item["tags"] = rel_map.get(str(item.get("id") or ""), [])
+                memories.append(item)
+        elif isinstance(payload, dict) and isinstance(payload.get("memories"), list):
             memories = payload["memories"]
         elif isinstance(payload, list):
             memories = payload
         else:
-            raise ValueError("JSON 格式错误：需要 memories 数组或直接数组。")
+            raise ValueError("JSON 格式错误：支持 records/memories/数组 三种格式。")
 
         inserted = 0
         upserted = 0
         skipped = 0
         failed = 0
-
-        with self.simple_conn:
-            for item in memories:
+        with self.central_conn:
+            for raw in memories:
                 try:
-                    result = self._upsert_simple_memory_by_judgment(
-                        self.simple_conn, item if isinstance(item, dict) else {}
-                    )
-                    if result == "insert":
+                    status = self._upsert_by_judgment(self.central_conn, raw if isinstance(raw, dict) else {})
+                    if status == "insert":
                         inserted += 1
-                    elif result == "upsert":
+                    elif status == "upsert":
                         upserted += 1
                     else:
                         skipped += 1
-                except Exception as e:
+                except Exception:
                     failed += 1
-                    logger.error(f"Import simple memory failed: {e}")
-
-            self.simple_conn.execute(
-                """
-                DELETE FROM memory_tag_rel
-                WHERE memory_id NOT IN (SELECT id FROM memory_records)
-                """
+            self.central_conn.execute(
+                "DELETE FROM memory_tag_rel WHERE memory_id NOT IN (SELECT id FROM memory_records)"
             )
+        return {"inserted": inserted, "upserted": upserted, "skipped": skipped, "failed": failed}
 
-        return {
-            "inserted": inserted,
-            "upserted": upserted,
-            "skipped": skipped,
-            "failed": failed,
-        }
+    # ===== maintenance =====
+
+    def get_maintenance_state(self) -> Dict[str, Any]:
+        if not os.path.exists(self.maintenance_state_path):
+            return {}
+        try:
+            with open(self.maintenance_state_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            return {"error": str(e)}
+
+    def list_backups(self) -> List[Dict[str, Any]]:
+        if not os.path.exists(self.backup_dir):
+            return []
+        rows = []
+        for name in sorted(os.listdir(self.backup_dir), reverse=True):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(self.backup_dir, name)
+            try:
+                stat = os.stat(path)
+                rows.append(
+                    {
+                        "name": name,
+                        "path": path,
+                        "size_kb": round(stat.st_size / 1024, 2),
+                        "modified": datetime.datetime.fromtimestamp(stat.st_mtime).strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        ),
+                    }
+                )
+            except Exception:
+                continue
+        return rows
+
+    def load_backup_preview(self, path: str) -> Dict[str, Any]:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "schema_version": data.get("schema_version"),
+                "exported_at": data.get("exported_at"),
+                "records": len(data.get("records") or []),
+                "global_tags": len(data.get("global_tags") or []),
+                "memory_tag_rel": len(data.get("memory_tag_rel") or []),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+

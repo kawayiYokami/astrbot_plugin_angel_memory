@@ -27,28 +27,45 @@ class SimpleMemoryBackupService:
         self.logger.info("[simple_backup] 阶段=读取向量元数据")
 
         try:
-            result = await asyncio.to_thread(collection.get, include=["metadatas"])
+            result = await asyncio.to_thread(
+                collection.get,
+                include=["metadatas", "documents"],
+            )
+            ids: List[str] = list((result or {}).get("ids") or [])
             metadatas: List[Dict] = list((result or {}).get("metadatas") or [])
+            documents: List[str] = list((result or {}).get("documents") or [])
         except Exception as e:
             self.logger.error(
                 f"[simple_backup] 备份失败 source={source} error=读取向量记忆失败: {e}",
                 exc_info=True,
             )
             return {"scanned": 0, "deduped": 0, "upserted": 0, "failed": 1}
-        self.logger.info(f"[simple_backup] 阶段=数据整理 scanned_raw={len(metadatas)}")
+        scanned = max(len(ids), len(metadatas), len(documents))
+        self.logger.info(f"[simple_backup] 阶段=数据整理 scanned_raw={scanned}")
 
         normalized_memories: List[Dict] = []
-        for meta in metadatas:
-            if not isinstance(meta, dict):
-                continue
-            judgment = str(meta.get("judgment") or "").strip()
+        skipped_no_judgment = 0
+        for idx in range(scanned):
+            meta: Dict = (
+                metadatas[idx]
+                if idx < len(metadatas) and isinstance(metadatas[idx], dict)
+                else {}
+            )
+            doc_text = str(documents[idx] or "").strip() if idx < len(documents) else ""
+            judgment = str(meta.get("judgment") or "").strip() or doc_text
             if not judgment:
+                skipped_no_judgment += 1
                 continue
+
+            reasoning = str(meta.get("reasoning") or "").strip()
+            if not reasoning and doc_text and doc_text != judgment:
+                reasoning = doc_text
+
             normalized_memories.append(
                 {
                     "memory_type": meta.get("memory_type", "知识记忆"),
                     "judgment": judgment,
-                    "reasoning": str(meta.get("reasoning") or "").strip(),
+                    "reasoning": reasoning,
                     "tags": meta.get("tags", ""),
                     "strength": meta.get("strength", 1),
                     "is_active": meta.get("is_active", False),
@@ -58,7 +75,7 @@ class SimpleMemoryBackupService:
             )
 
         self.logger.info(
-            f"[simple_backup] 阶段=写入Simple库 input={len(normalized_memories)}"
+            f"[simple_backup] 阶段=写入Simple库 input={len(normalized_memories)} skipped_no_judgment={skipped_no_judgment}"
         )
         try:
             stats = await memory_sql_manager.upsert_memories_by_judgment(normalized_memories)
@@ -80,6 +97,7 @@ class SimpleMemoryBackupService:
             f"deduped={stats.get('deduped', 0)} "
             f"upserted={stats.get('upserted', 0)} "
             f"failed={stats.get('failed', 0)} "
+            f"skipped_no_judgment={skipped_no_judgment} "
             f"cost_ms={cost_ms}"
         )
         return stats

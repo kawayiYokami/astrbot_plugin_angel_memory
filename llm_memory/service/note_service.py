@@ -591,11 +591,13 @@ class NoteService:
 
             # 准备主集合数据
             ids = [note.id for note in notes]
+            note_tag_names_map = {}
 
             # 准备 embedding_texts（内容 + 标签文本）
             embedding_texts = []
             for note in notes:
                 tag_names = self.id_service.ids_to_tags(note.tag_ids)
+                note_tag_names_map[note.id] = tag_names
                 embedding_texts.append(note.get_embedding_text(tag_names))
 
             # 准备 metadatas（包含所有笔记数据）
@@ -646,6 +648,16 @@ class NoteService:
             if sub_upsert_timings:
                 timings["sub_embed"] = sub_upsert_timings.get("embed", 0)
                 timings["sub_db"] = sub_upsert_timings.get("db_upsert", 0)
+
+            # 同步全局 tags 关系（note_tag_rel）
+            try:
+                if self.plugin_context is not None:
+                    memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
+                    if memory_sql_manager is not None:
+                        for note_id, tag_names in note_tag_names_map.items():
+                            memory_sql_manager.bind_note_tags_sync(note_id, tag_names)
+            except Exception as e:
+                self.logger.warning(f"同步 note_tag_rel 失败（不影响主流程）: {e}")
 
             # 记录方法总体执行时间
             timings["_batch_method_total"] = (time.time() - t_method_start) * 1000
