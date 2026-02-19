@@ -68,10 +68,15 @@ class VectorStore:
             provider_info = embedding_provider.get_model_info()
             self.logger.info(f"使用嵌入提供商: {provider_info}")
 
-            # 验证提供商的可用性
-            if not embedding_provider.is_available():
+            # API提供商在启动期必须可用；本地提供商允许懒加载
+            if (
+                embedding_provider.get_provider_type() != "local"
+                and not embedding_provider.is_available()
+            ):
                 self.logger.error(f"指定的嵌入提供商不可用: {provider_info}")
-                raise ValueError(f"指定的嵌入提供商不可用: {provider_info.get('model_name', 'Unknown')}")
+                raise ValueError(
+                    f"指定的嵌入提供商不可用: {provider_info.get('model_name', 'Unknown')}"
+                )
 
         # 可选：上游重排提供商（仅用于记忆重排）
         self.rerank_provider = rerank_provider
@@ -146,6 +151,8 @@ class VectorStore:
             provider_info = self.embedding_provider.get_model_info()
             if "dimension" in provider_info:
                 expected_dimension = provider_info["dimension"]
+                if not expected_dimension or expected_dimension <= 0:
+                    return
 
                 # 尝试用期望维度的向量查询
                 dummy_vector = [0.0] * expected_dimension
@@ -848,29 +855,8 @@ class VectorStore:
         # 获取集合前先记录详细信息
         self.logger.info(f"正在获取或创建集合: {name}")
 
-        from chromadb.utils import embedding_functions
-
-        # 根据嵌入提供商类型创建不同的嵌入函数
-        if self.embedding_provider.get_provider_type() == "local":
-            # 本地模型使用SentenceTransformerEmbeddingFunction
-            embedding_function = (
-                embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=self.embedding_provider.model_name
-                )
-            )
-        else:
-            # API提供商使用自定义的嵌入函数
-            class APIEmbeddingFunction:
-                def __init__(self, provider: EmbeddingProvider):
-                    self.provider = provider
-
-                def __call__(self, input_texts):
-                    # 这里不能直接使用await,需要在异步环境中调用
-                    # 实际使用时会通过其他方式处理
-                    raise NotImplementedError("API提供商需要通过异步方式调用")
-
-            embedding_function = None  # API提供商暂时不设置嵌入函数
-
+        # 统一由 provider 在业务层完成向量化，避免 Chroma 侧独立加载模型。
+        embedding_function = None
         collection = self.client.get_or_create_collection(
             name=name, embedding_function=embedding_function
         )

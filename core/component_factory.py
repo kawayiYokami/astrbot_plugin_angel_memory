@@ -74,17 +74,18 @@ class ComponentFactory:
             self._components["embedding_provider"] = embedding_provider
             self.plugin_context.set_embedding_provider(embedding_provider)
 
-            # 新增：检查嵌入提供商是否可用
-            if not embedding_provider.is_available():
+            # API提供商必须在启动期可用；本地提供商允许懒加载
+            provider_type = embedding_provider.get_provider_type()
+            if provider_type != "local" and not embedding_provider.is_available():
                 self.logger.critical(
                     "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
                 )
                 self.logger.critical("!!! 核心组件 embedding_provider 加载失败！")
                 self.logger.critical(
-                    "!!! 可能原因：网络问题导致无法下载模型，或模型文件损坏。"
+                    "!!! 当前为上游嵌入提供商模式：提供商不可用、配置错误或凭证异常。"
                 )
                 self.logger.critical(
-                    "!!! 插件将以功能受限模式启动，所有记忆相关功能将不可用。"
+                    "!!! 这不是本地模型安装问题。若需本地兜底，请启用 enable_local_embedding。"
                 )
                 self.logger.critical(
                     "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
@@ -95,6 +96,10 @@ class ComponentFactory:
                 if self.init_manager:
                     self.init_manager.mark_ready()  # 同样需要标记，否则主程序可能卡住
                 return self._components
+            elif provider_type == "local" and not embedding_provider.is_available():
+                self.logger.info(
+                    "本地嵌入模型采用懒加载模式：将在首次向量化请求时加载。"
+                )
 
             # 2. 创建向量存储 (只有在 embedding_provider 可用时才会执行)
             vector_store = self._create_vector_store(embedding_provider)

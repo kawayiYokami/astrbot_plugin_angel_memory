@@ -11,6 +11,8 @@ import asyncio
 import importlib
 import subprocess
 import threading
+import time
+import gc
 import sys
 from collections import OrderedDict
 
@@ -327,7 +329,10 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     """本地嵌入模型提供商（懒加载，自动依赖安装）"""
 
     def __init__(
-        self, model_name: str = "BAAI/bge-small-zh-v1.5", cache_size_mb: float = 100.0
+        self,
+        model_name: str = "BAAI/bge-small-zh-v1.5",
+        cache_size_mb: float = 100.0,
+        idle_unload_seconds: int = 1800,
     ):
         """
         初始化本地嵌入提供商（懒加载模式）
@@ -343,6 +348,19 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
         self._cache_enabled = True  # 缓存启用标志
         self._auto_install_attempted = False  # 避免重复尝试自动安装
+        self._model_lock = threading.RLock()
+        self._usage_lock = threading.RLock()
+        self._active_requests = 0
+        self._last_used_at: Optional[float] = None
+        self._idle_unload_seconds = max(60, int(idle_unload_seconds or 1800))
+        self._idle_check_interval_seconds = min(60, max(10, self._idle_unload_seconds // 3))
+        self._shutdown_event = threading.Event()
+        self._idle_reaper_thread = threading.Thread(
+            target=self._idle_reaper_loop,
+            name="LocalEmbeddingIdleReaper",
+            daemon=True,
+        )
+        self._idle_reaper_thread.start()
 
     def _ensure_dependencies(self):
         """确保依赖已安装，如需要则自动安装"""
@@ -355,17 +373,26 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             self.logger.info("✅ sentence-transformers 已安装")
             return True
         except ImportError:
-            self.logger.warning("⚠️ sentence-transformers 未安装")
+            self.logger.warning("⚠️ 检测到本地嵌入依赖未安装：sentence-transformers")
 
             # 如果已经尝试过自动安装，则不再重复尝试
             if self._auto_install_attempted:
-                self.logger.error("❌ 自动安装已失败，跳过")
+                self.logger.error("❌ 本地嵌入依赖安装失败（非模型加载失败），跳过重复安装")
+                self.logger.error(
+                    "👉 可在 AstrBot 界面手动安装依赖：更多功能 -> 平台日志 -> Pip库"
+                )
+                self.logger.error(
+                    "   Pip库建议输入: torch sentence-transformers"
+                )
+                self.logger.error(
+                    "   终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
+                )
                 return False
 
             self._auto_install_attempted = True
 
             # 自动安装依赖
-            self.logger.info("🚀 自动安装本地模型依赖...")
+            self.logger.info("🚀 开始自动安装本地嵌入依赖：torch + sentence-transformers")
             try:
                 subprocess.check_call([
                     sys.executable, "-m", "pip", "install",
@@ -373,76 +400,144 @@ class LocalEmbeddingProvider(EmbeddingProvider):
                     "torch",
                     "sentence-transformers>=2.2.0"
                 ])
-                self.logger.info("✅ 本地模型依赖安装完成")
+                self.logger.info("✅ 本地嵌入依赖安装完成")
 
                 # 重新尝试导入
                 self._model_class = importlib.import_module('sentence_transformers').SentenceTransformer
                 return True
 
             except subprocess.CalledProcessError as e:
-                self.logger.error(f"❌ 自动安装失败: {e}")
-                self.logger.error("请手动安装: pip install torch sentence-transformers")
+                self.logger.error(f"❌ 本地嵌入依赖安装失败（非模型加载失败）: {e}")
+                self.logger.error(
+                    "请手动安装依赖。终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
+                )
+                self.logger.error(
+                    "👉 或在 AstrBot 界面手动安装：更多功能 -> 平台日志 -> Pip库"
+                )
+                self.logger.error(
+                    "   Pip库建议输入: torch sentence-transformers"
+                )
                 return False
 
     def _load_model(self):
         """懒加载本地模型"""
         if not self._ensure_dependencies():
-            self.logger.error("❌ 无法加载本地模型：缺少依赖")
+            self.logger.error("❌ 本地嵌入不可用：依赖缺失或安装失败（非模型加载失败）")
+            self.logger.error(
+                "👉 依赖安装入口：更多功能 -> 平台日志 -> Pip库"
+            )
+            self.logger.error(
+                "   Pip库建议输入: torch sentence-transformers"
+            )
+            self.logger.error(
+                "   终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
+            )
             return
 
         try:
             self.logger.info(f"正在加载本地嵌入模型: {self.model_name}")
             self._model = self._model_class(self.model_name)
             self.logger.info(f"本地嵌入模型加载完成: {self.model_name}")
+            self._last_used_at = time.time()
         except Exception as e:
-            self.logger.error(f"本地嵌入模型加载失败: {e}")
+            self.logger.error(f"本地嵌入模型加载失败（依赖已安装）: {e}")
             self._model = None
+
+    def _ensure_model_ready(self):
+        """确保模型已加载（首次使用时触发）"""
+        with self._model_lock:
+            if self._model is None:
+                self._load_model()
+            if self._model is None:
+                raise RuntimeError(
+                    f"本地嵌入不可用：依赖安装失败或模型加载失败: {self.model_name}"
+                )
+            self._last_used_at = time.time()
+            return self._model
+
+    def _idle_reaper_loop(self):
+        """后台空闲释放线程：长时间未使用时自动释放模型内存"""
+        while not self._shutdown_event.wait(self._idle_check_interval_seconds):
+            try:
+                if self._model is None:
+                    continue
+
+                with self._usage_lock:
+                    is_busy = self._active_requests > 0
+                    last_used_at = self._last_used_at
+
+                if is_busy or last_used_at is None:
+                    continue
+
+                idle_seconds = time.time() - last_used_at
+                if idle_seconds < self._idle_unload_seconds:
+                    continue
+
+                with self._model_lock:
+                    with self._usage_lock:
+                        if self._active_requests > 0:
+                            continue
+                    if self._model is not None:
+                        self.logger.info(
+                            f"本地模型空闲 {int(idle_seconds)} 秒，释放内存: {self.model_name}"
+                        )
+                        self._model = None
+                        gc.collect()
+            except Exception as e:
+                self.logger.warning(f"本地模型空闲释放线程异常: {e}")
 
     def embed_documents_sync(self, texts: List[str]) -> List[List[float]]:
         """同步方法：为文档列表生成向量嵌入（带缓存）"""
         if not texts:
             return []
 
-        if not self.is_available():
-            raise RuntimeError("本地模型不可用")
+        with self._usage_lock:
+            self._active_requests += 1
 
-        # 如果缓存已禁用，直接处理（使用局部变量避免并发问题）
-        cache = self._cache
-        if not self._cache_enabled or not cache:
-            embeddings = self._model.encode(texts, convert_to_numpy=True)
-            return embeddings.tolist()
+        try:
+            model = self._ensure_model_ready()
 
-        # 1. 尝试从缓存获取
-        cached_results, missing_indices = cache.get_batch(texts)
+            # 如果缓存已禁用，直接处理（使用局部变量避免并发问题）
+            cache = self._cache
+            if not self._cache_enabled or not cache:
+                embeddings = model.encode(texts, convert_to_numpy=True)
+                return embeddings.tolist()
 
-        # 2. 如果全部命中缓存，直接返回
-        if not missing_indices:
-            self.logger.debug(f"✅ 缓存全部命中，跳过向量化: {len(texts)}个文本")
-            return [r for r in cached_results if r is not None]
+            # 1. 尝试从缓存获取
+            cached_results, missing_indices = cache.get_batch(texts)
 
-        # 3. 对未命中的文本进行向量化
-        missing_texts = [texts[i] for i in missing_indices]
-        self.logger.debug(
-            f"🔄 缓存部分命中，需要向量化: {len(missing_texts)}/{len(texts)}个文本"
-        )
+            # 2. 如果全部命中缓存，直接返回
+            if not missing_indices:
+                self.logger.debug(f"✅ 缓存全部命中，跳过向量化: {len(texts)}个文本")
+                return [r for r in cached_results if r is not None]
 
-        # 直接同步调用（本地模型）
-        new_embeddings = self._model.encode(missing_texts, convert_to_numpy=True)
-        new_embeddings_list = new_embeddings.tolist()
+            # 3. 对未命中的文本进行向量化
+            missing_texts = [texts[i] for i in missing_indices]
+            self.logger.debug(
+                f"🔄 缓存部分命中，需要向量化: {len(missing_texts)}/{len(texts)}个文本"
+            )
 
-        # 4. 将新向量存入缓存
-        cache.put_batch(missing_texts, new_embeddings_list)
+            # 直接同步调用（本地模型）
+            new_embeddings = model.encode(missing_texts, convert_to_numpy=True)
+            new_embeddings_list = new_embeddings.tolist()
 
-        # 5. 合并结果：组装完整的嵌入列表
-        result = []
-        new_embedding_iter = iter(new_embeddings_list)
-        for cached in cached_results:
-            if cached is not None:
-                result.append(cached)
-            else:
-                result.append(next(new_embedding_iter))
+            # 4. 将新向量存入缓存
+            cache.put_batch(missing_texts, new_embeddings_list)
 
-        return result
+            # 5. 合并结果：组装完整的嵌入列表
+            result = []
+            new_embedding_iter = iter(new_embeddings_list)
+            for cached in cached_results:
+                if cached is not None:
+                    result.append(cached)
+                else:
+                    result.append(next(new_embedding_iter))
+
+            return result
+        finally:
+            with self._usage_lock:
+                self._active_requests = max(0, self._active_requests - 1)
+                self._last_used_at = time.time()
 
     async def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """异步方法：为文档列表生成向量嵌入（保持兼容性）"""
@@ -503,6 +598,9 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     def shutdown(self):
         """关闭本地提供商"""
+        self._shutdown_event.set()
+        with self._model_lock:
+            self._model = None
         self.clear_cache()
         self.logger.info(f"本地嵌入提供商 {self.model_name} 已关闭")
 
@@ -785,35 +883,46 @@ class EmbeddingProviderFactory:
         Returns:
             嵌入提供商实例
         """
-        # 启用本地模型时直接返回
-        if enable_local_embedding:
-            self.logger.info("使用本地嵌入模型")
+        normalized_provider_id = (provider_id or "").strip()
+        local_allowed = bool(enable_local_embedding)
+
+        # 分支1：优先尝试上游API提供商
+        if normalized_provider_id:
+            if not self.context:
+                raise Exception("无上下文信息，无法获取API提供商")
+
+            provider = self.context.get_provider_by_id(normalized_provider_id)
+            if provider:
+                api_provider = APIEmbeddingProvider(provider, normalized_provider_id)
+                if await api_provider.check_availability():
+                    self.logger.info(f"成功使用API嵌入提供商: {normalized_provider_id}")
+                    return api_provider
+
+                if local_allowed:
+                    self.logger.warning(
+                        f"API嵌入提供商不可用，已回退到本地懒加载模型: {normalized_provider_id}"
+                    )
+                    return LocalEmbeddingProvider(local_model_name)
+                raise Exception(f"API提供商不可用: {normalized_provider_id}")
+
+            if local_allowed:
+                self.logger.warning(
+                    f"未找到API嵌入提供商，已回退到本地懒加载模型: {normalized_provider_id}"
+                )
+                return LocalEmbeddingProvider(local_model_name)
+            raise Exception(f"未找到API提供商: {normalized_provider_id}")
+
+        # 分支2：未配置上游时，按本地开关决定
+        if local_allowed:
+            self.logger.info("未配置上游嵌入提供商，使用本地懒加载模型")
             return LocalEmbeddingProvider(local_model_name)
 
-        # API模式下必须提供provider_id
-        if not provider_id:
-            raise ValueError(
-                "错误：嵌入模型提供商ID (provider_id) 为空，且本地嵌入已禁用 (enable_local_embedding=False)。\n"
-                "解决方案：\n"
-                "1. 在配置中设置 'astrbot_embedding_provider_id' 为有效的API提供商ID，或\n"
-                "2. 将 'enable_local_embedding' 设置为 True 以使用本地模型，或\n"
-                "3. 在系统中注册嵌入提供商并配置其ID。"
-            )
-
-        # 尝试使用API提供商
-        if not self.context:
-            raise Exception("无上下文信息，无法获取API提供商")
-
-        provider = self.context.get_provider_by_id(provider_id)
-        if not provider:
-            raise Exception(f"未找到API提供商: {provider_id}")
-
-        api_provider = APIEmbeddingProvider(provider, provider_id)
-        if not await api_provider.check_availability():
-            raise Exception(f"API提供商不可用: {provider_id}")
-
-        self.logger.info(f"成功使用API嵌入提供商: {provider_id}")
-        return api_provider
+        raise ValueError(
+            "错误：未配置嵌入模型提供商ID，且本地嵌入已禁用。\n"
+            "解决方案：\n"
+            "1. 在配置中设置 'astrbot_embedding_provider_id' 为有效的API提供商ID，或\n"
+            "2. 将 'enable_local_embedding' 设置为 True 以使用本地模型。"
+        )
 
     def get_available_providers(self) -> List[Dict[str, Any]]:
         """
