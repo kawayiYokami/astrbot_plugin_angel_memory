@@ -271,6 +271,10 @@ class PluginContext:
         components = self._component_factory.get_components()
         return components.get(component_name)
 
+    def get_memory_runtime(self):
+        """获取统一记忆运行时组件。"""
+        return self.get_component("memory_runtime")
+
     # === 验证方法 ===
 
     def has_embedding_providers(self) -> bool:

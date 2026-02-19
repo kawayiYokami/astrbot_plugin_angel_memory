@@ -20,6 +20,7 @@ from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.vector_store import VectorStore
 from ..llm_memory import CognitiveService
 from ..llm_memory.service.note_service import NoteService
+from .memory_runtime import VectorMemoryRuntime
 from .deepmind import DeepMind
 
 
@@ -110,17 +111,21 @@ class ComponentFactory:
             cognitive_service = self._create_cognitive_service(vector_store)
             self._components["cognitive_service"] = cognitive_service
 
-            # 4. 创建笔记服务
+            # 4. 创建统一记忆运行时（Phase A: 向量实现）
+            memory_runtime = self._create_memory_runtime(cognitive_service)
+            self._components["memory_runtime"] = memory_runtime
+
+            # 5. 创建笔记服务
             note_service = self._create_note_service(vector_store)
             self._components["note_service"] = note_service
 
-            # 5. 创建DeepMind
+            # 6. 创建DeepMind
             deepmind = await self._create_deepmind(
-                vector_store, note_service, cognitive_service
+                vector_store, note_service, memory_runtime
             )
             self._components["deepmind"] = deepmind
 
-            # 6. 创建文件监控
+            # 7. 创建文件监控
             file_monitor = self._create_file_monitor(note_service)
             self._components["file_monitor"] = file_monitor
 
@@ -258,6 +263,19 @@ class ComponentFactory:
 
         return cognitive_service
 
+    def _create_memory_runtime(self, cognitive_service):
+        """创建统一记忆运行时（当前为向量实现）。"""
+        self.logger.info("🧩 创建统一记忆运行时...")
+        if self.plugin_context.get_config("enable_simple_memory", False):
+            raise RuntimeError(
+                "enable_simple_memory=true，但 SimpleMemoryRuntime 尚未实现。"
+                "这是预期保护：当前版本不允许自动回退到向量实现。"
+                "请将 enable_simple_memory 设为 false 后重试。"
+            )
+        runtime = VectorMemoryRuntime(cognitive_service)
+        self.logger.info("✅ 统一记忆运行时创建完成 (VectorMemoryRuntime)")
+        return runtime
+
     def _create_note_service(self, vector_store):
         """创建笔记服务"""
         self.logger.info("📝 创建笔记服务...")
@@ -271,7 +289,7 @@ class ComponentFactory:
 
         return note_service
 
-    async def _create_deepmind(self, vector_store, note_service, cognitive_service):
+    async def _create_deepmind(self, vector_store, note_service, memory_runtime):
         """创建DeepMind"""
         self.logger.info("🤖 创建DeepMind...")
 
@@ -293,7 +311,7 @@ class ComponentFactory:
             note_service=note_service,
             plugin_context=self.plugin_context, # 传递plugin_context
             provider_id=llm_provider_id,
-            cognitive_service=cognitive_service,  # 使用已创建的认知服务实例
+            memory_runtime=memory_runtime,  # 使用统一记忆运行时
         )
 
         self.logger.info("✅ DeepMind创建完成")

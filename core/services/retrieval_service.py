@@ -59,15 +59,6 @@ class DeepMindRetrievalService:
                 rag_fields = deepmind.query_processor.extract_rag_fields(event)
                 entities = rag_fields.get("entities", [])
 
-                handlers = None
-                if (
-                    hasattr(deepmind.memory_system, "memory_handler_factory")
-                    and deepmind.memory_system.memory_handler_factory
-                ):
-                    handlers = getattr(
-                        deepmind.memory_system.memory_handler_factory, "handlers", None
-                    )
-
                 dynamic_limit = deepmind.CHAINED_RECALL_PER_TYPE_LIMIT
                 if deepmind.soul:
                     try:
@@ -83,7 +74,6 @@ class DeepMindRetrievalService:
                     entities=entities,
                     per_type_limit=int(dynamic_limit),
                     final_limit=int(dynamic_limit * 1.5),
-                    memory_handlers=handlers,
                     event=event,
                     vector=memory_vector,
                     memory_scope=memory_scope,

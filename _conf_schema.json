@@ -24,6 +24,12 @@
     "default": false,
     "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5，模型本体约96MB）。首次使用会自动安装运行依赖（如torch、sentence-transformers），总体占用通常为数百MB（与平台环境相关）。"
   },
+  "enable_simple_memory": {
+    "type": "bool",
+    "description": "[核心模型设置] 启用简化记忆模式（SQL+tags）",
+    "default": false,
+    "hint": "开启后将使用简化记忆模式（非向量）：记忆仅按 tags 召回（命中次数->按天时间->强度排序），笔记检索功能将不生效。"
+  },
   "conversation_scope_map": {
     "type": "text",
     "description": "[记忆分类] 会话ID到记忆分类域的映射",
