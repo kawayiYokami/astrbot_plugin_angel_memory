@@ -118,6 +118,8 @@ class DeepMindRetrievalService:
                 recall_count=deepmind.NOTE_CANDIDATE_COUNT,
                 vector=note_vector,
             )
+        elif getattr(deepmind.config, "enable_simple_memory", False):
+            deepmind.logger.debug("当前为简化记忆模式，已跳过笔记检索。")
 
         note_id_mapping = {}
         for note in candidate_notes:

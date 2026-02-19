@@ -124,7 +124,10 @@ class BackgroundInitializer:
                 self._migration_tasks.append(migration_task)
                 self.logger.info("🛠️ memory_scope 后台迁移任务已调度（异步分离）")
             else:
-                self.logger.warning("⚠️ memory_scope 迁移跳过：cognitive_service/main_collection 不可用")
+                if bool(self.config.get("enable_simple_memory", False)):
+                    self.logger.info("ℹ️ 当前为简化记忆模式，已跳过向量 memory_scope 迁移。")
+                else:
+                    self.logger.warning("⚠️ memory_scope 迁移跳过：cognitive_service/main_collection 不可用")
 
             embedding_provider = components.get("embedding_provider")
             if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):

@@ -17,10 +17,11 @@ except ImportError:
 
 # 导入核心组件
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
+from ..llm_memory.components.memory_sql_manager import MemorySqlManager
 from ..llm_memory.components.vector_store import VectorStore
 from ..llm_memory import CognitiveService
 from ..llm_memory.service.note_service import NoteService
-from .memory_runtime import VectorMemoryRuntime
+from .memory_runtime import SimpleMemoryRuntime, VectorMemoryRuntime
 from .deepmind import DeepMind
 
 
@@ -69,6 +70,29 @@ class ComponentFactory:
 
         try:
             self.logger.info("🏭 开始创建核心组件...")
+            enable_simple_memory = bool(config.get("enable_simple_memory", False))
+
+            if enable_simple_memory:
+                self.logger.info("🧩 检测到 enable_simple_memory=true，使用 SimpleMemoryRuntime")
+                memory_runtime = self._create_memory_runtime(cognitive_service=None)
+                self._components["memory_runtime"] = memory_runtime
+
+                deepmind = await self._create_deepmind(
+                    vector_store=None,
+                    note_service=None,
+                    memory_runtime=memory_runtime,
+                )
+                self._components["deepmind"] = deepmind
+
+                self._initialized = True
+                self.logger.info("✅ 所有核心组件创建完成")
+                self.logger.info("✅ 记忆运行时: SimpleMemoryRuntime")
+
+                if self.init_manager:
+                    self.init_manager.mark_ready()
+                    self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
+
+                return self._components
 
             # 1. 创建嵌入提供商
             embedding_provider = await self._create_embedding_provider()
@@ -132,6 +156,7 @@ class ComponentFactory:
             # 核心组件已就绪，立即标记初始化完成
             self._initialized = True
             self.logger.info("✅ 所有核心组件创建完成")
+            self.logger.info("✅ 记忆运行时: VectorMemoryRuntime")
 
             # 如果有初始化管理器，立即标记系统准备就绪
             # 此时"电脑已开机"，用户可以开始使用，不需要等待"硬盘整理"（文件监控）
@@ -264,14 +289,20 @@ class ComponentFactory:
         return cognitive_service
 
     def _create_memory_runtime(self, cognitive_service):
-        """创建统一记忆运行时（当前为向量实现）。"""
+        """创建统一记忆运行时。"""
         self.logger.info("🧩 创建统一记忆运行时...")
+
         if self.plugin_context.get_config("enable_simple_memory", False):
-            raise RuntimeError(
-                "enable_simple_memory=true，但 SimpleMemoryRuntime 尚未实现。"
-                "这是预期保护：当前版本不允许自动回退到向量实现。"
-                "请将 enable_simple_memory 设为 false 后重试。"
-            )
+            simple_db_path = self.plugin_context.get_index_dir() / "simple_memory.db"
+            memory_sql_manager = MemorySqlManager(simple_db_path)
+            self._components["memory_sql_manager"] = memory_sql_manager
+            runtime = SimpleMemoryRuntime(memory_sql_manager)
+            self.logger.info("✅ 统一记忆运行时创建完成 (SimpleMemoryRuntime)")
+            return runtime
+
+        if cognitive_service is None:
+            raise RuntimeError("向量模式下创建 memory_runtime 失败：cognitive_service 不可用。")
+
         runtime = VectorMemoryRuntime(cognitive_service)
         self.logger.info("✅ 统一记忆运行时创建完成 (VectorMemoryRuntime)")
         return runtime
