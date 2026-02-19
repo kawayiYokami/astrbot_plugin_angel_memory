@@ -298,7 +298,7 @@ class ComponentFactory:
 
     def _create_memory_sql_manager(self) -> MemorySqlManager:
         """创建 SQL 记忆管理器（两种运行时共用）。"""
-        simple_db_path = self.plugin_context.get_index_dir() / "simple_memory.db"
+        simple_db_path = self.plugin_context.get_simple_memory_db_path()
         manager = MemorySqlManager(simple_db_path)
         self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
         return manager
