@@ -61,7 +61,7 @@ with st.sidebar:
     # 模式选择
     mode = st.radio(
         "选择模式",
-        ["🔍 混合检索", "📖 浏览记忆", "📂 浏览笔记"],
+        ["🔍 混合检索", "📖 浏览记忆", "🧾 浏览Simple记忆", "📂 浏览笔记"],
         index=0
     )
 
@@ -74,6 +74,8 @@ with st.sidebar:
         for c in collections:
             count = db_mgr.get_collection_stats(c)["count"]
             st.write(f"- {c}: {count}")
+        simple_stats = db_mgr.get_simple_memory_stats() if db_mgr.has_simple_memory_db() else {"count": 0}
+        st.write(f"- simple_memory.db: {simple_stats.get('count', 0)}")
 
 # --- 3. 主界面逻辑 ---
 
@@ -148,10 +150,6 @@ def render_item(item, type="memory"):
              tag_ids_str = tag_ids
 
         header_parts.append(f"🔖 {tag_ids_str}")
-
-    # 标签 (文本格式)
-    if meta.get('tags'):
-        header_parts.append(f"🔖 {meta['tags']}")
 
     if header_parts:
         st.markdown(" | ".join(header_parts))
@@ -296,6 +294,52 @@ elif mode == "📖 浏览记忆":
                 st.json(item['metadata'])
 
 # === 模式 3: 浏览笔记 ===
+elif mode == "🧾 浏览Simple记忆":
+    st.subheader("🧾 Simple 记忆浏览（simple_memory.db）")
+
+    if not db_mgr.has_simple_memory_db():
+        st.warning("未找到 simple_memory.db，请先运行插件并完成至少一次备份。")
+        st.stop()
+
+    simple_stats = db_mgr.get_simple_memory_stats()
+    scopes = simple_stats.get("scopes", [])
+    total_count = int(simple_stats.get("count", 0))
+
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        selected_scope = st.selectbox("scope 过滤", ["(全部)"] + scopes, index=0)
+    with c2:
+        keyword = st.text_input("关键词（匹配 judgment/reasoning/tags）", value="")
+
+    page_size = 20
+    total_pages = math.ceil(total_count / page_size) if total_count > 0 else 1
+    col_p1, col_p2 = st.columns([1, 3])
+    with col_p1:
+        page = st.number_input(
+            f"页码 (共 {total_pages} 页)",
+            min_value=1,
+            max_value=max(1, total_pages),
+            value=1,
+            key="simple_page",
+        )
+
+    offset = (page - 1) * page_size
+    scope_filter = "" if selected_scope == "(全部)" else selected_scope
+    items = db_mgr.browse_simple_memories(
+        limit=page_size,
+        offset=offset,
+        scope=scope_filter,
+        keyword=keyword,
+    )
+
+    st.caption(f"总记录 {total_count}，当前页返回 {len(items)} 条")
+    for item in items:
+        with st.container(border=True):
+            render_item(item, type="memory")
+            with st.expander("详细信息 (Metadata)"):
+                st.json(item.get("metadata", {}))
+
+# === 模式 4: 浏览笔记 ===
 elif mode == "📂 浏览笔记":
     st.subheader("📂 笔记文件浏览")
 

@@ -39,6 +39,7 @@ class BackgroundInitializer:
         self.config = config
         self.plugin_context = plugin_context
         self._migration_tasks = []
+        self._post_init_tasks = []
 
         self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
         self.logger.info(
@@ -49,6 +50,7 @@ class BackgroundInitializer:
         self.component_factory = ComponentFactory(
             self.plugin_context, init_manager=self.init_manager
         )
+        self.plugin_context.set_component_factory(self.component_factory)
         self.logger.debug("BackgroundInitializer初始化完成 - 共享主线程PluginContext")
 
     def start_background_initialization(self):
@@ -136,7 +138,26 @@ class BackgroundInitializer:
 
             deepmind = components.get("deepmind")
             if deepmind and deepmind.is_enabled():
-                self.logger.info("🧠 DeepMind已在初始化时完成记忆巩固，跳过重复巩固")
+                memory_behavior = self.config.get("memory_behavior", {})
+                if isinstance(memory_behavior, dict):
+                    sleep_interval = int(memory_behavior.get("sleep_interval", 3600))
+                else:
+                    sleep_interval = int(self.config.get("sleep_interval", 3600))
+
+                async def _trigger_sleep_once_after_init():
+                    try:
+                        self.logger.info(
+                            f"[simple_backup] trigger_sleep_after_init provider={self.plugin_context.get_current_provider()}"
+                        )
+                        if sleep_interval > 0:
+                            await deepmind.check_and_sleep_if_needed(sleep_interval)
+                        else:
+                            await deepmind._sleep()
+                    except Exception as e:
+                        self.logger.error(f"初始化后触发睡眠失败: {e}", exc_info=True)
+
+                task = asyncio.create_task(_trigger_sleep_once_after_init())
+                self._post_init_tasks.append(task)
             else:
                 self.logger.warning("⚠️ DeepMind未启用")
 
@@ -170,6 +191,12 @@ class BackgroundInitializer:
                 task.cancel()
         if self._migration_tasks:
             self.logger.info("后台迁移任务已取消")
+
+        for task in self._post_init_tasks:
+            if task and not task.done():
+                task.cancel()
+        if self._post_init_tasks:
+            self.logger.info("初始化后后台任务已取消")
 
         # 关闭所有由ComponentFactory创建的组件
         if self.component_factory:
