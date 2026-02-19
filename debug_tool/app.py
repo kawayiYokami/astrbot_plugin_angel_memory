@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import math
 import datetime
+import json
 from utils.config_loader import ConfigLoader
 from utils.db import DBManager
 
@@ -61,7 +62,7 @@ with st.sidebar:
     # 模式选择
     mode = st.radio(
         "选择模式",
-        ["🔍 混合检索", "📖 浏览记忆", "🧾 浏览Simple记忆", "📂 浏览笔记"],
+        ["🔍 混合检索", "📖 浏览记忆", "🧾 浏览Simple记忆", "🔄 导入导出", "📂 浏览笔记"],
         index=0
     )
 
@@ -359,7 +360,63 @@ elif mode == "🧾 浏览Simple记忆":
             with st.expander("详细信息 (Metadata)"):
                 st.json(item.get("metadata", {}))
 
-# === 模式 4: 浏览笔记 ===
+# === 模式 4: 导入导出 ===
+elif mode == "🔄 导入导出":
+    st.subheader("🔄 Simple 记忆 JSON 导入导出")
+
+    if not db_mgr.has_simple_memory_db():
+        st.warning("未找到 simple_memory.db，请先运行插件并完成至少一次备份。")
+        st.stop()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**导出 JSON**")
+        export_scope = st.text_input(
+            "导出 scope（可选）",
+            value="",
+            placeholder="留空导出全部",
+            key="export_scope",
+        )
+        if st.button("生成导出文件", key="btn_export_json"):
+            payload = db_mgr.export_simple_memories_payload(scope=export_scope)
+            st.session_state["simple_export_payload"] = payload
+            st.success(f"已生成导出数据，共 {payload.get('count', 0)} 条。")
+
+        payload = st.session_state.get("simple_export_payload")
+        if payload:
+            exported_at = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_name = f"simple_memory_export_{exported_at}.json"
+            st.download_button(
+                label="下载 JSON",
+                data=json.dumps(payload, ensure_ascii=False, indent=2),
+                file_name=default_name,
+                mime="application/json",
+                key="download_export_json",
+            )
+
+    with c2:
+        st.markdown("**导入 JSON**")
+        uploaded = st.file_uploader(
+            "选择 JSON 文件",
+            type=["json"],
+            key="import_json_file",
+        )
+        if uploaded is not None and st.button("执行导入", key="btn_import_json"):
+            try:
+                content = uploaded.read().decode("utf-8")
+                payload = json.loads(content)
+                stats = db_mgr.import_simple_memories_payload(payload)
+                st.success(
+                    "导入完成："
+                    f"新增 {stats.get('inserted', 0)}，"
+                    f"更新 {stats.get('upserted', 0)}，"
+                    f"跳过 {stats.get('skipped', 0)}，"
+                    f"失败 {stats.get('failed', 0)}"
+                )
+            except Exception as e:
+                st.error(f"导入失败：{e}")
+
+# === 模式 5: 浏览笔记 ===
 elif mode == "📂 浏览笔记":
     st.subheader("📂 笔记文件浏览")
 
