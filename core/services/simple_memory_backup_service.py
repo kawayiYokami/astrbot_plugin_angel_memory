@@ -37,20 +37,20 @@ class SimpleMemoryBackupService:
     ) -> Dict[str, int]:
         start_time = time.time()
         self.logger.info(
-            f"[simple_backup] start source={source} provider={provider_id or 'unknown'}"
+            f"[simple_backup] 开始备份 source={source} provider={provider_id or 'unknown'}"
         )
-        self.logger.info("[simple_backup] phase=fetch_metadatas")
+        self.logger.info("[simple_backup] 阶段=读取向量元数据")
 
         try:
             result = collection.get(include=["metadatas"])
             metadatas: List[Dict] = list((result or {}).get("metadatas") or [])
         except Exception as e:
             self.logger.error(
-                f"[simple_backup] failed source={source} error=读取向量记忆失败: {e}",
+                f"[simple_backup] 备份失败 source={source} error=读取向量记忆失败: {e}",
                 exc_info=True,
             )
             return {"scanned": 0, "deduped": 0, "upserted": 0, "failed": 1}
-        self.logger.info(f"[simple_backup] phase=normalize scanned_raw={len(metadatas)}")
+        self.logger.info(f"[simple_backup] 阶段=数据整理 scanned_raw={len(metadatas)}")
 
         normalized_memories: List[Dict] = []
         for meta in metadatas:
@@ -73,14 +73,14 @@ class SimpleMemoryBackupService:
             )
 
         self.logger.info(
-            f"[simple_backup] phase=upsert input={len(normalized_memories)}"
+            f"[simple_backup] 阶段=写入Simple库 input={len(normalized_memories)}"
         )
         stats = asyncio.run(
             memory_sql_manager.upsert_memories_by_judgment(normalized_memories)
         )
         cost_ms = int((time.time() - start_time) * 1000)
         self.logger.info(
-            "[simple_backup] done "
+            "[simple_backup] 备份完成 "
             f"scanned={stats.get('scanned', 0)} "
             f"deduped={stats.get('deduped', 0)} "
             f"upserted={stats.get('upserted', 0)} "

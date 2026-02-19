@@ -9,6 +9,7 @@ import asyncio
 from .initialization_manager import InitializationManager
 from .component_factory import ComponentFactory
 from .migrations.memory_scope_migration import MemoryScopeMigration
+from .services.simple_to_vector_sync_service import SimpleToVectorSyncService
 
 try:
     from astrbot.api import logger
@@ -143,9 +144,25 @@ class BackgroundInitializer:
                     sleep_interval = int(memory_behavior.get("sleep_interval", 3600))
                 else:
                     sleep_interval = int(self.config.get("sleep_interval", 3600))
+                enable_simple_memory = bool(self.config.get("enable_simple_memory", False))
+                cognitive_service = components.get("cognitive_service")
+                memory_sql_manager = components.get("memory_sql_manager")
 
                 async def _trigger_sleep_once_after_init():
                     try:
+                        if (
+                            not enable_simple_memory
+                            and cognitive_service is not None
+                            and memory_sql_manager is not None
+                            and hasattr(cognitive_service, "main_collection")
+                        ):
+                            sync_service = SimpleToVectorSyncService(self.logger)
+                            await sync_service.sync_missing_memories(
+                                cognitive_service=cognitive_service,
+                                memory_sql_manager=memory_sql_manager,
+                                provider_id=str(self.plugin_context.get_current_provider()),
+                            )
+
                         self.logger.info(
                             f"[simple_backup] trigger_sleep_after_init provider={self.plugin_context.get_current_provider()}"
                         )
