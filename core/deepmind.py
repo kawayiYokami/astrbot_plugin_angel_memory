@@ -492,6 +492,10 @@ class DeepMind:
 
     async def _sleep(self):
         """AI睡觉整理记忆：重要内容加强，无用内容清理"""
+        await self.sleep()
+
+    async def sleep(self):
+        """公共睡眠入口，供外部组件触发睡眠流程。"""
         await self.sleep_service.sleep()
 
     def shutdown(self):

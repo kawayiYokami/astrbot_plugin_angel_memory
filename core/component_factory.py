@@ -414,27 +414,53 @@ class ComponentFactory:
 
     def shutdown(self):
         """关闭所有组件，释放资源"""
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
         self.logger.info("🏭 开始关闭所有核心组件...")
 
         # 按创建顺序的逆序关闭组件
         component_shutdown_order = [
             "file_monitor",
             "deepmind",
+            "memory_runtime",
+            "memory_sql_manager",
             "note_service",
             "cognitive_service",
             "vector_store",
             "embedding_provider",
         ]
 
+        def _try_shutdown_component(component_name: str, component: Any) -> None:
+            shutdown_method = None
+            for method_name in ("shutdown", "close", "stop", "dispose"):
+                if hasattr(component, method_name):
+                    shutdown_method = getattr(component, method_name)
+                    break
+
+            if shutdown_method is None:
+                return
+
+            try:
+                self.logger.info(f"正在关闭组件: {component_name}...")
+                result = shutdown_method()
+                if hasattr(result, "__await__"):
+                    try:
+                        asyncio.get_running_loop()
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            executor.submit(asyncio.run, result).result()
+                    except RuntimeError:
+                        asyncio.run(result)
+                self.logger.info(f"✅ 组件 {component_name} 已关闭")
+            except Exception as e:
+                self.logger.error(f"❌ 关闭组件 {component_name} 失败: {e}")
+
         for component_name in component_shutdown_order:
             component = self._components.get(component_name)
-            if component and hasattr(component, "shutdown"):
-                try:
-                    self.logger.info(f"正在关闭组件: {component_name}...")
-                    component.shutdown()
-                    self.logger.info(f"✅ 组件 {component_name} 已关闭")
-                except Exception as e:
-                    self.logger.error(f"❌ 关闭组件 {component_name} 失败: {e}")
+            if component:
+                _try_shutdown_component(component_name, component)
+                self._components.pop(component_name, None)
 
+        self._components.clear()
         self._initialized = False
         self.logger.info("✅ 所有核心组件已成功关闭")

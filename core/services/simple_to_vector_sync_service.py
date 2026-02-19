@@ -66,7 +66,14 @@ class SimpleToVectorSyncService:
             if judgment:
                 vector_judgments.add(judgment)
 
-        sql_memories = await memory_sql_manager.list_all_memories_for_vector_sync()
+        try:
+            sql_memories = await memory_sql_manager.list_all_memories_for_vector_sync()
+        except Exception as e:
+            self.logger.error(
+                f"[simple_to_vector_sync] list_all_memories_for_vector_sync failed: {e}",
+                exc_info=True,
+            )
+            sql_memories = []
         missing = [
             item
             for item in sql_memories
@@ -77,13 +84,21 @@ class SimpleToVectorSyncService:
         failed = 0
         for item in missing:
             try:
+                raw_strength = item.get("strength", 1)
+                if raw_strength in (None, ""):
+                    safe_strength = 1
+                else:
+                    try:
+                        safe_strength = int(raw_strength)
+                    except (TypeError, ValueError):
+                        safe_strength = 1
                 await cognitive_service.remember(
                     memory_type=self._map_memory_type(item.get("memory_type")),
                     judgment=str(item.get("judgment") or "").strip(),
                     reasoning=str(item.get("reasoning") or "").strip(),
                     tags=item.get("tags") or [],
                     is_active=bool(item.get("is_active", False)),
-                    strength=int(item.get("strength", 1) or 1),
+                    strength=safe_strength,
                     memory_scope=str(item.get("memory_scope") or "public").strip() or "public",
                 )
                 migrated += 1
@@ -110,4 +125,3 @@ class SimpleToVectorSyncService:
             "migrated": migrated,
             "failed": failed,
         }
-

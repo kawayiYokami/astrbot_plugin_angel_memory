@@ -51,7 +51,7 @@ class VectorMemoryRuntime:
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: int = None,
+        fresh_limit: Optional[int] = None,
         event: Any = None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
@@ -86,9 +86,9 @@ class VectorMemoryRuntime:
 
     async def feedback(
         self,
-        useful_memory_ids: List[str] = None,
-        new_memories: List[dict] = None,
-        merge_groups: List[List[str]] = None,
+        useful_memory_ids: Optional[List[str]] = None,
+        new_memories: Optional[List[dict]] = None,
+        merge_groups: Optional[List[List[str]]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         return await self._cognitive_service.feedback(
@@ -100,3 +100,6 @@ class VectorMemoryRuntime:
 
     async def consolidate_memories(self) -> None:
         await self._cognitive_service.consolidate_memories()
+
+    def shutdown(self) -> None:
+        return None

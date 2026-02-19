@@ -20,21 +20,6 @@ class SimpleMemoryBackupService:
         source: str,
         provider_id: str = "",
     ) -> Dict[str, int]:
-        return await asyncio.to_thread(
-            self._backup_from_collection_sync,
-            collection,
-            memory_sql_manager,
-            source,
-            provider_id,
-        )
-
-    def _backup_from_collection_sync(
-        self,
-        collection: Any,
-        memory_sql_manager: MemorySqlManager,
-        source: str,
-        provider_id: str = "",
-    ) -> Dict[str, int]:
         start_time = time.time()
         self.logger.info(
             f"[simple_backup] 开始备份 source={source} provider={provider_id or 'unknown'}"
@@ -42,7 +27,7 @@ class SimpleMemoryBackupService:
         self.logger.info("[simple_backup] 阶段=读取向量元数据")
 
         try:
-            result = collection.get(include=["metadatas"])
+            result = await asyncio.to_thread(collection.get, include=["metadatas"])
             metadatas: List[Dict] = list((result or {}).get("metadatas") or [])
         except Exception as e:
             self.logger.error(
@@ -68,16 +53,26 @@ class SimpleMemoryBackupService:
                     "strength": meta.get("strength", 1),
                     "is_active": meta.get("is_active", False),
                     "memory_scope": meta.get("memory_scope", "public"),
-                    "created_at": meta.get("created_at", 0),
+                    "created_at": meta.get("created_at") or int(time.time()),
                 }
             )
 
         self.logger.info(
             f"[simple_backup] 阶段=写入Simple库 input={len(normalized_memories)}"
         )
-        stats = asyncio.run(
-            memory_sql_manager.upsert_memories_by_judgment(normalized_memories)
-        )
+        try:
+            stats = await memory_sql_manager.upsert_memories_by_judgment(normalized_memories)
+        except Exception as e:
+            self.logger.error(
+                f"[simple_backup] 备份失败 source={source} error=写入Simple库失败: {e}",
+                exc_info=True,
+            )
+            return {
+                "scanned": len(metadatas),
+                "deduped": 0,
+                "upserted": 0,
+                "failed": len(normalized_memories) or 1,
+            }
         cost_ms = int((time.time() - start_time) * 1000)
         self.logger.info(
             "[simple_backup] 备份完成 "
