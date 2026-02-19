@@ -370,7 +370,8 @@ class MemorySqlManager:
                                 tuple(duplicate_ids),
                             )
                     else:
-                        memory_id = str(raw.get("id") or uuid.uuid4())
+                        # 中央记忆库ID必须由本项目生成，禁止复用外部传入ID。
+                        memory_id = str(uuid.uuid4())
                         conn.execute(
                             """
                             INSERT INTO memory_records(

@@ -24,6 +24,7 @@ class PathManager:
     _project_root: Optional[Path] = None
     _current_provider: Optional[str] = None
     _base_dir: Optional[Path] = None
+    _base_data_dir: Optional[Path] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -72,12 +73,14 @@ class PathManager:
         safe_provider_id = re.sub(r'[<>:"/\\|?*]', "_", provider_id.strip())
 
         self._current_provider = safe_provider_id
+        self._base_data_dir = Path(base_data_dir)
 
         # 设置基础目录
-        self._base_dir = Path(base_data_dir) / f"memory_{safe_provider_id}"
+        self._base_dir = self._base_data_dir / f"memory_{safe_provider_id}"
 
         # 创建目录结构
         self._ensure_provider_directories_exist()
+        self._ensure_central_directories_exist()
 
         logger.info(
             f"PathManager供应商设置完成: {provider_id} -> {safe_provider_id}, 基础目录: {self._base_dir}"
@@ -102,6 +105,18 @@ class PathManager:
             (self._base_dir / "logs").mkdir(exist_ok=True)
         except Exception as e:
             logger.error(f"创建供应商目录失败: {e}")
+            raise
+
+    def _ensure_central_directories_exist(self):
+        """确保中央记忆目录结构存在（与 provider 无关）"""
+        if self._base_data_dir is None:
+            raise ValueError("基础数据目录未设置，无法创建中央记忆目录")
+        try:
+            central = self._base_data_dir / "memory_center"
+            central.mkdir(parents=True, exist_ok=True)
+            (central / "index").mkdir(exist_ok=True)
+        except Exception as e:
+            logger.error(f"创建中央记忆目录失败: {e}")
             raise
 
     # === 路径获取方法 ===
@@ -141,6 +156,20 @@ class PathManager:
         if not self.is_provider_set():
             raise ValueError("供应商未设置，无法获取 raw 目录")
         return self._base_dir.parent / "raw"
+
+    def get_memory_center_dir(self) -> Path:
+        """获取中央记忆目录（与 provider 无关）"""
+        if self._base_data_dir is None:
+            raise ValueError("基础数据目录未设置，无法获取中央记忆目录")
+        return self._base_data_dir / "memory_center"
+
+    def get_memory_center_index_dir(self) -> Path:
+        """获取中央记忆索引目录（与 provider 无关）"""
+        return self.get_memory_center_dir() / "index"
+
+    def get_simple_memory_db_path(self) -> Path:
+        """获取 simple memory 数据库路径（与 provider 无关）"""
+        return self.get_memory_center_index_dir() / "simple_memory.db"
 
     # === 对外路径方法（仅提示词路径） ===
 

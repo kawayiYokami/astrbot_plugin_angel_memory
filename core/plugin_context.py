@@ -240,6 +240,14 @@ class PluginContext:
         """获取Chroma数据库路径"""
         return self.path_manager.get_chroma_db_path()
 
+    def get_memory_center_dir(self) -> Path:
+        """获取中央记忆目录（与provider无关）"""
+        return self.path_manager.get_memory_center_dir()
+
+    def get_simple_memory_db_path(self) -> Path:
+        """获取SimpleMemory数据库路径（与provider无关）"""
+        return self.path_manager.get_simple_memory_db_path()
+
     def get_current_provider(self) -> str:
         """获取当前供应商ID"""
         return self.path_manager.get_current_provider()
