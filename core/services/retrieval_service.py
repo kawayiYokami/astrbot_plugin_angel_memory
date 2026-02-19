@@ -55,6 +55,7 @@ class DeepMindRetrievalService:
         long_term_memories = []
         if deepmind.memory_system:
             try:
+                memory_scope = deepmind.plugin_context.resolve_memory_scope_from_event(event)
                 rag_fields = deepmind.query_processor.extract_rag_fields(event)
                 entities = rag_fields.get("entities", [])
 
@@ -85,6 +86,7 @@ class DeepMindRetrievalService:
                     memory_handlers=handlers,
                     event=event,
                     vector=memory_vector,
+                    memory_scope=memory_scope,
                 )
 
                 if deepmind.soul:

@@ -14,6 +14,7 @@ class DeepMindFeedbackService:
         self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
     ) -> None:
         deepmind = self.deepmind
+        memory_scope = deepmind.plugin_context.resolve_memory_scope(session_id)
 
         useful_memory_ids = feedback_data.get("useful_memory_ids", [])
         new_memories_raw = feedback_data.get("new_memories", {})
@@ -54,10 +55,13 @@ class DeepMindFeedbackService:
             task_payload = {
                 "feedback_fn": self.execute_feedback_task,
                 "session_id": session_id,
-                "useful_memory_ids": list(useful_memory_ids),
-                "new_memories": new_memories_normalized,
-                "merge_groups": merge_groups,
-                "payload": {"session_id": session_id},
+                "payload": {
+                    "useful_memory_ids": list(useful_memory_ids),
+                    "new_memories": new_memories_normalized,
+                    "merge_groups": merge_groups,
+                    "session_id": session_id,
+                    "memory_scope": memory_scope,
+                },
             }
             await get_feedback_queue().submit(task_payload)
 
@@ -67,6 +71,7 @@ class DeepMindFeedbackService:
         new_memories: List[Dict[str, Any]],
         merge_groups: List[List[str]],
         session_id: str,
+        memory_scope: str = "public",
     ) -> None:
         deepmind = self.deepmind
         if deepmind.memory_system is not None:
@@ -74,6 +79,7 @@ class DeepMindFeedbackService:
                 useful_memory_ids=useful_memory_ids,
                 new_memories=new_memories,
                 merge_groups=merge_groups,
+                memory_scope=memory_scope,
             )
         else:
             deepmind.logger.error("记忆系统不可用，跳过反馈")
@@ -88,9 +94,5 @@ class DeepMindFeedbackService:
                 "response_data": deepmind._serialize_response_data(response),
                 "session_id": session_id,
             },
-            "useful_memory_ids": [],
-            "new_memories": [],
-            "merge_groups": [],
         }
         await get_feedback_queue().submit(task_payload)
-

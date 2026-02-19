@@ -743,11 +743,13 @@ class DeepMind:
             #    (以及我们之前讨论过的，让 feedback 返回新创建的对象)
             newly_created_memories = []
             if self.memory_system:
+                memory_scope = self.plugin_context.resolve_memory_scope(session_id)
                 # 直接异步调用
                 newly_created_memories = await self.memory_system.feedback(
                     useful_memory_ids=feedback_data.get("useful_memory_ids", []),
                     new_memories=new_memories_normalized,  # <--- 使用转换后的数据
                     merge_groups=feedback_data.get("merge_groups", []),
+                    memory_scope=memory_scope,
                 )
 
             # 2. 更新短期记忆

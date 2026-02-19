@@ -110,12 +110,25 @@ class MemoryManager:
 
     # ===== 高级回忆功能 =====
 
+    @staticmethod
+    def _build_scope_where_filter(memory_scope: str) -> Dict[str, Any]:
+        """构建严格的 memory_scope 过滤条件。"""
+        scope = str(memory_scope or "").strip()
+        if not scope:
+            raise ValueError("memory_scope 为空，拒绝执行检索")
+
+        if scope == "public":
+            return {"memory_scope": "public"}
+
+        return {"$or": [{"memory_scope": scope}, {"memory_scope": "public"}]}
+
     async def comprehensive_recall(
         self,
         query: str,
         limit: int = None,
         event=None,
         vector: Optional[List[float]] = None,
+        memory_scope: str = "public",
     ) -> List[BaseMemory]:
         """
         统一记忆检索 - 使用混合检索获取所有相关记忆。
@@ -138,6 +151,7 @@ class MemoryManager:
 
         if limit is None:
             limit = system_config.fresh_recall_limit
+        where_filter = self._build_scope_where_filter(memory_scope)
 
         # 直接使用混合检索，相似度阈值0.5
         if vector is not None:
@@ -146,7 +160,7 @@ class MemoryManager:
                 vector=vector,
                 query=processed_query,
                 limit=limit,
-                where_filter=None,
+                where_filter=where_filter,
                 similarity_threshold=0.5,
             )
         else:
@@ -154,7 +168,7 @@ class MemoryManager:
                 collection=self.collection,
                 query=processed_query,
                 limit=limit,
-                where_filter=None,
+                where_filter=where_filter,
                 similarity_threshold=0.5,
             )
 
@@ -189,6 +203,7 @@ class MemoryManager:
         memory_handlers: Dict[str, Any] = None,
         event=None,
         vector: Optional[List[float]] = None,
+        memory_scope: str = "public",
     ) -> List[BaseMemory]:
         """
         链式回忆 - 混合检索 + 实体优先 + 类型分组
@@ -216,6 +231,7 @@ class MemoryManager:
             limit=100,  # 足够大的限制，让相似度阈值0.5来过滤
             event=event,
             vector=vector,
+            memory_scope=memory_scope,
         )
 
         # 步骤2: 从候选池提取实体记忆（每个实体最多3条）
@@ -287,6 +303,7 @@ class MemoryManager:
                 associations=BaseMemory._parse_associations(
                     metadata.get("associations", {})
                 ),
+                memory_scope=metadata.get("memory_scope", "public"),
             )
         except Exception as e:
             self.logger.error(f"构建记忆对象失败: {str(e)}")
@@ -366,6 +383,17 @@ class MemoryManager:
         if len(memories_to_merge) < 2:
             raise ValidationError(f"只有 {len(memories_to_merge)} 个有效记忆，无法合并")
 
+        non_public_scopes = {
+            str(getattr(memory_obj, "memory_scope", "public") or "public").strip()
+            for memory_obj in memories_to_merge
+            if str(getattr(memory_obj, "memory_scope", "public") or "public").strip() != "public"
+        }
+        if len(non_public_scopes) > 1:
+            raise ValidationError(
+                "禁止合并来自不同私有分类域的记忆：检测到多个非 public memory_scope。"
+            )
+        merged_scope = next(iter(non_public_scopes), "public")
+
         # 步骤 2: 创建新记忆（默认为知识记忆）
         # 使用去重后的强度，避免相同ID重复累加
         unique_strength = sum(
@@ -379,6 +407,7 @@ class MemoryManager:
             tags=new_tags,
             strength=unique_strength,  # 强度等于去重后记忆之和
             is_consolidated=False,  # 合并记忆作为新鲜记忆重新开始生命周期
+            memory_scope=merged_scope,
         )
 
         # 步骤 3: 存储新记忆
@@ -401,6 +430,7 @@ class MemoryManager:
         new_memories: List[dict] = None,
         merge_groups: List[List[str]] = None,
         memory_handlers: Dict[str, object] = None,
+        memory_scope: str = "public",
     ) -> List[BaseMemory]:
         """
         统一反馈接口 - 处理回忆后的反馈（核心工作流）
@@ -432,6 +462,9 @@ class MemoryManager:
         new_memories = new_memories or []
         merge_groups = merge_groups or []
         memory_handlers = memory_handlers or {}
+        resolved_scope = str(memory_scope or "").strip()
+        if not resolved_scope:
+            raise ValidationError("memory_scope 为空，拒绝写入反馈记忆")
 
         created_memories = []  # 新增：收集创建的记忆对象
 
@@ -476,7 +509,9 @@ class MemoryManager:
             new_memory_object = None
             handler = memory_handlers.get(mem_type)
             if handler:
-                new_memory_object = await handler.remember(judgment, reasoning, tags)
+                new_memory_object = await handler.remember(
+                    judgment, reasoning, tags, memory_scope=resolved_scope
+                )
             else:
                 self.logger.warning(f"未找到记忆类型 {mem_type} 的处理器，跳过创建")
 

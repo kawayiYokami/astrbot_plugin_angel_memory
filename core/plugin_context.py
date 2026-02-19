@@ -7,6 +7,8 @@
 
 from typing import Any, Dict, Optional
 from pathlib import Path
+import re
+import json
 
 try:
     from astrbot.api import logger
@@ -54,9 +56,12 @@ class PluginContext:
         self.vector_store: Optional[VectorStore] = None
         # ComponentFactory 引用，用于获取组件
         self._component_factory = None
+        self._scope_name_pattern = re.compile(r"^[a-zA-Z0-9\u4e00-\u9fff_-]+$")
+        self._conversation_scope_map: Dict[str, str] = {}
 
         # 初始化插件资源
         self._setup_plugin_resources()
+        self._refresh_scope_map()
 
         self.logger.info(
             f"PluginContext初始化完成 (提供商: {self.get_embedding_provider_id()})"
@@ -132,6 +137,82 @@ class PluginContext:
     def get_llm_provider_id(self) -> str:
         """获取LLM提供商ID"""
         return self.config.get("provider_id", "")
+
+    def _refresh_scope_map(self) -> None:
+        """读取并校验 conversation_scope_map（非法配置仅告警并忽略）。"""
+        raw_map = self.config.get("conversation_scope_map", {}) or {}
+        if isinstance(raw_map, str):
+            raw_text = raw_map.strip()
+            if not raw_text:
+                raw_map = {}
+            else:
+                try:
+                    raw_map = json.loads(raw_text)
+                except Exception:
+                    self.logger.warning(
+                        "conversation_scope_map JSON 解析失败，已忽略并回退为空。"
+                    )
+                    raw_map = {}
+        if not isinstance(raw_map, dict):
+            self.logger.warning(
+                "conversation_scope_map 配置类型非法（需为 object），已忽略并回退为空。"
+            )
+            self._conversation_scope_map = {}
+            return
+
+        validated: Dict[str, str] = {}
+        for raw_conversation_id, raw_scope in raw_map.items():
+            conversation_id = str(raw_conversation_id).strip()
+            scope_name = str(raw_scope).strip()
+
+            if not conversation_id:
+                self.logger.warning(
+                    "conversation_scope_map 存在空会话ID键，已忽略该映射。"
+                )
+                continue
+
+            if not scope_name:
+                self.logger.warning(
+                    f"conversation_scope_map[{conversation_id}] 为空，已忽略该映射。"
+                )
+                continue
+
+            if not self._scope_name_pattern.fullmatch(scope_name):
+                self.logger.warning(
+                    f"conversation_scope_map[{conversation_id}] 的 scope 名非法: {scope_name}，已忽略。"
+                )
+                continue
+
+            validated[conversation_id] = scope_name
+
+        self._conversation_scope_map = validated
+
+    def get_conversation_scope_map(self) -> Dict[str, str]:
+        """获取已校验的会话映射。"""
+        return self._conversation_scope_map.copy()
+
+    def resolve_memory_scope(self, conversation_id: str) -> str:
+        """按会话ID解析当前记忆域，未命中时返回 public。"""
+        normalized_id = str(conversation_id or "").strip()
+        if not normalized_id:
+            raise ValueError("conversation_id 为空，无法解析 memory_scope")
+        return self._conversation_scope_map.get(normalized_id, "public")
+
+    def get_event_conversation_id(self, event) -> str:
+        """从事件中提取统一会话ID。"""
+        if not hasattr(event, "unified_msg_origin"):
+            raise ValueError("事件缺少 unified_msg_origin，无法确定会话ID")
+        raw_conversation_id = getattr(event, "unified_msg_origin")
+        if raw_conversation_id is None:
+            raise ValueError("事件 unified_msg_origin 为空，无法确定会话ID")
+        conversation_id = str(raw_conversation_id).strip()
+        if not conversation_id:
+            raise ValueError("事件 unified_msg_origin 为空，无法确定会话ID")
+        return conversation_id
+
+    def resolve_memory_scope_from_event(self, event) -> str:
+        """从事件直接解析 memory_scope。"""
+        return self.resolve_memory_scope(self.get_event_conversation_id(event))
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """获取配置值"""
@@ -211,6 +292,7 @@ class PluginContext:
     def update_config(self, new_config: Dict[str, Any]):
         """更新配置"""
         self.config.update(new_config)
+        self._refresh_scope_map()
         self.logger.debug(f"PluginContext配置已更新: {list(new_config.keys())}")
 
     def update_from_event(self, event_context):
