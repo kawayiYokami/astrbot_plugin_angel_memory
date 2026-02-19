@@ -4,8 +4,6 @@ from astrbot.api import FunctionTool
 from astrbot.api.event import AstrMessageEvent
 from dataclasses import dataclass, field
 
-# 导入必要的服务组件和模型
-from ..llm_memory.service.cognitive_service import CognitiveService
 from ..llm_memory.models.data_models import BaseMemory
 
 # 导入日志记录器
@@ -58,22 +56,22 @@ class CoreMemoryRecallTool(FunctionTool):
         plugin_context = event.plugin_context
 
         try:
-            cognitive_service: CognitiveService = plugin_context.get_component("cognitive_service")
-            if not cognitive_service:
-                raise ValueError("CognitiveService 未在 PluginContext 中注册。")
+            memory_runtime = plugin_context.get_component("memory_runtime")
+            if not memory_runtime:
+                raise ValueError("memory_runtime 未在 PluginContext 中注册。")
             conversation_id = plugin_context.get_event_conversation_id(event)
             memory_scope = plugin_context.resolve_memory_scope(conversation_id)
         except Exception as e:
-            self.logger.error(f"{self.name}: 无法获取上下文信息或 CognitiveService 实例: {e}")
+            self.logger.error(f"{self.name}: 无法获取上下文信息或 memory_runtime 实例: {e}")
             return "错误：无法确定当前会话ID，主动回忆已拒绝（严格隔离模式）。"
 
         # --- 调用服务 ---
         try:
             candidate_limit = max(limit * 3, 20)
 
-            all_memories: List[BaseMemory] = await cognitive_service.memory_manager.comprehensive_recall(
+            all_memories: List[BaseMemory] = await memory_runtime.comprehensive_recall(
                 query=query or "",
-                limit=candidate_limit,
+                fresh_limit=candidate_limit,
                 event=event,
                 memory_scope=memory_scope,
             )

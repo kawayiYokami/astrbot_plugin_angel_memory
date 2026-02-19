@@ -16,9 +16,9 @@ from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
 from .soul.soul_state import SoulState
 from .utils.memory_id_resolver import MemoryIDResolver
-from ..llm_memory import CognitiveService
 from ..llm_memory.utils.json_parser import JsonParser
 from .session_memory import SessionMemoryManager
+from .memory_runtime import MemoryRuntime
 from .utils import SmallModelPromptBuilder, MemoryInjector
 from .utils.feedback_queue import get_feedback_queue
 from .utils.query_processor import get_query_processor
@@ -63,8 +63,8 @@ class DeepMind:
         vector_store,
         note_service,
         plugin_context, # 新增
+        memory_runtime: MemoryRuntime,
         provider_id: str = "",
-        cognitive_service=None,
     ):
         """
         初始化AI的潜意识系统
@@ -75,13 +75,11 @@ class DeepMind:
             vector_store: 记忆数据库（存所有长期记忆的地方）
             note_service: 笔记管理器（重要信息专门存放处）
             plugin_context: 插件上下文（新增）
+            memory_runtime: 统一记忆运行时（必填）
             provider_id: AI助手的ID，没有的话潜意识就睡觉不干活
-            cognitive_service: 记忆管理服务（可选，如果外面已经有了就直接用）
         """
         self.config = config
-        self.memory_system: Optional[CognitiveService] = (
-            cognitive_service  # 使用注入的实例
-        )
+        self.memory_system = memory_runtime
         self.note_service = note_service
         self.context = context
         self.vector_store = vector_store
@@ -131,23 +129,6 @@ class DeepMind:
         except Exception as e:
             self.logger.error(f"灵魂状态管理器初始化失败: {e}")
             self.soul = None
-
-        # 初始化记忆系统（如果没有通过依赖注入提供）
-        self._init_memory_system()
-
-    def _init_memory_system(self) -> None:
-        """初始化记忆系统"""
-        # 如果已经有了注入的认知服务，直接使用
-        if self.memory_system is not None:
-            return
-
-        # 否则创建新的认知服务实例（向后兼容）
-        try:
-            self.memory_system = CognitiveService(vector_store=self.vector_store)
-
-        except Exception as e:
-            self.logger.error(f"记忆系统初始化失败: {e}")
-            self.memory_system = None
 
     def is_enabled(self) -> bool:
         """检查记忆系统是否可用"""

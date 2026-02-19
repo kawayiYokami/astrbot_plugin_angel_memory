@@ -191,7 +191,7 @@ class CognitiveService:
         event=None,
         memory_handlers: Dict[str, Any] = None,
         memory_scope: str = "public",
-    ) -> Dict[str, List[BaseMemory]]:
+    ) -> List[BaseMemory]:
         """链式多通道回忆 - 基于关联网络的多轮回忆
 
         Args:

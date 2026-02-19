@@ -3,9 +3,6 @@ from astrbot.api import FunctionTool
 from astrbot.api.event import AstrMessageEvent
 from dataclasses import dataclass, field
 
-# 导入必要的服务组件和模型
-from ..llm_memory.service.cognitive_service import CognitiveService
-
 # 导入日志记录器
 try:
     from astrbot.api import logger
@@ -92,18 +89,18 @@ class CoreMemoryRememberTool(FunctionTool):
         plugin_context = event.plugin_context
 
         try:
-            cognitive_service: CognitiveService = plugin_context.get_component("cognitive_service")
-            if not cognitive_service:
-                raise ValueError("CognitiveService 未在 PluginContext 中注册。")
+            memory_runtime = plugin_context.get_component("memory_runtime")
+            if not memory_runtime:
+                raise ValueError("memory_runtime 未在 PluginContext 中注册。")
             conversation_id = plugin_context.get_event_conversation_id(event)
             memory_scope = plugin_context.resolve_memory_scope(conversation_id)
         except Exception as e:
-            self.logger.error(f"{self.name}: 无法获取上下文信息或 CognitiveService 实例: {e}")
+            self.logger.error(f"{self.name}: 无法获取上下文信息或 memory_runtime 实例: {e}")
             return "错误：无法确定当前会话ID，记忆写入已拒绝（严格隔离模式）。"
 
         # --- 调用服务 ---
         try:
-            memory_id = await cognitive_service.remember(
+            memory_id = await memory_runtime.remember(
                 memory_type=memory_type,
                 judgment=judgment,
                 reasoning=reasoning,
