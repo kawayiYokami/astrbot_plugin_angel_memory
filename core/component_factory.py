@@ -71,10 +71,15 @@ class ComponentFactory:
         try:
             self.logger.info("🏭 开始创建核心组件...")
             enable_simple_memory = bool(config.get("enable_simple_memory", False))
+            memory_sql_manager = self._create_memory_sql_manager()
+            self._components["memory_sql_manager"] = memory_sql_manager
 
             if enable_simple_memory:
                 self.logger.info("🧩 检测到 enable_simple_memory=true，使用 SimpleMemoryRuntime")
-                memory_runtime = self._create_memory_runtime(cognitive_service=None)
+                memory_runtime = self._create_memory_runtime(
+                    cognitive_service=None,
+                    memory_sql_manager=memory_sql_manager,
+                )
                 self._components["memory_runtime"] = memory_runtime
 
                 deepmind = await self._create_deepmind(
@@ -136,7 +141,10 @@ class ComponentFactory:
             self._components["cognitive_service"] = cognitive_service
 
             # 4. 创建统一记忆运行时（Phase A: 向量实现）
-            memory_runtime = self._create_memory_runtime(cognitive_service)
+            memory_runtime = self._create_memory_runtime(
+                cognitive_service,
+                memory_sql_manager=memory_sql_manager,
+            )
             self._components["memory_runtime"] = memory_runtime
 
             # 5. 创建笔记服务
@@ -288,14 +296,18 @@ class ComponentFactory:
 
         return cognitive_service
 
-    def _create_memory_runtime(self, cognitive_service):
+    def _create_memory_sql_manager(self) -> MemorySqlManager:
+        """创建 SQL 记忆管理器（两种运行时共用）。"""
+        simple_db_path = self.plugin_context.get_index_dir() / "simple_memory.db"
+        manager = MemorySqlManager(simple_db_path)
+        self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
+        return manager
+
+    def _create_memory_runtime(self, cognitive_service, memory_sql_manager: MemorySqlManager):
         """创建统一记忆运行时。"""
         self.logger.info("🧩 创建统一记忆运行时...")
 
         if self.plugin_context.get_config("enable_simple_memory", False):
-            simple_db_path = self.plugin_context.get_index_dir() / "simple_memory.db"
-            memory_sql_manager = MemorySqlManager(simple_db_path)
-            self._components["memory_sql_manager"] = memory_sql_manager
             runtime = SimpleMemoryRuntime(memory_sql_manager)
             self.logger.info("✅ 统一记忆运行时创建完成 (SimpleMemoryRuntime)")
             return runtime

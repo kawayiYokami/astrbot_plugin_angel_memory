@@ -68,6 +68,8 @@ class MemorySqlManager:
                     ON memory_records(memory_scope, created_at);
                 CREATE INDEX IF NOT EXISTS idx_memory_active_strength
                     ON memory_records(is_active, strength);
+                CREATE INDEX IF NOT EXISTS idx_memory_judgment
+                    ON memory_records(judgment);
                 CREATE INDEX IF NOT EXISTS idx_memory_tag_rel_tag_memory
                     ON memory_tag_rel(tag_id, memory_id);
                 """
@@ -186,6 +188,12 @@ class MemorySqlManager:
             with self._lock:
                 self._tag_names.update(tags)
 
+    def _replace_memory_tags(
+        self, conn: sqlite3.Connection, memory_id: str, tags: List[str]
+    ) -> None:
+        conn.execute("DELETE FROM memory_tag_rel WHERE memory_id = ?", (memory_id,))
+        self._upsert_tags_and_bind(conn, memory_id, tags)
+
     async def remember(
         self,
         memory_type: str,
@@ -239,6 +247,145 @@ class MemorySqlManager:
             conn.commit()
 
         return memory
+
+    async def upsert_memories_by_judgment(self, memories: List[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        按 judgment 幂等写入（同 judgment 仅保留最新 created_at）。
+
+        Returns:
+            {"scanned": int, "deduped": int, "upserted": int, "failed": int}
+        """
+        scanned = len(memories or [])
+        deduped_map: Dict[str, Dict[str, Any]] = {}
+        failed = 0
+
+        for item in memories or []:
+            judgment = str(item.get("judgment") or "").strip()
+            if not judgment:
+                continue
+            try:
+                created_at = float(item.get("created_at") or 0)
+            except (TypeError, ValueError):
+                created_at = 0.0
+
+            current = deduped_map.get(judgment)
+            if current is None:
+                deduped_map[judgment] = dict(item)
+                deduped_map[judgment]["created_at"] = created_at
+                continue
+
+            current_created = float(current.get("created_at") or 0)
+            if created_at >= current_created:
+                deduped_map[judgment] = dict(item)
+                deduped_map[judgment]["created_at"] = created_at
+
+        upserted = 0
+        now = time.time()
+
+        with self._connect() as conn:
+            for judgment, raw in deduped_map.items():
+                try:
+                    created_at = float(raw.get("created_at") or now)
+                    normalized_tags = self._normalize_tags(BaseMemory._parse_tags(raw.get("tags", [])))
+                    reasoning = str(raw.get("reasoning") or "").strip()
+                    memory_type = str(raw.get("memory_type") or "知识记忆").strip() or "知识记忆"
+                    strength = int(raw.get("strength", 1) or 1)
+                    is_active = 1 if bool(raw.get("is_active", False)) else 0
+                    memory_scope = self._normalize_scope(raw.get("memory_scope", "public"))
+
+                    existing_rows = conn.execute(
+                        """
+                        SELECT id, created_at
+                        FROM memory_records
+                        WHERE judgment = ?
+                        ORDER BY created_at DESC, updated_at DESC
+                        """,
+                        (judgment,),
+                    ).fetchall()
+
+                    if existing_rows:
+                        keep_id = str(existing_rows[0]["id"])
+                        existing_created_at = float(existing_rows[0]["created_at"] or 0)
+                        if created_at >= existing_created_at:
+                            conn.execute(
+                                """
+                                UPDATE memory_records
+                                SET memory_type = ?,
+                                    reasoning = ?,
+                                    strength = ?,
+                                    is_active = ?,
+                                    memory_scope = ?,
+                                    created_at = ?,
+                                    updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (
+                                    memory_type,
+                                    reasoning,
+                                    strength,
+                                    is_active,
+                                    memory_scope,
+                                    created_at,
+                                    now,
+                                    keep_id,
+                                ),
+                            )
+                            self._replace_memory_tags(conn, keep_id, normalized_tags)
+                            upserted += 1
+
+                        duplicate_ids = [str(row["id"]) for row in existing_rows[1:]]
+                        if duplicate_ids:
+                            placeholders = ",".join(["?" for _ in duplicate_ids])
+                            conn.execute(
+                                f"DELETE FROM memory_records WHERE id IN ({placeholders})",
+                                tuple(duplicate_ids),
+                            )
+                            conn.execute(
+                                f"DELETE FROM memory_tag_rel WHERE memory_id IN ({placeholders})",
+                                tuple(duplicate_ids),
+                            )
+                    else:
+                        memory_id = str(raw.get("id") or uuid.uuid4())
+                        conn.execute(
+                            """
+                            INSERT INTO memory_records(
+                                id, memory_type, judgment, reasoning, strength, is_active,
+                                memory_scope, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                memory_id,
+                                memory_type,
+                                judgment,
+                                reasoning,
+                                strength,
+                                is_active,
+                                memory_scope,
+                                created_at,
+                                now,
+                            ),
+                        )
+                        self._replace_memory_tags(conn, memory_id, normalized_tags)
+                        upserted += 1
+
+                except Exception:
+                    failed += 1
+                    self.logger.exception("SimpleMemory 备份写入失败 (judgment=%s)", judgment)
+
+            conn.execute(
+                """
+                DELETE FROM memory_tag_rel
+                WHERE memory_id NOT IN (SELECT id FROM memory_records)
+                """
+            )
+            conn.commit()
+
+        return {
+            "scanned": scanned,
+            "deduped": len(deduped_map),
+            "upserted": upserted,
+            "failed": failed,
+        }
 
     async def recall_by_tags(
         self,

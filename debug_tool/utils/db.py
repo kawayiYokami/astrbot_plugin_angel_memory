@@ -16,8 +16,10 @@ class DBManager:
         self.embedding_fn = create_embedding_function(provider_config)
         self.client = None
         self.tag_conn = None
+        self.simple_conn = None
         self._connect()
         self._connect_tag_db()
+        self._connect_simple_db()
 
     def _connect_tag_db(self):
         """Connect to SQLite Tag Database."""
@@ -32,6 +34,20 @@ class DBManager:
                 logger.warning(f"Tag DB not found at {tag_db_path}")
         except Exception as e:
             logger.error(f"Failed to connect to Tag DB: {e}")
+
+    def _connect_simple_db(self):
+        """Connect to simple_memory.db."""
+        try:
+            base_dir = os.path.dirname(self.db_path)
+            simple_db_path = os.path.join(base_dir, "index", "simple_memory.db")
+            if os.path.exists(simple_db_path):
+                self.simple_conn = sqlite3.connect(simple_db_path, check_same_thread=False)
+                self.simple_conn.row_factory = sqlite3.Row
+                logger.info(f"Connected to Simple Memory DB at {simple_db_path}")
+            else:
+                logger.warning(f"Simple Memory DB not found at {simple_db_path}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Simple Memory DB: {e}")
 
     def resolve_tag_ids(self, tag_ids_str: str) -> List[str]:
         """Convert '[1, 2, 3]' string to list of tag names."""
@@ -164,4 +180,106 @@ class DBManager:
             return formatted
         except Exception as e:
             logger.error(f"Error browsing collection {collection_name}: {e}")
+            return []
+
+    def has_simple_memory_db(self) -> bool:
+        return self.simple_conn is not None
+
+    def get_simple_memory_stats(self) -> Dict[str, Any]:
+        if not self.simple_conn:
+            return {"count": 0, "scopes": []}
+        try:
+            cursor = self.simple_conn.cursor()
+            cursor.execute("SELECT COUNT(*) AS cnt FROM memory_records")
+            total = int(cursor.fetchone()["cnt"])
+            cursor.execute(
+                "SELECT DISTINCT memory_scope FROM memory_records ORDER BY memory_scope ASC"
+            )
+            scopes = [row["memory_scope"] for row in cursor.fetchall() if row["memory_scope"]]
+            return {"count": total, "scopes": scopes}
+        except Exception as e:
+            logger.error(f"Error reading simple memory stats: {e}")
+            return {"count": 0, "scopes": []}
+
+    def browse_simple_memories(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        scope: str = "",
+        keyword: str = "",
+    ) -> List[Dict[str, Any]]:
+        if not self.simple_conn:
+            return []
+        try:
+            where_clauses = []
+            params: List[Any] = []
+
+            scope_text = (scope or "").strip()
+            if scope_text:
+                where_clauses.append("mr.memory_scope = ?")
+                params.append(scope_text)
+
+            keyword_text = (keyword or "").strip()
+            if keyword_text:
+                where_clauses.append(
+                    "(mr.judgment LIKE ? OR mr.reasoning LIKE ? OR IFNULL(tags.tags_text, '') LIKE ?)"
+                )
+                like_val = f"%{keyword_text}%"
+                params.extend([like_val, like_val, like_val])
+
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+            sql = f"""
+                SELECT
+                    mr.id,
+                    mr.memory_type,
+                    mr.judgment,
+                    mr.reasoning,
+                    mr.strength,
+                    mr.is_active,
+                    mr.memory_scope,
+                    mr.created_at,
+                    mr.updated_at,
+                    IFNULL(tags.tags_text, '') AS tags
+                FROM memory_records mr
+                LEFT JOIN (
+                    SELECT
+                        mtr.memory_id AS memory_id,
+                        GROUP_CONCAT(mt.name, ', ') AS tags_text
+                    FROM memory_tag_rel mtr
+                    JOIN memory_tags mt ON mt.id = mtr.tag_id
+                    GROUP BY mtr.memory_id
+                ) tags ON tags.memory_id = mr.id
+                {where_sql}
+                ORDER BY mr.created_at DESC, mr.strength DESC
+                LIMIT ? OFFSET ?
+            """
+            params.extend([int(limit), int(offset)])
+            cursor = self.simple_conn.cursor()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+
+            formatted: List[Dict[str, Any]] = []
+            for row in rows:
+                metadata = {
+                    "memory_type": row["memory_type"],
+                    "judgment": row["judgment"],
+                    "reasoning": row["reasoning"],
+                    "strength": row["strength"],
+                    "is_active": bool(row["is_active"]),
+                    "memory_scope": row["memory_scope"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "tags": row["tags"],
+                }
+                formatted.append(
+                    {
+                        "id": row["id"],
+                        "document": row["judgment"],
+                        "metadata": metadata,
+                    }
+                )
+            return formatted
+        except Exception as e:
+            logger.error(f"Error browsing simple memories: {e}")
             return []
