@@ -8,8 +8,6 @@ BackgroundInitializer - 后台初始化器（异步版本）
 import asyncio
 from .initialization_manager import InitializationManager
 from .component_factory import ComponentFactory
-from .migrations.memory_scope_migration import MemoryScopeMigration
-from .services.simple_to_vector_sync_service import SimpleToVectorSyncService
 
 try:
     from astrbot.api import logger
@@ -39,7 +37,6 @@ class BackgroundInitializer:
         self.logger = logger
         self.config = config
         self.plugin_context = plugin_context
-        self._migration_tasks = []
         self._post_init_tasks = []
 
         self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
@@ -111,27 +108,6 @@ class BackgroundInitializer:
             components = await self.component_factory.create_all_components(self.config)
             self.logger.info("✅ 所有组件在当前事件循环中创建完成")
 
-            # 后台迁移：补齐历史缺失 memory_scope 的记录（不阻塞启动）
-            cognitive_service = components.get("cognitive_service")
-            if cognitive_service and hasattr(cognitive_service, "main_collection"):
-                async def _run_memory_scope_migration():
-                    try:
-                        migrator = MemoryScopeMigration(self.logger)
-                        await migrator.migrate_missing_memory_scope(
-                            collection=cognitive_service.main_collection
-                        )
-                    except Exception as e:
-                        self.logger.error(f"❌ memory_scope 后台迁移失败: {e}", exc_info=True)
-
-                migration_task = asyncio.create_task(_run_memory_scope_migration())
-                self._migration_tasks.append(migration_task)
-                self.logger.info("🛠️ memory_scope 后台迁移任务已调度（异步分离）")
-            else:
-                if bool(self.config.get("enable_simple_memory", False)):
-                    self.logger.info("ℹ️ 当前为简化记忆模式，已跳过向量 memory_scope 迁移。")
-                else:
-                    self.logger.warning("⚠️ memory_scope 迁移跳过：cognitive_service/main_collection 不可用")
-
             embedding_provider = components.get("embedding_provider")
             if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):
                 embedding_provider.clear_and_disable_cache()
@@ -144,32 +120,16 @@ class BackgroundInitializer:
                     sleep_interval = int(memory_behavior.get("sleep_interval", 3600))
                 else:
                     sleep_interval = int(self.config.get("sleep_interval", 3600))
-                enable_simple_memory = bool(self.config.get("enable_simple_memory", False))
-                cognitive_service = components.get("cognitive_service")
-                memory_sql_manager = components.get("memory_sql_manager")
 
                 async def _trigger_sleep_once_after_init():
                     try:
-                        if (
-                            not enable_simple_memory
-                            and cognitive_service is not None
-                            and memory_sql_manager is not None
-                            and hasattr(cognitive_service, "main_collection")
-                        ):
-                            sync_service = SimpleToVectorSyncService(self.logger)
-                            await sync_service.sync_missing_memories(
-                                cognitive_service=cognitive_service,
-                                memory_sql_manager=memory_sql_manager,
-                                provider_id=str(self.plugin_context.get_current_provider()),
-                            )
-
                         self.logger.info(
                             f"[simple_backup] trigger_sleep_after_init provider={self.plugin_context.get_current_provider()}"
                         )
                         if sleep_interval > 0:
                             await deepmind.check_and_sleep_if_needed(sleep_interval)
                         else:
-                            await deepmind._sleep()
+                            await deepmind.sleep()
                     except Exception as e:
                         self.logger.error(f"初始化后触发睡眠失败: {e}", exc_info=True)
 
@@ -201,13 +161,6 @@ class BackgroundInitializer:
         if self.background_task and not self.background_task.done():
             self.background_task.cancel()
             self.logger.info("后台初始化任务已取消")
-
-        # 取消后台迁移任务（如果仍在运行）
-        for task in self._migration_tasks:
-            if task and not task.done():
-                task.cancel()
-        if self._migration_tasks:
-            self.logger.info("后台迁移任务已取消")
 
         for task in self._post_init_tasks:
             if task and not task.done():

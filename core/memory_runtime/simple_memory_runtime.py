@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from ...llm_memory.components.memory_sql_manager import MemorySqlManager
 from ...llm_memory.models.data_models import BaseMemory
@@ -46,6 +46,8 @@ class SimpleMemoryRuntime:
             limit=limit,
             memory_scope=memory_scope or "public",
         )
+        if not include_consolidated:
+            memories = [mem for mem in memories if not self._is_consolidated(mem)]
         if memory_type:
             return [
                 mem
@@ -58,7 +60,7 @@ class SimpleMemoryRuntime:
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: int = None,
+        fresh_limit: Optional[int] = None,
         event: Any = None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
@@ -90,16 +92,16 @@ class SimpleMemoryRuntime:
         passive_ids = [mem.id for mem in memories if not mem.is_active]
         if passive_ids:
             await self._manager.decay_memories(passive_ids, delta=1)
-            for mem in memories:
-                if not mem.is_active:
-                    mem.strength = max(0, mem.strength - 1)
+            refreshed = await self._manager.get_memories_by_ids(passive_ids)
+            refreshed_by_id = {mem.id: mem for mem in refreshed}
+            memories = [refreshed_by_id.get(mem.id, mem) for mem in memories]
         return memories
 
     async def feedback(
         self,
-        useful_memory_ids: List[str] = None,
-        new_memories: List[dict] = None,
-        merge_groups: List[List[str]] = None,
+        useful_memory_ids: Optional[List[str]] = None,
+        new_memories: Optional[List[dict]] = None,
+        merge_groups: Optional[List[List[str]]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         return await self._manager.process_feedback(
@@ -112,6 +114,9 @@ class SimpleMemoryRuntime:
     async def consolidate_memories(self) -> None:
         await self._manager.consolidate_memories()
 
+    def shutdown(self) -> None:
+        return None
+
     @staticmethod
     def _map_type_to_cn(memory_type: str) -> str:
         mapping = {
@@ -122,3 +127,12 @@ class SimpleMemoryRuntime:
             "emotional": "情感记忆",
         }
         return mapping.get(str(memory_type or "").strip(), str(memory_type or "").strip())
+
+    @staticmethod
+    def _is_consolidated(memory: BaseMemory) -> bool:
+        if bool(getattr(memory, "is_consolidated", False)):
+            return True
+
+        tags = [str(tag).strip().lower() for tag in (getattr(memory, "tags", None) or [])]
+        markers = {"consolidated", "merged", "合并记忆", "已巩固"}
+        return any(tag in markers for tag in tags)

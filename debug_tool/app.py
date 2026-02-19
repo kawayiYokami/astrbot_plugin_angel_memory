@@ -303,7 +303,6 @@ elif mode == "🧾 浏览Simple记忆":
 
     simple_stats = db_mgr.get_simple_memory_stats()
     scopes = simple_stats.get("scopes", [])
-    total_count = int(simple_stats.get("count", 0))
 
     c1, c2 = st.columns([2, 3])
     with c1:
@@ -312,27 +311,48 @@ elif mode == "🧾 浏览Simple记忆":
         keyword = st.text_input("关键词（匹配 judgment/reasoning/tags）", value="")
 
     page_size = 20
-    total_pages = math.ceil(total_count / page_size) if total_count > 0 else 1
+    scope_filter = "" if selected_scope == "(全部)" else selected_scope
+    current_page = int(st.session_state.get("simple_page", 1) or 1)
+    offset = max(0, (current_page - 1) * page_size)
+    items, filtered_total = db_mgr.browse_simple_memories(
+        limit=page_size,
+        offset=offset,
+        scope=scope_filter,
+        keyword=keyword,
+        return_total=True,
+    )
+    total_pages = math.ceil(filtered_total / page_size) if filtered_total > 0 else 1
+    if current_page > total_pages:
+        current_page = total_pages
+        offset = max(0, (current_page - 1) * page_size)
+        items, filtered_total = db_mgr.browse_simple_memories(
+            limit=page_size,
+            offset=offset,
+            scope=scope_filter,
+            keyword=keyword,
+            return_total=True,
+        )
+
     col_p1, col_p2 = st.columns([1, 3])
     with col_p1:
         page = st.number_input(
             f"页码 (共 {total_pages} 页)",
             min_value=1,
             max_value=max(1, total_pages),
-            value=1,
+            value=current_page,
             key="simple_page",
         )
+    if page != current_page:
+        offset = max(0, (page - 1) * page_size)
+        items, filtered_total = db_mgr.browse_simple_memories(
+            limit=page_size,
+            offset=offset,
+            scope=scope_filter,
+            keyword=keyword,
+            return_total=True,
+        )
 
-    offset = (page - 1) * page_size
-    scope_filter = "" if selected_scope == "(全部)" else selected_scope
-    items = db_mgr.browse_simple_memories(
-        limit=page_size,
-        offset=offset,
-        scope=scope_filter,
-        keyword=keyword,
-    )
-
-    st.caption(f"总记录 {total_count}，当前页返回 {len(items)} 条")
+    st.caption(f"总记录 {filtered_total}，当前页返回 {len(items)} 条")
     for item in items:
         with st.container(border=True):
             render_item(item, type="memory")

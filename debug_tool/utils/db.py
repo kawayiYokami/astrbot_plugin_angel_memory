@@ -3,7 +3,7 @@ import logging
 import sqlite3
 import os
 import ast
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Union
 from .embedding import create_embedding_function
 
 logger = logging.getLogger(__name__)
@@ -207,9 +207,10 @@ class DBManager:
         offset: int = 0,
         scope: str = "",
         keyword: str = "",
-    ) -> List[Dict[str, Any]]:
+        return_total: bool = False,
+    ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
         if not self.simple_conn:
-            return []
+            return ([], 0) if return_total else []
         try:
             where_clauses = []
             params: List[Any] = []
@@ -221,13 +222,37 @@ class DBManager:
 
             keyword_text = (keyword or "").strip()
             if keyword_text:
-                where_clauses.append(
-                    "(mr.judgment LIKE ? OR mr.reasoning LIKE ? OR IFNULL(tags.tags_text, '') LIKE ?)"
+                escaped_keyword_text = (
+                    keyword_text.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
                 )
-                like_val = f"%{keyword_text}%"
+                where_clauses.append(
+                    "(mr.judgment LIKE ? ESCAPE '\\' OR mr.reasoning LIKE ? ESCAPE '\\' OR IFNULL(tags.tags_text, '') LIKE ? ESCAPE '\\')"
+                )
+                like_val = f"%{escaped_keyword_text}%"
                 params.extend([like_val, like_val, like_val])
 
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+            total_count = 0
+            if return_total:
+                count_sql = f"""
+                    SELECT COUNT(*) AS cnt
+                    FROM memory_records mr
+                    LEFT JOIN (
+                        SELECT
+                            mtr.memory_id AS memory_id,
+                            GROUP_CONCAT(mt.name, ', ') AS tags_text
+                        FROM memory_tag_rel mtr
+                        JOIN memory_tags mt ON mt.id = mtr.tag_id
+                        GROUP BY mtr.memory_id
+                    ) tags ON tags.memory_id = mr.id
+                    {where_sql}
+                """
+                count_cursor = self.simple_conn.cursor()
+                count_cursor.execute(count_sql, list(params))
+                count_row = count_cursor.fetchone()
+                total_count = int((count_row["cnt"] if count_row else 0) or 0)
 
             sql = f"""
                 SELECT
@@ -279,7 +304,9 @@ class DBManager:
                         "metadata": metadata,
                     }
                 )
+            if return_total:
+                return formatted, total_count
             return formatted
         except Exception as e:
             logger.error(f"Error browsing simple memories: {e}")
-            return []
+            return ([], 0) if return_total else []

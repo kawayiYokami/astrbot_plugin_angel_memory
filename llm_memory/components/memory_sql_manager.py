@@ -205,6 +205,27 @@ class MemorySqlManager:
         strength: Optional[int] = None,
         memory_scope: str = "public",
     ) -> BaseMemory:
+        return await asyncio.to_thread(
+            self._remember_sync,
+            memory_type,
+            judgment,
+            reasoning,
+            tags,
+            is_active,
+            strength,
+            memory_scope,
+        )
+
+    def _remember_sync(
+        self,
+        memory_type: str,
+        judgment: str,
+        reasoning: str,
+        tags: List[str],
+        is_active: bool = False,
+        strength: Optional[int] = None,
+        memory_scope: str = "public",
+    ) -> BaseMemory:
         scope = self._normalize_scope(memory_scope)
         normalized_tags = self._normalize_tags(tags)
         now = time.time()
@@ -250,6 +271,9 @@ class MemorySqlManager:
         return memory
 
     async def upsert_memories_by_judgment(self, memories: List[Dict[str, Any]]) -> Dict[str, int]:
+        return await asyncio.to_thread(self._upsert_memories_by_judgment_sync, memories)
+
+    def _upsert_memories_by_judgment_sync(self, memories: List[Dict[str, Any]]) -> Dict[str, int]:
         """
         按 judgment 幂等写入（同 judgment 仅保留最新 created_at）。
 
@@ -532,7 +556,7 @@ class MemorySqlManager:
             )
             conn.commit()
 
-    async def _get_memories_by_ids(self, memory_ids: List[str]) -> List[BaseMemory]:
+    def _get_memories_by_ids_sync(self, memory_ids: List[str]) -> List[BaseMemory]:
         ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
         if not ids:
             return []
@@ -550,8 +574,14 @@ class MemorySqlManager:
             tags_map = self._fetch_tags_for_memory_ids(conn, [str(row["id"]) for row in rows])
         return [self._row_to_memory(row, tags_map.get(str(row["id"]), [])) for row in rows]
 
+    async def get_memories_by_ids(self, memory_ids: List[str]) -> List[BaseMemory]:
+        return await asyncio.to_thread(self._get_memories_by_ids_sync, memory_ids)
+
     async def merge_group(self, memory_ids: List[str]) -> Optional[BaseMemory]:
-        memories = await self._get_memories_by_ids(memory_ids)
+        return await asyncio.to_thread(self._merge_group_sync, memory_ids)
+
+    def _merge_group_sync(self, memory_ids: List[str]) -> Optional[BaseMemory]:
+        memories = self._get_memories_by_ids_sync(memory_ids)
         if len(memories) < 2:
             return None
 
@@ -566,23 +596,57 @@ class MemorySqlManager:
         merged_scope = next(iter(non_public_scopes), "public")
         first = memories[0]
         merged_strength = sum(mem.strength for mem in memories)
-
-        new_memory = await self.remember(
-            memory_type="knowledge",
+        now = time.time()
+        new_memory = BaseMemory(
+            memory_type=self._to_memory_type("knowledge"),
             judgment=first.judgment or "合并记忆",
             reasoning=first.reasoning or "合并多个相似记忆",
-            tags=first.tags,
-            is_active=False,
+            tags=self._normalize_tags(first.tags),
+            id=str(uuid.uuid4()),
             strength=merged_strength,
+            is_active=False,
+            created_at=now,
             memory_scope=merged_scope,
         )
 
         ids = [mem.id for mem in memories]
         placeholders = ",".join(["?" for _ in ids])
+        with self._lock:
+            cache_snapshot = set(self._tag_names)
         with self._connect() as conn:
-            conn.execute(f"DELETE FROM memory_records WHERE id IN ({placeholders})", tuple(ids))
-            conn.execute(f"DELETE FROM memory_tag_rel WHERE memory_id IN ({placeholders})", tuple(ids))
-            conn.commit()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO memory_records(
+                        id, memory_type, judgment, reasoning, strength, is_active,
+                        memory_scope, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_memory.id,
+                        new_memory.memory_type.value,
+                        new_memory.judgment,
+                        new_memory.reasoning,
+                        new_memory.strength,
+                        1 if new_memory.is_active else 0,
+                        new_memory.memory_scope,
+                        new_memory.created_at,
+                        now,
+                    ),
+                )
+                self._upsert_tags_and_bind(conn, new_memory.id, new_memory.tags)
+                conn.execute(
+                    f"DELETE FROM memory_tag_rel WHERE memory_id IN ({placeholders})",
+                    tuple(ids),
+                )
+                conn.execute(
+                    f"DELETE FROM memory_records WHERE id IN ({placeholders})",
+                    tuple(ids),
+                )
+            except Exception:
+                with self._lock:
+                    self._tag_names = cache_snapshot
+                raise
 
         return new_memory
 
@@ -623,3 +687,10 @@ class MemorySqlManager:
                 created_memories.append(merged)
 
         return created_memories
+
+    def close(self) -> None:
+        with self._lock:
+            self._tag_names.clear()
+
+    def shutdown(self) -> None:
+        self.close()

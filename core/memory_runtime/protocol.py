@@ -33,7 +33,7 @@ class MemoryRuntime(Protocol):
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: int = None,
+        fresh_limit: Optional[int] = None,
         event: Any = None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
@@ -54,9 +54,9 @@ class MemoryRuntime(Protocol):
 
     async def feedback(
         self,
-        useful_memory_ids: List[str] = None,
-        new_memories: List[dict] = None,
-        merge_groups: List[List[str]] = None,
+        useful_memory_ids: Optional[List[str]] = None,
+        new_memories: Optional[List[dict]] = None,
+        merge_groups: Optional[List[List[str]]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         ...
