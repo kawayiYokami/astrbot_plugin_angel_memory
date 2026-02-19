@@ -544,16 +544,13 @@ class VectorStore:
                 self.logger.error(f"更新记忆 {memory_id} 失败: {str(e)}")
                 raise
 
-    def delete_memories(
-        self, collection, where_filter: dict, exclude_associations: bool = False
-    ):
+    def delete_memories(self, collection, where_filter: dict):
         """
         根据条件删除记忆.
 
         Args:
             collection: 目标 ChromaDB 集合.
             where_filter: 删除条件 (e.g., {"strength": {"$lt": 2}})
-            exclude_associations: 是否排除关联记忆不删除
         """
         try:
             # 处理多个条件的查询
@@ -562,15 +559,6 @@ class VectorStore:
                 base_filter = {"$and": [{k: v} for k, v in where_filter.items()]}
             else:
                 base_filter = where_filter
-
-            # 如果需要排除关联,添加额外的条件
-            if exclude_associations:
-                if "$and" in base_filter:
-                    base_filter["$and"].append({"memory_type": {"$ne": "Association"}})
-                else:
-                    base_filter = {
-                        "$and": [base_filter, {"memory_type": {"$ne": "Association"}}]
-                    }
 
             # 获取符合条件的记忆ID
             results = collection.get(where=base_filter)

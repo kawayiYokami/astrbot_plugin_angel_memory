@@ -16,7 +16,6 @@ except ImportError:
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory
 from ..components.vector_store import VectorStore
-from ..components.association_manager import AssociationManager
 from ..config.system_config import system_config
 from .memory_handlers import MemoryHandlerFactory
 from .memory_manager import MemoryManager
@@ -57,20 +56,13 @@ class CognitiveService:
             )
         )
 
-        # 创建关联管理器
-        self.association_manager = AssociationManager(
-            self.main_collection, self.vector_store
-        )
-
         # 创建记忆处理器工厂
         self.memory_handler_factory = MemoryHandlerFactory(
             self.main_collection, self.vector_store
         )
 
         # 创建记忆管理器，并传入具体的 collection 对象
-        self.memory_manager = MemoryManager(
-            self.main_collection, self.vector_store, self.association_manager
-        )
+        self.memory_manager = MemoryManager(self.main_collection, self.vector_store)
 
         # 记录初始化状态以验证VectorStore
         self.logger.info(
