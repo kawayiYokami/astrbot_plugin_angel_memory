@@ -39,19 +39,19 @@ class DeepMindSleepService:
         start_time = time.time()
         try:
             if deepmind.memory_system is not None:
-                deepmind.logger.info("[sleep] phase=pre_maintenance start")
+                deepmind.logger.info("[睡眠] 阶段=前置维护 开始")
                 await self.maintenance_service.run_pre_consolidate()
-                deepmind.logger.info("[sleep] phase=pre_maintenance done")
+                deepmind.logger.info("[睡眠] 阶段=前置维护 完成")
 
-                deepmind.logger.info("[sleep] phase=consolidate start")
+                deepmind.logger.info("[睡眠] 阶段=记忆清理 开始")
                 await deepmind.memory_system.consolidate_memories()
-                deepmind.logger.info("[sleep] phase=consolidate done")
+                deepmind.logger.info("[睡眠] 阶段=记忆清理 完成")
                 cleanup_completed_at = time.time()
-                deepmind.logger.info("[sleep] phase=maintenance start")
+                deepmind.logger.info("[睡眠] 阶段=后置维护 开始")
                 await self.maintenance_service.run_post_consolidate(
                     cleanup_completed_at=cleanup_completed_at
                 )
-                deepmind.logger.info("[sleep] phase=maintenance done")
+                deepmind.logger.info("[睡眠] 阶段=后置维护 完成")
                 return True
             else:
                 deepmind.logger.error("记忆系统不可用，跳过巩固")

@@ -70,6 +70,21 @@ class MemorySqlManager:
                     tag_id INTEGER NOT NULL,
                     UNIQUE(source_id, tag_id)
                 );
+                
+                CREATE TABLE IF NOT EXISTS note_index_records (
+                    source_id TEXT PRIMARY KEY,
+                    note_short_id INTEGER UNIQUE,
+                    file_id TEXT NOT NULL,
+                    source_file_path TEXT NOT NULL,
+                    heading_h1 TEXT,
+                    heading_h2 TEXT,
+                    heading_h3 TEXT,
+                    heading_h4 TEXT,
+                    heading_h5 TEXT,
+                    heading_h6 TEXT,
+                    total_lines INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                );
 
                 CREATE INDEX IF NOT EXISTS idx_memory_scope_created_at
                     ON memory_records(memory_scope, created_at);
@@ -81,6 +96,17 @@ class MemorySqlManager:
                     ON memory_tag_rel(tag_id, memory_id);
                 CREATE INDEX IF NOT EXISTS idx_note_tag_rel_tag_source
                     ON note_tag_rel(tag_id, source_id);
+                CREATE INDEX IF NOT EXISTS idx_note_index_file_id
+                    ON note_index_records(file_id);
+                CREATE INDEX IF NOT EXISTS idx_note_index_path
+                    ON note_index_records(source_file_path);
+                CREATE INDEX IF NOT EXISTS idx_note_index_short_id
+                    ON note_index_records(note_short_id);
+
+                CREATE TABLE IF NOT EXISTS note_short_id_seq (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    next_id INTEGER NOT NULL
+                );
                 """
             )
             # 兼容迁移：若旧表 memory_tags 存在，则迁移到 global_tags
@@ -90,6 +116,41 @@ class MemorySqlManager:
             if has_legacy:
                 cur.execute(
                     "INSERT OR IGNORE INTO global_tags(name) SELECT name FROM memory_tags"
+                )
+            # 兼容迁移：note_index_records 补充 total_lines 列
+            note_columns = cur.execute("PRAGMA table_info(note_index_records)").fetchall()
+            column_names = {str(row[1]) for row in note_columns}
+            if "note_short_id" not in column_names:
+                cur.execute("ALTER TABLE note_index_records ADD COLUMN note_short_id INTEGER")
+            if "total_lines" not in column_names:
+                cur.execute(
+                    "ALTER TABLE note_index_records ADD COLUMN total_lines INTEGER NOT NULL DEFAULT 0"
+                )
+            # 初始化短ID序列
+            cur.execute("INSERT OR IGNORE INTO note_short_id_seq(id, next_id) VALUES (1, 0)")
+            # 兼容迁移：给历史 note_index_records 补 note_short_id（从0开始）
+            rows_without_short_id = cur.execute(
+                """
+                SELECT source_id
+                FROM note_index_records
+                WHERE note_short_id IS NULL
+                ORDER BY source_id ASC
+                """
+            ).fetchall()
+            if rows_without_short_id:
+                seq_row = cur.execute(
+                    "SELECT next_id FROM note_short_id_seq WHERE id = 1"
+                ).fetchone()
+                next_id = int(seq_row[0]) if seq_row else 0
+                for row in rows_without_short_id:
+                    cur.execute(
+                        "UPDATE note_index_records SET note_short_id = ? WHERE source_id = ?",
+                        (next_id, str(row[0])),
+                    )
+                    next_id += 1
+                cur.execute(
+                    "UPDATE note_short_id_seq SET next_id = ? WHERE id = 1",
+                    (next_id,),
                 )
             conn.commit()
 
@@ -225,6 +286,28 @@ class MemorySqlManager:
                 f"SELECT id, name FROM global_tags WHERE name IN ({placeholders})",
                 tuple(normalized),
             ).fetchall()
+        with self._lock:
+            self._tag_names.update(normalized)
+        by_name = {str(row["name"]): int(row["id"]) for row in rows}
+        return [by_name[tag] for tag in normalized if tag in by_name]
+
+    def _get_or_create_tag_ids_with_conn(
+        self, conn: sqlite3.Connection, tag_names: List[str]
+    ) -> List[int]:
+        normalized = self._normalize_tags(tag_names)
+        if not normalized:
+            return []
+        conn.executemany(
+            "INSERT OR IGNORE INTO global_tags(name) VALUES (?)",
+            [(tag,) for tag in normalized],
+        )
+        placeholders = ",".join(["?" for _ in normalized])
+        rows = conn.execute(
+            f"SELECT id, name FROM global_tags WHERE name IN ({placeholders})",
+            tuple(normalized),
+        ).fetchall()
+        with self._lock:
+            self._tag_names.update(normalized)
         by_name = {str(row["name"]): int(row["id"]) for row in rows}
         return [by_name[tag] for tag in normalized if tag in by_name]
 
@@ -250,6 +333,300 @@ class MemorySqlManager:
                     [(sid, tid) for tid in tag_ids],
                 )
             conn.commit()
+
+    def _bind_note_tags_with_conn(
+        self, conn: sqlite3.Connection, source_id: str, tag_names: List[str]
+    ) -> None:
+        sid = str(source_id or "").strip()
+        if not sid:
+            return
+        tag_ids = self._get_or_create_tag_ids_with_conn(conn, tag_names)
+        conn.execute("DELETE FROM note_tag_rel WHERE source_id = ?", (sid,))
+        if tag_ids:
+            conn.executemany(
+                "INSERT OR IGNORE INTO note_tag_rel(source_id, tag_id) VALUES (?, ?)",
+                [(sid, tid) for tid in tag_ids],
+            )
+
+    @staticmethod
+    def _safe_heading(value: Any) -> str:
+        text = str(value or "").strip()
+        return text[:500] if text else ""
+
+    @staticmethod
+    def _build_note_vector_text(tags: List[str]) -> str:
+        # notes_index 仅使用 tags 生成向量文本，避免正文/路径语义噪声
+        deduped = list(dict.fromkeys([str(t).strip() for t in tags if str(t).strip()]))
+        return " ".join(deduped).strip()
+
+    @staticmethod
+    def _alloc_next_note_short_id(conn: sqlite3.Connection) -> int:
+        row = conn.execute(
+            "SELECT next_id FROM note_short_id_seq WHERE id = 1"
+        ).fetchone()
+        next_id = int(row["next_id"]) if row else 0
+        conn.execute(
+            "UPDATE note_short_id_seq SET next_id = ? WHERE id = 1",
+            (next_id + 1,),
+        )
+        return next_id
+
+    async def upsert_note_index_entries(self, entries: List[Dict[str, Any]]) -> Dict[str, int]:
+        return await asyncio.to_thread(self._upsert_note_index_entries_sync, entries)
+
+    def _upsert_note_index_entries_sync(self, entries: List[Dict[str, Any]]) -> Dict[str, int]:
+        scanned = len(entries or [])
+        upserted = 0
+        failed = 0
+        with self._connect() as conn:
+            for item in entries or []:
+                try:
+                    source_id = str(item.get("source_id") or "").strip()
+                    file_id = str(item.get("file_id") or "").strip()
+                    source_file_path = str(item.get("source_file_path") or "").strip()
+                    if not source_id or not file_id or not source_file_path:
+                        continue
+                    existing = conn.execute(
+                        "SELECT note_short_id FROM note_index_records WHERE source_id = ?",
+                        (source_id,),
+                    ).fetchone()
+                    if existing and existing["note_short_id"] is not None:
+                        note_short_id = int(existing["note_short_id"])
+                    else:
+                        note_short_id = self._alloc_next_note_short_id(conn)
+
+                    headings = [self._safe_heading(item.get(f"h{i}", "")) for i in range(1, 7)]
+                    tags = self._normalize_tags(item.get("tags") or [])
+                    total_lines = int(item.get("total_lines") or 0)
+                    updated_at = float(item.get("updated_at") or time.time())
+
+                    conn.execute(
+                        """
+                        INSERT INTO note_index_records(
+                            source_id, note_short_id, file_id, source_file_path,
+                            heading_h1, heading_h2, heading_h3,
+                            heading_h4, heading_h5, heading_h6,
+                            total_lines, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_id) DO UPDATE SET
+                            note_short_id=excluded.note_short_id,
+                            file_id=excluded.file_id,
+                            source_file_path=excluded.source_file_path,
+                            heading_h1=excluded.heading_h1,
+                            heading_h2=excluded.heading_h2,
+                            heading_h3=excluded.heading_h3,
+                            heading_h4=excluded.heading_h4,
+                            heading_h5=excluded.heading_h5,
+                            heading_h6=excluded.heading_h6,
+                            total_lines=excluded.total_lines,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            source_id,
+                            note_short_id,
+                            file_id,
+                            source_file_path,
+                            headings[0],
+                            headings[1],
+                            headings[2],
+                            headings[3],
+                            headings[4],
+                            headings[5],
+                            total_lines,
+                            updated_at,
+                        ),
+                    )
+                    # 使用同一连接写入 tags，避免事务内嵌套连接导致 SQLite 锁冲突
+                    self._bind_note_tags_with_conn(conn, source_id, tags)
+                    upserted += 1
+                except Exception:
+                    failed += 1
+                    self.logger.exception("笔记索引写入失败")
+            conn.commit()
+        return {"scanned": scanned, "upserted": upserted, "failed": failed}
+
+    async def delete_note_index_by_file_id(self, file_id: str) -> List[str]:
+        return await asyncio.to_thread(self._delete_note_index_by_file_id_sync, file_id)
+
+    def _delete_note_index_by_file_id_sync(self, file_id: str) -> List[str]:
+        fid = str(file_id or "").strip()
+        if not fid:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT source_id FROM note_index_records WHERE file_id = ?",
+                (fid,),
+            ).fetchall()
+            source_ids = [str(row["source_id"]) for row in rows]
+            if source_ids:
+                placeholders = ",".join(["?" for _ in source_ids])
+                conn.execute(
+                    f"DELETE FROM note_tag_rel WHERE source_id IN ({placeholders})",
+                    tuple(source_ids),
+                )
+            conn.execute("DELETE FROM note_index_records WHERE file_id = ?", (fid,))
+            conn.commit()
+        return source_ids
+
+    async def get_note_index_by_source_ids(self, source_ids: List[str]) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self._get_note_index_by_source_ids_sync, source_ids)
+
+    def _get_note_index_by_source_ids_sync(self, source_ids: List[str]) -> List[Dict[str, Any]]:
+        ids = [str(sid).strip() for sid in (source_ids or []) if str(sid).strip()]
+        if not ids:
+            return []
+        placeholders = ",".join(["?" for _ in ids])
+        sql = f"""
+            SELECT
+                nir.source_id,
+                nir.note_short_id,
+                nir.file_id,
+                nir.source_file_path,
+                nir.heading_h1,
+                nir.heading_h2,
+                nir.heading_h3,
+                nir.heading_h4,
+                nir.heading_h5,
+                nir.heading_h6,
+                nir.total_lines,
+                nir.updated_at,
+                IFNULL(tags.tags_text, '') AS tags_text
+            FROM note_index_records nir
+            LEFT JOIN (
+                SELECT
+                    ntr.source_id AS source_id,
+                    GROUP_CONCAT(gt.name, ', ') AS tags_text
+                FROM note_tag_rel ntr
+                JOIN global_tags gt ON gt.id = ntr.tag_id
+                GROUP BY ntr.source_id
+            ) tags ON tags.source_id = nir.source_id
+            WHERE nir.source_id IN ({placeholders})
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple(ids)).fetchall()
+        return [dict(row) for row in rows]
+
+    async def search_note_index_by_tags(
+        self,
+        query: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self._search_note_index_by_tags_sync, query, limit)
+
+    def _search_note_index_by_tags_sync(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        text = str(query or "")
+        if not text.strip():
+            return []
+        with self._lock:
+            matched_tags = [tag for tag in self._tag_names if tag and tag in text]
+        if not matched_tags:
+            return []
+
+        placeholders = ",".join(["?" for _ in matched_tags])
+        sql = f"""
+            SELECT
+                nir.source_id,
+                nir.note_short_id,
+                nir.file_id,
+                nir.source_file_path,
+                nir.heading_h1,
+                nir.heading_h2,
+                nir.heading_h3,
+                nir.heading_h4,
+                nir.heading_h5,
+                nir.heading_h6,
+                nir.total_lines,
+                nir.updated_at,
+                COUNT(DISTINCT gt.id) AS hit_count,
+                CAST(nir.updated_at / 86400 AS INTEGER) AS day_bucket,
+                IFNULL(tags.tags_text, '') AS tags_text
+            FROM note_index_records nir
+            JOIN note_tag_rel ntr ON ntr.source_id = nir.source_id
+            JOIN global_tags gt ON gt.id = ntr.tag_id
+            LEFT JOIN (
+                SELECT
+                    ntr2.source_id AS source_id,
+                    GROUP_CONCAT(gt2.name, ', ') AS tags_text
+                FROM note_tag_rel ntr2
+                JOIN global_tags gt2 ON gt2.id = ntr2.tag_id
+                GROUP BY ntr2.source_id
+            ) tags ON tags.source_id = nir.source_id
+            WHERE gt.name IN ({placeholders})
+            GROUP BY nir.source_id
+            ORDER BY hit_count DESC, day_bucket DESC, nir.source_file_path ASC
+            LIMIT ?
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, tuple([*matched_tags, int(limit)])).fetchall()
+        return [dict(row) for row in rows]
+
+    async def list_note_index_vector_rows(self) -> List[Dict[str, str]]:
+        return await asyncio.to_thread(self._list_note_index_vector_rows_sync)
+
+    def _list_note_index_vector_rows_sync(self) -> List[Dict[str, str]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    nir.source_id,
+                    nir.note_short_id,
+                    nir.source_file_path,
+                    nir.heading_h1,
+                    nir.heading_h2,
+                    nir.heading_h3,
+                    nir.heading_h4,
+                    nir.heading_h5,
+                    nir.heading_h6,
+                    nir.total_lines,
+                    IFNULL(tags.tags_text, '') AS tags_text
+                FROM note_index_records nir
+                LEFT JOIN (
+                    SELECT
+                        ntr.source_id AS source_id,
+                        GROUP_CONCAT(gt.name, ' ') AS tags_text
+                    FROM note_tag_rel ntr
+                    JOIN global_tags gt ON gt.id = ntr.tag_id
+                    GROUP BY ntr.source_id
+                ) tags ON tags.source_id = nir.source_id
+                """
+            ).fetchall()
+        result: List[Dict[str, str]] = []
+        for row in rows:
+            tags = [t for t in str(row["tags_text"] or "").split(" ") if t]
+            vector_text = self._build_note_vector_text(tags=tags)
+            if not vector_text:
+                continue
+            result.append({"id": str(row["source_id"] or ""), "vector_text": vector_text})
+        return [r for r in result if r["id"]]
+
+    async def get_note_index_by_short_id(self, note_short_id: int) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(self._get_note_index_by_short_id_sync, note_short_id)
+
+    def _get_note_index_by_short_id_sync(self, note_short_id: int) -> Optional[Dict[str, Any]]:
+        sid = int(note_short_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    nir.source_id,
+                    nir.note_short_id,
+                    nir.file_id,
+                    nir.source_file_path,
+                    nir.heading_h1,
+                    nir.heading_h2,
+                    nir.heading_h3,
+                    nir.heading_h4,
+                    nir.heading_h5,
+                    nir.heading_h6,
+                    nir.total_lines,
+                    nir.updated_at
+                FROM note_index_records nir
+                WHERE nir.note_short_id = ?
+                LIMIT 1
+                """,
+                (sid,),
+            ).fetchone()
+        return dict(row) if row else None
 
     async def find_matched_tag_ids(self, query_text: str) -> List[int]:
         return await asyncio.to_thread(self._find_matched_tag_ids_sync, query_text)

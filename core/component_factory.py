@@ -82,12 +82,18 @@ class ComponentFactory:
                 )
                 self._components["memory_runtime"] = memory_runtime
 
+                note_service = self._create_note_service(vector_store=None)
+                self._components["note_service"] = note_service
+
                 deepmind = await self._create_deepmind(
                     vector_store=None,
-                    note_service=None,
+                    note_service=note_service,
                     memory_runtime=memory_runtime,
                 )
                 self._components["deepmind"] = deepmind
+
+                file_monitor = self._create_file_monitor(note_service)
+                self._components["file_monitor"] = file_monitor
 
                 self._initialized = True
                 self.logger.info("✅ 所有核心组件创建完成")
@@ -97,6 +103,7 @@ class ComponentFactory:
                     self.init_manager.mark_ready()
                     self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
 
+                await self._start_file_monitor(file_monitor)
                 return self._components
 
             # 1. 创建嵌入提供商
@@ -329,7 +336,8 @@ class ComponentFactory:
         # 使用PluginContext模式创建NoteService
         note_service = NoteService.from_plugin_context(self.plugin_context)
         # 设置VectorStore
-        note_service.set_vector_store(vector_store)
+        if vector_store is not None:
+            note_service.set_vector_store(vector_store)
 
         self.logger.info("✅ 笔记服务创建完成")
 

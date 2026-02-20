@@ -166,8 +166,6 @@ class SmallModelPromptBuilder:
         Returns:
             完整的提示词字符串
         """
-        from .note_context_builder import NoteContextBuilder
-
         # 获取系统提示词
         if system_prompt is None:
             # 延迟导入以避免循环依赖
