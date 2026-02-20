@@ -28,7 +28,7 @@
     "type": "bool",
     "description": "[核心模型设置] 启用简化记忆模式（SQL+tags）",
     "default": false,
-    "hint": "开启后将使用简化记忆模式（非向量）：记忆仅按 tags 召回（命中次数->按天时间->强度排序），笔记检索功能将不生效。"
+    "hint": "开启后将使用简化记忆模式（非向量）：记忆按 tags 召回（命中次数->按天时间->强度排序）。笔记仍可检索（走中央SQL tags匹配），但不使用向量召回。"
   },
   "conversation_scope_map": {
     "type": "text",
@@ -70,22 +70,16 @@
       }
     }
   },
-  "token_budget": {
+  "note_topk": {
     "type": "object",
-    "description": "[Token预算] 笔记系统的Token限制配置",
-    "hint": "控制笔记选择和上下文注入的Token数量，避免超出模型限制。",
+    "description": "[笔记Top-K] 笔记注入数量限制",
+    "hint": "top_k 控制实际注入LLM的笔记数量。候选检索数量固定为 top_k 的 7 倍。",
     "items": {
-      "small_model_budget": {
+      "top_k": {
         "type": "int",
-        "description": "候选笔记池的令牌预算",
-        "default": 2000,
-        "hint": "控制从向量库召回的候选笔记总量。建议1000-5000。参考：1个英文字符≈0.3令牌，1个中文字符≈0.6令牌。"
-      },
-      "large_model_budget": {
-        "type": "int",
-        "description": "注入LLM的笔记内容令牌预算（软限制）",
-        "default": 200,
-        "hint": "控制实际注入给应答模型的笔记内容总量。采用贪婪填充：第一条笔记即使超出预算也会完整显示，后续笔记累加至接近预算。建议200-1000。"
+        "description": "注入LLM的笔记数量上限",
+        "default": 8,
+        "hint": "控制实际注入给应答模型的笔记条数。建议 3-20。"
       }
     }
   },
