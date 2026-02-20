@@ -42,11 +42,16 @@ class FileMonitorService:
 
         self.logger.info("文件监控器初始化完成（顺序处理模式）")
 
-        # 初始化FileIndexManager用于增量同步
-        provider_id = note_service.plugin_context.get_current_provider()
-        self.file_index_manager = FileIndexManager(
-            str(note_service.plugin_context.get_index_dir()), provider_id
-        )
+        # 文件扫描状态统一使用中央真相源（global），并复用 IDService 的 file_manager
+        if hasattr(note_service, "id_service") and hasattr(
+            note_service.id_service, "file_manager"
+        ):
+            self.file_index_manager = note_service.id_service.file_manager
+        else:
+            # 兜底：避免因注入异常导致监控器不可用
+            self.file_index_manager = FileIndexManager(
+                str(path_manager.get_memory_center_index_dir()), "global"
+            )
 
         # 确保raw目录存在
         self.raw_directory.mkdir(parents=True, exist_ok=True)
@@ -126,7 +131,7 @@ class FileMonitorService:
 
 
     def _format_timing_log(self, timings: dict) -> str:
-        """格式化计时信息为日志字符串（按处理顺序）"""
+        """格式化计时信息为日志字符串（中央索引链路）"""
         parts = []
 
         # 1. 文件解析（切块 + ID查询）
@@ -136,25 +141,19 @@ class FileMonitorService:
                 parse_parts.append(f"ID{timings['id_lookup']:.0f}ms")
             parts.append(f"文件解析：{' + '.join(parse_parts)}")
 
-        # 2. 主集合（向量化 + DB）
-        if "store_main" in timings:
-            if "main_embed" in timings and "main_db" in timings:
-                parts.append(
-                    f"主集：向量{timings['main_embed']:.0f}ms + DB{timings['main_db']:.0f}ms"
-                )
-            else:
-                parts.append(f"主集：{timings['store_main']:.0f}ms")
+        # 2. 旧索引清理
+        if "delete_old_index" in timings:
+            parts.append(f"旧索引清理：{timings['delete_old_index']:.0f}ms")
 
-        # 3. 副集合（向量化 + DB）
-        if "store_sub" in timings:
-            if "sub_embed" in timings and "sub_db" in timings:
-                parts.append(
-                    f"副集：向量{timings['sub_embed']:.0f}ms + DB{timings['sub_db']:.0f}ms"
-                )
-            else:
-                parts.append(f"副集：{timings['store_sub']:.0f}ms")
+        # 3. 中央索引写入
+        if "store_total" in timings:
+            parts.append(f"中央索引写入：{timings['store_total']:.0f}ms")
 
-        # 4. 线程等待（如果显著）
+        # 4. 向量缓存写入（包含 embedding）
+        if "vector_sync" in timings:
+            parts.append(f"向量缓存写入：{timings['vector_sync']:.0f}ms")
+
+        # 5. 线程等待（如果显著）
         if "_thread_wait" in timings and timings["_thread_wait"] > 100:
             parts.append(f"线程等待：{timings['_thread_wait']:.0f}ms")
 
@@ -219,8 +218,6 @@ class FileMonitorService:
 
                         # 详细的处理日志
                         total_time = (time_module.time() - file_start) * 1000
-                        from pathlib import Path
-
                         file_name = Path(relative_path).name
                         timing_str = self._format_timing_log(timings)
 
@@ -439,29 +436,14 @@ class FileMonitorService:
 
         try:
             self.logger.info(f"开始删除 {len(file_ids)} 个文件的数据")
+            ok = True
+            for file_id in file_ids:
+                if not self.note_service.remove_file_data_by_file_id(file_id):
+                    ok = False
 
-            # 1. 批量查询主集合，获取所有需要删除的笔记ID
-            where_clause = {"file_id": {"$in": file_ids}}
-            main_results = self.note_service.main_collection.get(where=where_clause)
-            ids_to_delete = (
-                main_results["ids"] if main_results and main_results["ids"] else []
-            )
-
-            self.logger.debug(f"需要删除 {len(ids_to_delete)} 个笔记文档")
-
-            # 2. 批量删除副集合（基于笔记ID）
-            if ids_to_delete:
-                self.note_service.sub_collection.delete(ids=ids_to_delete)
-                self.logger.debug(f"已删除副集合的 {len(ids_to_delete)} 个文档")
-
-            # 3. 批量删除主集合（基于文件ID）
-            self.note_service.main_collection.delete(where=where_clause)
-            self.logger.debug(f"已从主集合中删除与 {len(file_ids)} 个文件相关的文档")
-
-            # 4. 批量删除SQLite记录
+            # 批量删除 file_index SQLite 记录
             self._batch_delete_sqlite_records(file_ids)
-
-            return True
+            return ok
         except Exception as e:
             self.logger.error(f"删除文件数据失败 (IDs: {file_ids}): {e}")
             return False
