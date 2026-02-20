@@ -208,11 +208,10 @@ class VectorStore:
         Returns:
             ChromaDB集合对象
         """
-        if collection_name not in self.collections:
-            self.collections[collection_name] = (
-                self.get_or_create_collection_with_dimension_check(collection_name)
-            )
-        return self.collections[collection_name]
+        raise RuntimeError(
+            "旧笔记向量集合接口已废弃（notes_collection/NoteData 链路）。"
+            "请使用 NoteService + notes_index（中央SQL回查）新链路。"
+        )
 
     async def remember(self, collection, memory: BaseMemory):
         """
@@ -579,6 +578,8 @@ class VectorStore:
         """清空指定集合."""
         try:
             collection_name = collection.name
+            # 先失效该集合相关缓存，避免后续先拿到已删除的旧句柄
+            self.invalidate_cache_by_pattern(f":{collection_name}:")
             self.client.delete_collection(collection_name)
             # 重新创建集合,确保 embedding_function 等元数据被保留
             self.get_or_create_collection_with_dimension_check(name=collection_name)
@@ -1035,7 +1036,7 @@ class VectorStore:
                     return cached_collection
                 except Exception as e:
                     # 缓存集合无效,删除缓存项
-                    self.logger.warning(f"⚠️ 缓存集合无效,重新创建: {name}, 错误: {e}")
+                    self.logger.debug(f"缓存集合失效，自动重建: {name}, 原因: {e}")
                     del VectorStore._collection_cache[cache_key]
 
         # 获取集合前先记录详细信息
@@ -1405,15 +1406,10 @@ class VectorStore:
             collection: 目标 ChromaDB 集合
             note: NoteData 对象
         """
-        # 使用高级抽象方法存储笔记(笔记数据全部存储在 metadata 中)
-        await self.upsert_documents(
-            collection=collection,
-            ids=note.id,
-            embedding_texts=note.get_embedding_text(),  # 用于向量化的文本
-            metadatas=note.to_dict(),  # 笔记的所有数据都存储在 metadata 中
+        raise RuntimeError(
+            "旧笔记写入接口已废弃（NoteData -> metadata）。"
+            "请使用 NoteService + 中央索引链路。"
         )
-
-        # 笔记使用FlashRank语义重排
 
     async def search_notes_with_vector(
         self,
@@ -1436,50 +1432,9 @@ class VectorStore:
         Returns:
             相关的笔记对象列表(NoteData)
         """
-        # 构建查询参数
-        query_params = {"query_embeddings": [vector], "n_results": limit}
-
-        # 如果提供了过滤器,则添加到查询参数
-        where_clause = self._build_query_where_clause(where_filter)
-        if where_clause:
-            query_params["where"] = where_clause
-
-        # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
-        results = collection.query(**query_params)
-
-        # 将结果转换为笔记对象,并保留相似度分数
-        vector_results = []
-        if results and results["metadatas"] and len(results["metadatas"]) > 0:
-            distances = results.get("distances", [[]])[0]
-            metadatas = results["metadatas"][0]
-
-            for idx, meta in enumerate(metadatas):
-                if meta:
-                    try:
-                        note = NoteData.from_dict(meta)
-                        # 将距离转换为相似度分数
-                        if idx < len(distances):
-                            distance = distances[idx]
-                            similarity = max(0.0, 1.0 - (distance / 2.0))
-                            if idx < 3:
-                                self.logger.debug(
-                                    f"笔记{idx}: distance={distance:.4f}, similarity={similarity:.4f}"
-                                )
-                            note.similarity = similarity
-                        else:
-                            note.similarity = 0.0
-                        vector_results.append(note)
-                    except Exception as e:
-                        self.logger.warning(f"无法创建笔记对象,跳过: {e}")
-                        self.logger.error(f"导致创建失败的原始 metadata: {meta}")
-                        continue
-
-        # 混合检索:结合语义重排结果(强制启用)
-        final_results = self._rerank_notes(
-            query, vector_results, collection, limit
+        raise RuntimeError(
+            "旧笔记向量检索接口已废弃。请使用 recall_note_source_ids + NoteService。"
         )
-
-        return final_results
 
     async def search_notes(
         self,
@@ -1502,70 +1457,9 @@ class VectorStore:
         Returns:
             相关的笔记对象列表(NoteData)
         """
-        # 如果提供了预计算向量,直接使用向量搜索
-        if vector is not None:
-            return await self.search_notes_with_vector(
-                collection=collection,
-                vector=vector,
-                limit=limit,
-                where_filter=where_filter,
-                query=query,  # 传递原始查询文本
-            )
-
-        # 显式生成查询向量(异步调用)，指明这是查询场景
-        query_embedding = await self.embed_single_document(query, is_query=True)
-
-        # --- 处理向量化失败 ---
-        if query_embedding is None:
-            self.logger.warning(
-                f"因向量化失败，笔记查询 '{query[:50]}...' 的流程已中止。"
-            )
-            return []  # 立即返回空列表
-
-        # 构建查询参数
-        query_params = {"query_embeddings": [query_embedding], "n_results": limit}
-
-        # 如果提供了过滤器,则添加到查询参数
-        where_clause = self._build_query_where_clause(where_filter)
-        if where_clause:
-            query_params["where"] = where_clause
-
-        # 在ChromaDB中进行向量相似度搜索(数据库内部处理并发)
-        results = collection.query(**query_params)
-
-        # 将结果转换为笔记对象,并保留相似度分数
-        vector_results = []
-        if results and results["metadatas"] and len(results["metadatas"]) > 0:
-            distances = results.get("distances", [[]])[0]
-            metadatas = results["metadatas"][0]
-
-            for idx, meta in enumerate(metadatas):
-                if meta:
-                    try:
-                        note = NoteData.from_dict(meta)
-                        # 将距离转换为相似度分数
-                        if idx < len(distances):
-                            distance = distances[idx]
-                            similarity = max(0.0, 1.0 - (distance / 2.0))
-                            if idx < 3:
-                                self.logger.debug(
-                                    f"笔记{idx}: distance={distance:.4f}, similarity={similarity:.4f}"
-                                )
-                            note.similarity = similarity
-                        else:
-                            note.similarity = 0.0
-                        vector_results.append(note)
-                    except Exception as e:
-                        self.logger.warning(f"无法创建笔记对象,跳过: {e}")
-                        self.logger.error(f"导致创建失败的原始 metadata: {meta}")
-                        continue
-
-        # 混合检索:结合语义重排结果(强制启用)
-        final_results = self._rerank_notes(
-            query, vector_results, collection, limit
+        raise RuntimeError(
+            "旧笔记检索接口已废弃。请使用 recall_note_source_ids + NoteService。"
         )
-
-        return final_results
 
     async def _search_vector_scores(
         self,
@@ -1589,43 +1483,9 @@ class VectorStore:
         Returns:
             {'note_id': similarity_score, ...} 的字典
         """
-        try:
-            query_embedding = vector
-
-            # 如果没有提供向量，则显式生成(异步调用)
-            if query_embedding is None:
-                query_embedding = await self.embed_single_document(query, is_query=True)
-
-            # --- 处理向量化失败 ---
-            if query_embedding is None:
-                self.logger.warning(
-                    f"因向量化失败，向量搜索 '{query[:50]}...' 已中止。"
-                )
-                return {}  # 立即返回空字典
-
-            # 执行向量搜索
-            results = collection.query(
-                query_embeddings=[query_embedding], n_results=limit
-            )
-
-            # 提取 ID 和距离,转换为相似度分数
-            scores = {}
-            if results and results["ids"] and len(results["ids"]) > 0:
-                doc_ids = results["ids"][0]
-                distances = results.get("distances", [[]])[0]
-
-                for idx, doc_id in enumerate(doc_ids):
-                    if idx < len(distances):
-                        distance = distances[idx]
-                        # 将距离转换为相似度分数(0到1之间)
-                        similarity = max(0.0, 1.0 - (distance / 2.0))
-                        scores[doc_id] = similarity
-
-            return scores
-
-        except Exception as e:
-            self.logger.error(f"向量搜索失败: {e}")
-            return {}
+        raise RuntimeError(
+            "旧笔记向量分数接口已废弃。请使用 recall_note_source_ids。"
+        )
 
     def get_notes_by_ids(self, collection, note_ids: List[str]) -> List[NoteData]:
         """
@@ -1638,28 +1498,6 @@ class VectorStore:
         Returns:
             笔记对象列表
         """
-        try:
-            if not note_ids:
-                return []
-
-            # 使用ChromaDB的get方法获取指定ID的文档
-            retrieved_docs = collection.get(ids=note_ids)
-            if not retrieved_docs or not retrieved_docs["metadatas"]:
-                return []
-
-            notes = []
-            for meta in retrieved_docs["metadatas"]:
-                if meta:  # 笔记集合只包含笔记,不需要检查note_type
-                    try:
-                        note = NoteData.from_dict(meta)
-                        notes.append(note)
-                    except Exception as e:
-                        self.logger.warning(f"无法创建笔记对象,跳过: {e}")
-                        self.logger.error(f"导致创建失败的原始 metadata: {meta}")
-                        continue
-
-            return notes
-
-        except Exception as e:
-            self.logger.error(f"根据ID获取笔记失败: {e}")
-            return []
+        raise RuntimeError(
+            "旧笔记按ID读取接口已废弃。请使用 note_short_id + note_recall。"
+        )

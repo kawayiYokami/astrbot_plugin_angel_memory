@@ -119,13 +119,6 @@ class DeepMindRetrievalService:
                 vector=note_vector,
             )
 
-        note_id_mapping = {}
-        for note in candidate_notes:
-            note_id = note.get("id")
-            if note_id:
-                short_id = MemoryIDResolver.generate_short_id(note_id)
-                note_id_mapping[short_id] = note_id
-
         memory_id_mapping = {}
         if long_term_memories:
             memory_id_mapping = MemoryIDResolver.generate_id_mapping(
@@ -135,7 +128,7 @@ class DeepMindRetrievalService:
         return {
             "long_term_memories": long_term_memories,
             "candidate_notes": candidate_notes,
-            "note_id_mapping": note_id_mapping,
+            "note_id_mapping": {},
             "memory_id_mapping": memory_id_mapping,
             "secretary_decision": secretary_decision,
             "core_topic": secretary_decision.get("topic", ""),

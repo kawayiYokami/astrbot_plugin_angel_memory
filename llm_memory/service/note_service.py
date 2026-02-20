@@ -109,13 +109,31 @@ class NoteService:
 
         rows: List[Dict] = []
         if self.vector_store is not None and self.notes_index_collection is not None:
-            recalled = await self.vector_store.recall_note_source_ids(
-                collection=self.notes_index_collection,
-                query=query,
-                limit=recall_count,
-                vector=vector,
-                similarity_threshold=0.0,
-            )
+            try:
+                recalled = await self.vector_store.recall_note_source_ids(
+                    collection=self.notes_index_collection,
+                    query=query,
+                    limit=recall_count,
+                    vector=vector,
+                    similarity_threshold=0.0,
+                )
+            except Exception as e:
+                # notes_index 在睡眠维护中可能被重建，旧句柄会失效；此处自动刷新并重试一次。
+                msg = str(e)
+                if "does not exist" in msg or "Error getting collection" in msg:
+                    self.logger.warning("notes_index 集合句柄已失效，正在自动刷新并重试。")
+                    self.notes_index_collection = (
+                        self.vector_store.get_or_create_collection_with_dimension_check("notes_index")
+                    )
+                    recalled = await self.vector_store.recall_note_source_ids(
+                        collection=self.notes_index_collection,
+                        query=query,
+                        limit=recall_count,
+                        vector=vector,
+                        similarity_threshold=0.0,
+                    )
+                else:
+                    raise
             source_ids = [sid for sid, _ in recalled]
             score_map = {sid: score for sid, score in recalled}
             if source_ids:

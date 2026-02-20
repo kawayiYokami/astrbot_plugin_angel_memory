@@ -218,6 +218,11 @@ class SleepMaintenanceService:
         provider = plugin_context.get_current_provider()
         current_provider = str(provider) if provider is not None else ""
         last_provider = str(state.get("notes_vector_sync_last_provider", "") or "")
+        # 与记忆迁移/同步保持一致：首次无专用记录时，复用已有 provider 状态避免误判全量重建
+        if not last_provider:
+            last_provider = str(state.get("vector_to_center_migration_last_provider", "") or "")
+        if not last_provider:
+            last_provider = str(state.get("memory_vector_sync_last_provider", "") or "")
 
         memory_sql_manager = plugin_context.get_component("memory_sql_manager")
         vector_store = plugin_context.get_component("vector_store")
@@ -227,12 +232,22 @@ class SleepMaintenanceService:
 
         try:
             notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
+            note_service = plugin_context.get_component("note_service")
+            if note_service is not None:
+                note_service.notes_index_collection = notes_index
             rows = await memory_sql_manager.list_note_index_vector_rows()
 
             # 供应商变化：全量重建（embedding 语义空间变化）
             if current_provider and last_provider != current_provider:
+                deepmind.logger.info(
+                    "[睡眠维护] 笔记向量库同步：检测到供应商变化，开始全量重建 "
+                    f"旧供应商={last_provider or '空'} 新供应商={current_provider} "
+                    f"待写入条数={len(rows)}"
+                )
                 vector_store.clear_collection(notes_index)
                 notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
+                if note_service is not None:
+                    note_service.notes_index_collection = notes_index
                 await vector_store.upsert_note_index_rows(notes_index, rows)
                 state["notes_vector_sync_last_provider"] = current_provider
                 deepmind.logger.info(
@@ -257,6 +272,8 @@ class SleepMaintenanceService:
                 await vector_store.upsert_note_index_rows(notes_index, add_rows)
 
             if not to_add and not to_delete:
+                if current_provider:
+                    state["notes_vector_sync_last_provider"] = current_provider
                 deepmind.logger.info("[睡眠维护] 笔记向量库同步：跳过（无增量变更）")
                 return "skipped"
 
@@ -264,6 +281,8 @@ class SleepMaintenanceService:
                 "[睡眠维护] 笔记向量库同步：完成（增量同步） "
                 f"新增={len(to_add)} 删除={len(to_delete)}"
             )
+            if current_provider:
+                state["notes_vector_sync_last_provider"] = current_provider
             return "success"
         except Exception as e:
             deepmind.logger.warning(
