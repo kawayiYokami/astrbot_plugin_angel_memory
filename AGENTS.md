@@ -6,7 +6,7 @@
 项目通过4个FunctionTool为LLM提供记忆能力：
 - **core_memory_remember**（[`CoreMemoryRememberTool`](tools/core_memory_remember.py:18)）：主动记忆工具，永久保存重要信息
 - **core_memory_recall**（[`CoreMemoryRecallTool`](tools/core_memory_recall.py:20)）：主动回忆工具，加权随机抽取核心记忆
-- **note_recall**（[`ExpandNoteContextTool`](tools/expand_note_context.py:19)）：笔记展开工具，查看完整笔记内容
+- **note_recall**（[`NoteRecallTool`](tools/note_recall.py:19)）：笔记展开工具，查看完整笔记内容
 - **research_topic**（[`ResearchTool`](tools/research_tool.py:18)）：研究助手工具，启动独立研究Agent
 
 这些工具在插件初始化时通过[`context.add_llm_tools()`](main.py:139)注入，成为LLM的主动能力。

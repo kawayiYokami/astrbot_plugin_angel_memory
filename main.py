@@ -26,7 +26,7 @@ from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
 from .tools.core_memory_remember import CoreMemoryRememberTool
 from .tools.core_memory_recall import CoreMemoryRecallTool
-from .tools.expand_note_context import ExpandNoteContextTool
+from .tools.note_recall import NoteRecallTool
 from .tools.research_tool import ResearchTool
 
 
@@ -52,7 +52,7 @@ def configure_logging_behavior():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "1.2.1",
+    "1.2.2",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -114,10 +114,10 @@ class AngelMemoryPlugin(Star):
             self.context.add_llm_tools(
                 CoreMemoryRememberTool(),
                 CoreMemoryRecallTool(),
-                ExpandNoteContextTool(),
+                NoteRecallTool(),
                 research_tool
             )
-            self.logger.info("✅ 已注册 core_memory_remember、core_memory_recall、expand_note_context 和 research_topic 工具。")
+            self.logger.info("✅ 已注册 core_memory_remember、core_memory_recall、note_recall 和 research_topic 工具。")
         except AttributeError as e:
             self.llm_tools_enabled = False
             self.logger.error(f"❌ 注册LLM工具失败，context可能不支持add_llm_tools方法: {e}", exc_info=True)
