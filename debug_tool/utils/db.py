@@ -603,6 +603,7 @@ class DBManager:
             for row in cur.execute(
                 """
                 SELECT id, memory_type, judgment, reasoning, strength, is_active,
+                       useful_count, useful_score, last_recalled_at, last_decay_at,
                        memory_scope, created_at, updated_at
                 FROM memory_records
                 ORDER BY created_at DESC
@@ -634,6 +635,10 @@ class DBManager:
         reasoning = str(item.get("reasoning") or "").strip()
         strength = int(item.get("strength", 1) or 1)
         is_active = 1 if bool(item.get("is_active", False)) else 0
+        useful_count = int(item.get("useful_count", 0) or 0)
+        useful_score = float(item.get("useful_score", 0.0) or 0.0)
+        last_recalled_at = float(item.get("last_recalled_at", 0.0) or 0.0)
+        last_decay_at = float(item.get("last_decay_at", 0.0) or 0.0)
         memory_scope = str(item.get("memory_scope") or "public").strip() or "public"
 
         if rows:
@@ -644,6 +649,7 @@ class DBManager:
                     """
                     UPDATE memory_records
                     SET memory_type=?, reasoning=?, strength=?, is_active=?,
+                        useful_count=?, useful_score=?, last_recalled_at=?, last_decay_at=?,
                         memory_scope=?, created_at=?, updated_at=?
                     WHERE id=?
                     """,
@@ -652,6 +658,10 @@ class DBManager:
                         reasoning,
                         strength,
                         is_active,
+                        useful_count,
+                        useful_score,
+                        last_recalled_at,
+                        last_decay_at,
                         memory_scope,
                         created_at,
                         now,
@@ -671,10 +681,25 @@ class DBManager:
             """
             INSERT INTO memory_records(
                 id, memory_type, judgment, reasoning, strength, is_active,
+                useful_count, useful_score, last_recalled_at, last_decay_at,
                 memory_scope, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (memory_id, memory_type, judgment, reasoning, strength, is_active, memory_scope, created_at, now),
+            (
+                memory_id,
+                memory_type,
+                judgment,
+                reasoning,
+                strength,
+                is_active,
+                useful_count,
+                useful_score,
+                last_recalled_at,
+                last_decay_at,
+                memory_scope,
+                created_at,
+                now,
+            ),
         )
         self._replace_tags(conn, memory_id, tags)
         return "insert"

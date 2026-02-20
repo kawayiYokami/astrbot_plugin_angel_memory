@@ -237,6 +237,7 @@ class DeepMind:
     async def _execute_feedback_task(
         self,
         useful_memory_ids: List[str],
+        recalled_memory_ids: List[str],
         new_memories: List[Dict[str, Any]],
         merge_groups: List[List[str]],
         session_id: str,
@@ -244,7 +245,7 @@ class DeepMind:
         """异步执行的长期记忆反馈。"""
 
         await self.feedback_service.execute_feedback_task(
-            useful_memory_ids, new_memories, merge_groups, session_id
+            useful_memory_ids, recalled_memory_ids, new_memories, merge_groups, session_id
         )
 
     def _clean_note_content(self, content: str) -> str:
@@ -716,6 +717,7 @@ class DeepMind:
                 # 直接异步调用
                 newly_created_memories = await self.memory_system.feedback(
                     useful_memory_ids=feedback_data.get("useful_memory_ids", []),
+                    recalled_memory_ids=[mem.id for mem in (long_term_memories or []) if getattr(mem, "id", None)],
                     new_memories=new_memories_normalized,  # <--- 使用转换后的数据
                     merge_groups=feedback_data.get("merge_groups", []),
                     memory_scope=memory_scope,

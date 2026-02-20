@@ -89,23 +89,19 @@ class SimpleMemoryRuntime:
             limit=limit,
             memory_scope=memory_scope,
         )
-        passive_ids = [mem.id for mem in memories if not mem.is_active]
-        if passive_ids:
-            await self._manager.decay_memories(passive_ids, delta=1)
-            refreshed = await self._manager.get_memories_by_ids(passive_ids)
-            refreshed_by_id = {mem.id: mem for mem in refreshed}
-            memories = [refreshed_by_id.get(mem.id, mem) for mem in memories]
         return memories
 
     async def feedback(
         self,
         useful_memory_ids: Optional[List[str]] = None,
+        recalled_memory_ids: Optional[List[str]] = None,
         new_memories: Optional[List[dict]] = None,
         merge_groups: Optional[List[List[str]]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         return await self._manager.process_feedback(
             useful_memory_ids=useful_memory_ids,
+            recalled_memory_ids=recalled_memory_ids,
             new_memories=new_memories,
             merge_groups=merge_groups,
             memory_scope=memory_scope,

@@ -17,6 +17,7 @@ class DeepMindFeedbackService:
         memory_scope = deepmind.plugin_context.resolve_memory_scope(session_id)
 
         useful_memory_ids = feedback_data.get("useful_memory_ids", [])
+        recalled_memory_ids = [memory.id for memory in (long_term_memories or []) if getattr(memory, "id", None)]
         new_memories_raw = feedback_data.get("new_memories", {})
         merge_groups_raw = feedback_data.get("merge_groups", [])
 
@@ -57,6 +58,7 @@ class DeepMindFeedbackService:
                 "session_id": session_id,
                 "payload": {
                     "useful_memory_ids": list(useful_memory_ids),
+                    "recalled_memory_ids": recalled_memory_ids,
                     "new_memories": new_memories_normalized,
                     "merge_groups": merge_groups,
                     "session_id": session_id,
@@ -67,18 +69,20 @@ class DeepMindFeedbackService:
 
     async def execute_feedback_task(
         self,
-        useful_memory_ids: List[str],
-        new_memories: List[Dict[str, Any]],
-        merge_groups: List[List[str]],
-        session_id: str,
+        useful_memory_ids: List[str] | None = None,
+        recalled_memory_ids: List[str] | None = None,
+        new_memories: List[Dict[str, Any]] | None = None,
+        merge_groups: List[List[str]] | None = None,
+        session_id: str = "",
         memory_scope: str = "public",
     ) -> None:
         deepmind = self.deepmind
         if deepmind.memory_system is not None:
             await deepmind.memory_system.feedback(
-                useful_memory_ids=useful_memory_ids,
-                new_memories=new_memories,
-                merge_groups=merge_groups,
+                useful_memory_ids=useful_memory_ids or [],
+                recalled_memory_ids=recalled_memory_ids or [],
+                new_memories=new_memories or [],
+                merge_groups=merge_groups or [],
                 memory_scope=memory_scope,
             )
         else:

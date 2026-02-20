@@ -17,7 +17,7 @@ except ImportError:
 @dataclass
 class CoreMemoryRecallTool(FunctionTool):
     name: str = "core_memory_recall"
-    description: str = "当你需要主动反思或回顾那些已被你'铭记'的核心原则、长期目标或关键事实时，调用此工具。它将根据你当初设置的重要性（记忆强度）进行**加权随机抽取**，重要性越高的记忆越有可能被回忆起来。"
+    description: str = "当你需要主动反思或回顾那些已被你'铭记'的核心原则、长期目标或关键事实时，调用此工具。你必须提供明确的检索 query（不能为 None 或空字符串），系统会先按 query 检索，再根据记忆强度进行**加权随机抽取**。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -29,10 +29,11 @@ class CoreMemoryRecallTool(FunctionTool):
                 },
                 "query": {
                     "type": "string",
-                    "description": "（可选）检索关键字，筛选相关记忆"
+                    "description": "检索关键字（必填，不能为 None 或空字符串）",
+                    "minLength": 1
                 }
             },
-            "required": ["limit"]
+            "required": ["limit", "query"]
         }
     )
 
@@ -44,9 +45,11 @@ class CoreMemoryRecallTool(FunctionTool):
         self,
         event: AstrMessageEvent,
         limit: int,
-        query: str = None,
+        query: str,
     ) -> str:
         self.logger.debug(f"{self.name} - LLM 调用: limit={limit}, query='{query}'")
+        if query is None or not str(query).strip():
+            return "参数错误：query 为必填且不能为空。请提供明确检索关键词后再调用 core_memory_recall。"
 
         # --- 获取服务 ---
         if not hasattr(event, 'plugin_context') or event.plugin_context is None:
@@ -70,7 +73,7 @@ class CoreMemoryRecallTool(FunctionTool):
             candidate_limit = max(limit * 3, 20)
 
             all_memories: List[BaseMemory] = await memory_runtime.comprehensive_recall(
-                query=query or "",
+                query=str(query).strip(),
                 fresh_limit=candidate_limit,
                 event=event,
                 memory_scope=memory_scope,

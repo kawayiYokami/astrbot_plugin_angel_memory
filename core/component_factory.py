@@ -20,6 +20,10 @@ from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager
 from ..llm_memory.components.vector_store import VectorStore
 from ..llm_memory import CognitiveService
+from ..llm_memory.service.memory_decay_policy import (
+    MemoryDecayConfig,
+    build_decay_config,
+)
 from ..llm_memory.service.note_service import NoteService
 from .memory_runtime import SimpleMemoryRuntime, VectorMemoryRuntime
 from .deepmind import DeepMind
@@ -71,7 +75,8 @@ class ComponentFactory:
         try:
             self.logger.info("🏭 开始创建核心组件...")
             enable_simple_memory = bool(config.get("enable_simple_memory", False))
-            memory_sql_manager = self._create_memory_sql_manager()
+            decay_config = build_decay_config(config)
+            memory_sql_manager = self._create_memory_sql_manager(decay_config)
             self._components["memory_sql_manager"] = memory_sql_manager
 
             if enable_simple_memory:
@@ -144,7 +149,11 @@ class ComponentFactory:
             self.plugin_context.set_vector_store(vector_store)
 
             # 3. 创建认知服务
-            cognitive_service = self._create_cognitive_service(vector_store, memory_sql_manager)
+            cognitive_service = self._create_cognitive_service(
+                vector_store,
+                memory_sql_manager,
+                decay_config=decay_config,
+            )
             self._components["cognitive_service"] = cognitive_service
 
             # 4. 创建统一记忆运行时（Phase A: 向量实现）
@@ -294,22 +303,30 @@ class ComponentFactory:
             self.logger.warning(f"解析上游重排提供商失败，自动降级为 Chroma 向量相似度排序: {e}")
             return None
 
-    def _create_cognitive_service(self, vector_store, memory_sql_manager: MemorySqlManager = None):
+    def _create_cognitive_service(
+        self,
+        vector_store,
+        memory_sql_manager: MemorySqlManager = None,
+        decay_config: Optional[MemoryDecayConfig] = None,
+    ):
         """创建认知服务"""
         self.logger.info("🧠 创建认知服务...")
 
         cognitive_service = CognitiveService(
             vector_store=vector_store,
             memory_sql_manager=memory_sql_manager,
+            decay_config=decay_config,
         )
         self.logger.info("✅ 认知服务创建完成")
 
         return cognitive_service
 
-    def _create_memory_sql_manager(self) -> MemorySqlManager:
+    def _create_memory_sql_manager(
+        self, decay_config: Optional[MemoryDecayConfig] = None
+    ) -> MemorySqlManager:
         """创建 SQL 记忆管理器（两种运行时共用）。"""
         simple_db_path = self.plugin_context.get_simple_memory_db_path()
-        manager = MemorySqlManager(simple_db_path)
+        manager = MemorySqlManager(simple_db_path, decay_config=decay_config)
         self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
         return manager
 

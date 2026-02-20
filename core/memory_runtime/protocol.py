@@ -55,6 +55,7 @@ class MemoryRuntime(Protocol):
     async def feedback(
         self,
         useful_memory_ids: Optional[List[str]] = None,
+        recalled_memory_ids: Optional[List[str]] = None,
         new_memories: Optional[List[dict]] = None,
         merge_groups: Optional[List[List[str]]] = None,
         memory_scope: str = "public",

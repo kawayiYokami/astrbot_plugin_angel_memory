@@ -17,17 +17,23 @@ except ImportError:
 
 from ..config.system_config import system_config
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
+from ..service.memory_decay_policy import MemoryDecayConfig, MemoryDecayPolicy
 
 
 class MemorySqlManager:
     """SimpleMemory 的 SQL 存储管理器。"""
 
-    def __init__(self, db_path: Path):
+    def __init__(
+        self,
+        db_path: Path,
+        decay_config: Optional[MemoryDecayConfig] = None,
+    ):
         self.logger = logger
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._tag_names: set[str] = set()
+        self.decay_policy = MemoryDecayPolicy(decay_config)
 
         self._init_db()
         self._load_tag_cache()
@@ -49,6 +55,10 @@ class MemorySqlManager:
                     reasoning TEXT NOT NULL,
                     strength INTEGER NOT NULL,
                     is_active INTEGER NOT NULL,
+                    useful_count INTEGER NOT NULL DEFAULT 0,
+                    useful_score REAL NOT NULL DEFAULT 0,
+                    last_recalled_at REAL NOT NULL DEFAULT 0,
+                    last_decay_at REAL NOT NULL DEFAULT 0,
                     memory_scope TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
@@ -100,8 +110,6 @@ class MemorySqlManager:
                     ON note_index_records(file_id);
                 CREATE INDEX IF NOT EXISTS idx_note_index_path
                     ON note_index_records(source_file_path);
-                CREATE INDEX IF NOT EXISTS idx_note_index_short_id
-                    ON note_index_records(note_short_id);
 
                 CREATE TABLE IF NOT EXISTS note_short_id_seq (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -152,6 +160,38 @@ class MemorySqlManager:
                     "UPDATE note_short_id_seq SET next_id = ? WHERE id = 1",
                     (next_id,),
                 )
+            # 兼容迁移：memory_records 补充三档记忆字段
+            memory_columns = cur.execute("PRAGMA table_info(memory_records)").fetchall()
+            memory_column_names = {str(row[1]) for row in memory_columns}
+            if "useful_count" not in memory_column_names:
+                cur.execute(
+                    "ALTER TABLE memory_records ADD COLUMN useful_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if "useful_score" not in memory_column_names:
+                cur.execute(
+                    "ALTER TABLE memory_records ADD COLUMN useful_score REAL NOT NULL DEFAULT 0"
+                )
+            if "last_recalled_at" not in memory_column_names:
+                cur.execute(
+                    "ALTER TABLE memory_records ADD COLUMN last_recalled_at REAL NOT NULL DEFAULT 0"
+                )
+            if "last_decay_at" not in memory_column_names:
+                cur.execute(
+                    "ALTER TABLE memory_records ADD COLUMN last_decay_at REAL NOT NULL DEFAULT 0"
+                )
+            # 索引创建放在补列之后，避免旧库因缺列导致初始化失败
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memory_tier_fields
+                    ON memory_records(is_active, useful_score, last_recalled_at)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_note_index_short_id
+                    ON note_index_records(note_short_id)
+                """
+            )
             conn.commit()
 
     def _load_tag_cache(self) -> None:
@@ -206,6 +246,13 @@ class MemorySqlManager:
 
     @staticmethod
     def _row_to_memory(row: sqlite3.Row, tags: List[str]) -> BaseMemory:
+        keys = set(row.keys()) if hasattr(row, "keys") else set()
+
+        def _v(name: str, default: Any) -> Any:
+            if keys and name in keys:
+                return row[name]
+            return default
+
         return BaseMemory(
             memory_type=MemorySqlManager._to_memory_type(row["memory_type"]),
             judgment=row["judgment"],
@@ -216,6 +263,9 @@ class MemorySqlManager:
             is_active=bool(row["is_active"]),
             created_at=float(row["created_at"]),
             memory_scope=row["memory_scope"],
+            useful_count=int(_v("useful_count", 0) or 0),
+            useful_score=float(_v("useful_score", 0.0) or 0.0),
+            last_recalled_at=float(_v("last_recalled_at", 0.0) or 0.0),
         )
 
     def _fetch_tags_for_memory_ids(
@@ -759,6 +809,9 @@ class MemorySqlManager:
             is_active=bool(is_active),
             created_at=now,
             memory_scope=scope,
+            useful_count=0,
+            useful_score=0.0,
+            last_recalled_at=0.0,
         )
 
         with self._connect() as conn:
@@ -766,8 +819,9 @@ class MemorySqlManager:
                 """
                 INSERT INTO memory_records(
                     id, memory_type, judgment, reasoning, strength, is_active,
+                    useful_count, useful_score, last_recalled_at,
                     memory_scope, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     memory.id,
@@ -776,6 +830,9 @@ class MemorySqlManager:
                     memory.reasoning,
                     memory.strength,
                     1 if memory.is_active else 0,
+                    memory.useful_count,
+                    memory.useful_score,
+                    memory.last_recalled_at,
                     scope,
                     memory.created_at,
                     now,
@@ -801,14 +858,18 @@ class MemorySqlManager:
                 """
                 INSERT INTO memory_records(
                     id, memory_type, judgment, reasoning, strength, is_active,
+                    useful_count, useful_score, last_recalled_at,
                     memory_scope, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     memory_type=excluded.memory_type,
                     judgment=excluded.judgment,
                     reasoning=excluded.reasoning,
                     strength=excluded.strength,
                     is_active=excluded.is_active,
+                    useful_count=excluded.useful_count,
+                    useful_score=excluded.useful_score,
+                    last_recalled_at=excluded.last_recalled_at,
                     memory_scope=excluded.memory_scope,
                     created_at=excluded.created_at,
                     updated_at=excluded.updated_at
@@ -820,6 +881,9 @@ class MemorySqlManager:
                     str(getattr(memory, "reasoning", "") or "").strip(),
                     int(getattr(memory, "strength", 1) or 1),
                     1 if bool(getattr(memory, "is_active", False)) else 0,
+                    int(getattr(memory, "useful_count", 0) or 0),
+                    float(getattr(memory, "useful_score", 0.0) or 0.0),
+                    float(getattr(memory, "last_recalled_at", 0.0) or 0.0),
                     scope,
                     created_at,
                     now,
@@ -875,6 +939,9 @@ class MemorySqlManager:
                     memory_type = str(raw.get("memory_type") or "知识记忆").strip() or "知识记忆"
                     strength = int(raw.get("strength", 1) or 1)
                     is_active = 1 if bool(raw.get("is_active", False)) else 0
+                    useful_count = int(raw.get("useful_count", 0) or 0)
+                    useful_score = float(raw.get("useful_score", 0.0) or 0.0)
+                    last_recalled_at = float(raw.get("last_recalled_at", 0.0) or 0.0)
                     memory_scope = self._normalize_scope(raw.get("memory_scope", "public"))
 
                     existing_rows = conn.execute(
@@ -898,6 +965,9 @@ class MemorySqlManager:
                                     reasoning = ?,
                                     strength = ?,
                                     is_active = ?,
+                                    useful_count = ?,
+                                    useful_score = ?,
+                                    last_recalled_at = ?,
                                     memory_scope = ?,
                                     created_at = ?,
                                     updated_at = ?
@@ -908,6 +978,9 @@ class MemorySqlManager:
                                     reasoning,
                                     strength,
                                     is_active,
+                                    useful_count,
+                                    useful_score,
+                                    last_recalled_at,
                                     memory_scope,
                                     created_at,
                                     now,
@@ -935,8 +1008,9 @@ class MemorySqlManager:
                             """
                             INSERT INTO memory_records(
                                 id, memory_type, judgment, reasoning, strength, is_active,
+                                useful_count, useful_score, last_recalled_at,
                                 memory_scope, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 memory_id,
@@ -945,6 +1019,9 @@ class MemorySqlManager:
                                 reasoning,
                                 strength,
                                 is_active,
+                                useful_count,
+                                useful_score,
+                                last_recalled_at,
                                 memory_scope,
                                 created_at,
                                 now,
@@ -986,6 +1063,9 @@ class MemorySqlManager:
                     mr.reasoning,
                     mr.strength,
                     mr.is_active,
+                    mr.useful_count,
+                    mr.useful_score,
+                    mr.last_recalled_at,
                     mr.memory_scope,
                     mr.created_at,
                     IFNULL(tags.tags_text, '') AS tags
@@ -1012,6 +1092,9 @@ class MemorySqlManager:
                     "reasoning": row["reasoning"],
                     "strength": int(row["strength"] or 1),
                     "is_active": bool(row["is_active"]),
+                    "useful_count": int(row["useful_count"] or 0),
+                    "useful_score": float(row["useful_score"] or 0.0),
+                    "last_recalled_at": float(row["last_recalled_at"] or 0.0),
                     "memory_scope": row["memory_scope"] or "public",
                     "created_at": float(row["created_at"] or 0),
                     "tags": BaseMemory._parse_tags(row["tags"] or ""),
@@ -1073,7 +1156,8 @@ class MemorySqlManager:
             records_rows = conn.execute(
                 """
                 SELECT id, memory_type, judgment, reasoning, strength, is_active,
-                       memory_scope, created_at, updated_at
+                       useful_count, useful_score, last_recalled_at,
+                       last_decay_at, memory_scope, created_at, updated_at
                 FROM memory_records
                 ORDER BY created_at DESC
                 """
@@ -1122,6 +1206,9 @@ class MemorySqlManager:
                 mr.reasoning,
                 mr.strength,
                 mr.is_active,
+                mr.useful_count,
+                mr.useful_score,
+                mr.last_recalled_at,
                 mr.memory_scope,
                 mr.created_at,
                 COUNT(DISTINCT mt.id) AS hit_count,
@@ -1147,42 +1234,130 @@ class MemorySqlManager:
             ]
         return memories
 
-    async def reinforce_memories(self, memory_ids: List[str], delta: int = 3) -> None:
+    async def reinforce_memories(self, memory_ids: List[str], delta: int = 1) -> None:
         ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
         if not ids:
             return
         placeholders = ",".join(["?" for _ in ids])
         now = time.time()
+        score_delta = float(self.decay_policy.config.consolidate_speed)
         with self._connect() as conn:
             conn.execute(
                 f"""
                 UPDATE memory_records
-                SET strength = strength + ?, updated_at = ?
+                SET strength = strength + ?,
+                    useful_count = useful_count + 1,
+                    useful_score = useful_score + ?,
+                    last_recalled_at = ?,
+                    updated_at = ?
                 WHERE id IN ({placeholders})
                 """,
-                tuple([int(delta), now, *ids]),
+                tuple([int(delta), score_delta, now, now, *ids]),
             )
             conn.commit()
 
     async def decay_memories(self, memory_ids: List[str], delta: int = 1) -> None:
+        """
+        兼容旧接口：仅对 T1（待证档）执行“召回无用衰减”。
+        """
         ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
         if not ids:
             return
         placeholders = ",".join(["?" for _ in ids])
         now = time.time()
+        tier1_min_score = float(self.decay_policy.config.tier0_threshold)
+        tier1_max_score = float(self.decay_policy.config.tier1_threshold)
         with self._connect() as conn:
             conn.execute(
                 f"""
                 UPDATE memory_records
                 SET strength = CASE WHEN strength - ? < 0 THEN 0 ELSE strength - ? END,
                     updated_at = ?
-                WHERE id IN ({placeholders}) AND is_active = 0
+                WHERE id IN ({placeholders})
+                  AND is_active = 0
+                  AND useful_score >= ?
+                  AND useful_score < ?
                 """,
-                tuple([int(delta), int(delta), now, *ids]),
+                tuple([int(delta), int(delta), now, tier1_min_score, tier1_max_score, *ids]),
             )
             conn.commit()
 
+    async def decay_recalled_but_useless(self, memory_ids: List[str], delta: int = 1) -> None:
+        await self.decay_memories(memory_ids, delta=delta)
+
+    async def natural_decay_tier0(self, now_ts: Optional[float] = None) -> int:
+        """
+        仅对 T0（易逝档）做时间驱动遗忘。
+        """
+        now = float(now_ts or time.time())
+        cycle_days = int(self.decay_policy.tier0_decay_cycle_days())
+        cycle_seconds = float(cycle_days * 86400)
+        tier0_max_score = float(self.decay_policy.config.tier0_threshold)
+        with self._connect() as conn:
+            # 批量计算并更新：避免逐条 Python 循环与 IO 放大。
+            # ref_time 语义：
+            # - 已有 last_decay_at: 续算
+            # - 无 last_decay_at: 取 max(created_at, last_recalled_at)
+            cur = conn.execute(
+                """
+                UPDATE memory_records
+                SET
+                    strength = CASE
+                        WHEN strength - CAST((? - CASE
+                            WHEN last_decay_at > 0 THEN last_decay_at
+                            WHEN last_recalled_at > created_at THEN last_recalled_at
+                            ELSE created_at
+                        END) / ? AS INTEGER) < 0
+                        THEN 0
+                        ELSE strength - CAST((? - CASE
+                            WHEN last_decay_at > 0 THEN last_decay_at
+                            WHEN last_recalled_at > created_at THEN last_recalled_at
+                            ELSE created_at
+                        END) / ? AS INTEGER)
+                    END,
+                    last_decay_at = (
+                        CASE
+                            WHEN last_decay_at > 0 THEN last_decay_at
+                            WHEN last_recalled_at > created_at THEN last_recalled_at
+                            ELSE created_at
+                        END
+                    ) + (
+                        CAST((? - CASE
+                            WHEN last_decay_at > 0 THEN last_decay_at
+                            WHEN last_recalled_at > created_at THEN last_recalled_at
+                            ELSE created_at
+                        END) / ? AS INTEGER) * ?
+                    ),
+                    updated_at = ?
+                WHERE is_active = 0
+                  AND useful_score < ?
+                  AND strength > 0
+                  AND CAST((? - CASE
+                        WHEN last_decay_at > 0 THEN last_decay_at
+                        WHEN last_recalled_at > created_at THEN last_recalled_at
+                        ELSE created_at
+                    END) / ? AS INTEGER) > 0
+                """,
+                (
+                    now,
+                    cycle_seconds,
+                    now,
+                    cycle_seconds,
+                    now,
+                    cycle_seconds,
+                    cycle_seconds,
+                    now,
+                    tier0_max_score,
+                    now,
+                    cycle_seconds,
+                ),
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+
     async def consolidate_memories(self) -> None:
+        # T0 时间衰减（T1/T2 不参与自然遗忘）
+        await self.natural_decay_tier0()
         with self._connect() as conn:
             conn.execute("DELETE FROM memory_records WHERE is_active = 0 AND strength <= 0")
             conn.execute(
@@ -1202,7 +1377,8 @@ class MemorySqlManager:
             rows = conn.execute(
                 f"""
                 SELECT id, memory_type, judgment, reasoning, strength,
-                       is_active, memory_scope, created_at
+                       is_active, useful_count, useful_score, last_recalled_at,
+                       memory_scope, created_at
                 FROM memory_records
                 WHERE id IN ({placeholders})
                 """,
@@ -1233,6 +1409,9 @@ class MemorySqlManager:
         merged_scope = next(iter(non_public_scopes), "public")
         first = memories[0]
         merged_strength = sum(mem.strength for mem in memories)
+        merged_useful_count = sum(int(getattr(mem, "useful_count", 0) or 0) for mem in memories)
+        merged_useful_score = max(float(getattr(mem, "useful_score", 0.0) or 0.0) for mem in memories)
+        merged_last_recalled_at = max(float(getattr(mem, "last_recalled_at", 0.0) or 0.0) for mem in memories)
         now = time.time()
         new_memory = BaseMemory(
             memory_type=self._to_memory_type("knowledge"),
@@ -1244,6 +1423,9 @@ class MemorySqlManager:
             is_active=False,
             created_at=now,
             memory_scope=merged_scope,
+            useful_count=merged_useful_count,
+            useful_score=merged_useful_score,
+            last_recalled_at=merged_last_recalled_at,
         )
 
         ids = [mem.id for mem in memories]
@@ -1256,8 +1438,9 @@ class MemorySqlManager:
                     """
                     INSERT INTO memory_records(
                         id, memory_type, judgment, reasoning, strength, is_active,
+                        useful_count, useful_score, last_recalled_at,
                         memory_scope, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         new_memory.id,
@@ -1266,6 +1449,9 @@ class MemorySqlManager:
                         new_memory.reasoning,
                         new_memory.strength,
                         1 if new_memory.is_active else 0,
+                        new_memory.useful_count,
+                        new_memory.useful_score,
+                        new_memory.last_recalled_at,
                         new_memory.memory_scope,
                         new_memory.created_at,
                         now,
@@ -1290,6 +1476,7 @@ class MemorySqlManager:
     async def process_feedback(
         self,
         useful_memory_ids: Optional[List[str]] = None,
+        recalled_memory_ids: Optional[List[str]] = None,
         new_memories: Optional[List[Dict[str, Any]]] = None,
         merge_groups: Optional[List[List[str]]] = None,
         memory_scope: str = "public",
@@ -1297,8 +1484,15 @@ class MemorySqlManager:
         resolved_scope = self._normalize_scope(memory_scope)
         created_memories: List[BaseMemory] = []
 
-        if useful_memory_ids:
-            await self.reinforce_memories(useful_memory_ids, delta=3)
+        useful_ids = [str(x).strip() for x in (useful_memory_ids or []) if str(x).strip()]
+        recalled_ids = [str(x).strip() for x in (recalled_memory_ids or []) if str(x).strip()]
+        if useful_ids:
+            await self.reinforce_memories(useful_ids, delta=1)
+        if recalled_ids:
+            useful_set = set(useful_ids)
+            useless_recalled = [mid for mid in recalled_ids if mid not in useful_set]
+            if useless_recalled:
+                await self.decay_recalled_but_useless(useless_recalled, delta=1)
 
         for mem_data in (new_memories or []):
             judgment = str(mem_data.get("judgment") or "").strip()

@@ -79,6 +79,9 @@ class BaseMemory:
         is_consolidated: bool = None,  # 废弃字段，仅保留兼容性
         state_snapshot: dict = None,   # 灵魂状态快照
         memory_scope: str = "public",  # 记忆分类域，默认公共
+        useful_count: int = 0,
+        useful_score: float = 0.0,
+        last_recalled_at: float = 0.0,
     ):
         self.id = id or str(uuid.uuid4())
         self.memory_type = memory_type
@@ -90,6 +93,9 @@ class BaseMemory:
         self.created_at = created_at or time.time()  # 自动记录创建时间
         self.state_snapshot = state_snapshot or {} # 记录生成该记忆时的灵魂状态
         self.memory_scope = memory_scope or "public"
+        self.useful_count = int(useful_count or 0)
+        self.useful_score = float(useful_score or 0.0)
+        self.last_recalled_at = float(last_recalled_at or 0.0)
         self.similarity = 0.0  # 相似度分数（仅用于检索时传递，不存储到数据库）
 
     def get_semantic_core(self) -> str:
@@ -111,6 +117,9 @@ class BaseMemory:
             "strength": self.strength,
             "is_active": self.is_active,
             "created_at": self.created_at,
+            "useful_count": self.useful_count,
+            "useful_score": self.useful_score,
+            "last_recalled_at": self.last_recalled_at,
             "state_snapshot": json.dumps(self.state_snapshot) if self.state_snapshot else "{}",
             "memory_scope": self.memory_scope,
         }
@@ -182,6 +191,9 @@ class BaseMemory:
                 created_at=data.get("created_at", time.time()),
                 state_snapshot=cls._parse_json_dict(data.get("state_snapshot", {})),
                 memory_scope=data.get("memory_scope", "public"),
+                useful_count=data.get("useful_count", 0),
+                useful_score=data.get("useful_score", 0.0),
+                last_recalled_at=data.get("last_recalled_at", 0.0),
             )
         except (KeyError, TypeError, ValueError) as e:
             raise ValidationError(f"从字典创建记忆失败: {str(e)}")

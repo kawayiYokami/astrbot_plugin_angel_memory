@@ -87,12 +87,14 @@ class VectorMemoryRuntime:
     async def feedback(
         self,
         useful_memory_ids: Optional[List[str]] = None,
+        recalled_memory_ids: Optional[List[str]] = None,
         new_memories: Optional[List[dict]] = None,
         merge_groups: Optional[List[List[str]]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         return await self._cognitive_service.feedback(
             useful_memory_ids=useful_memory_ids,
+            recalled_memory_ids=recalled_memory_ids,
             new_memories=new_memories,
             merge_groups=merge_groups,
             memory_scope=memory_scope,
