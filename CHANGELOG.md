@@ -2,6 +2,33 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.2.0] - 2026-02-20
+
+### Highlights
+- 重启并落地 FTS5 混合检索链路，替代旧关键词子串匹配主路径。
+- 记忆与笔记索引彻底分离（同库分表），统一融合算法并支持真实向量分接入。
+- 检索稳定性与可观测性增强：启动预构建、索引体积日志、一致性巡检与自动修复。
+- 清理历史遗留：移除废弃笔记向量接口与 FlashRank 残留文案/命名。
+
+### Core Changes
+- `feat(retrieval)`: 新增 `FTS5HybridRetriever`，采用 `jieba` 预分词 + FTS5 (`unicode61`) 检索。
+- `feat(retrieval)`: 记忆检索支持 `tags > judgment` 权重（`bm25(memory_fts, 2.0, 1.0)`）。
+- `feat(retrieval)`: 笔记检索切换为纯 tags 索引（`note_fts`），不索引正文。
+- `feat(fusion)`: 融合公式统一为 `final = fts_weight * fts_score + vector_weight * vector_score`。
+- `feat(fusion)`: 向量模式主链路接入真实 `vector_scores`（记忆/笔记）；向量缺失时保留占位分降级。
+- `feat(stability)`: 增加 FTS 初始化线程安全保护（原子重建 + 失败日志 + 状态回滚）。
+- `feat(observability)`: 新增 `[FTS5重建]` 索引规模日志（memory_fts/note_fts 行数与 DB 大小）。
+- `feat(maintenance)`: 新增 FTS 与 SQL 一致性巡检及自动修复，并接入睡眠维护任务。
+- `perf(sync)`: 批量场景改为增量同步优先，减少不必要的全量重建。
+- `refactor(cleanup)`: 删除 `vector_store` 中废弃旧笔记接口（仅抛异常的历史方法）。
+- `refactor(cleanup)`: 清理 `vector_store.py` 与 `README.md` 中 FlashRank 历史残留。
+- `fix(safety)`: `note_service` 增加 `similarity` 安全转换，规避 `None`/非数值类型异常。
+- `fix(safety)`: FTS MATCH 构造改进，token 采用字面量安全拼接；`clear_index` 增加 target 严格校验。
+
+### Notes
+- 本版本为检索架构升级版本（minor），语义与行为有明显变更，按 `1.2.0` 发布。
+- 建议升级后重点关注：top-K 命中率、召回率、融合分分布与 FTS 巡检日志。
+
 ## [1.1.0] - 2026-02-20
 
 ### Highlights
@@ -47,4 +74,3 @@ All notable changes to this plugin will be documented in this file.
 
 ### Notes
 - 本版本为重构里程碑版本，建议升级后执行一次初始化扫描与睡眠维护流程，确认索引状态一致。
-

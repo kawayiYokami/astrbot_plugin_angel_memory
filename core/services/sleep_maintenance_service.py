@@ -149,6 +149,7 @@ class SleepMaintenanceService:
             self._task_memory_scope_migration,
             self._task_deprecated_field_cleanup,
             self._task_notes_vector_sync,
+            self._task_fts_consistency_audit,
             self._task_daily_json_backup,
         ):
             try:
@@ -168,6 +169,32 @@ class SleepMaintenanceService:
         deepmind.logger.info(
             f"[睡眠维护] 后置维护完成 成功={success} 失败={failed} 跳过={skipped} 耗时毫秒={cost_ms}"
         )
+
+    async def _task_fts_consistency_audit(self, state: Dict[str, Any]) -> str:
+        del state
+        deepmind = self.deepmind
+        plugin_context = deepmind.plugin_context
+        memory_sql_manager = plugin_context.get_component("memory_sql_manager")
+        if memory_sql_manager is None:
+            deepmind.logger.info("[睡眠维护] FTS5 一致性巡检：跳过（memory_sql_manager 不可用）")
+            return "skipped"
+        try:
+            result = await memory_sql_manager.audit_and_repair_fts_indexes(sample_size=50)
+            deepmind.logger.info(
+                "[睡眠维护] FTS5 一致性巡检：完成 "
+                f"memory_sql={result.get('memory_sql_count', 0)} "
+                f"memory_fts={result.get('memory_fts_count', 0)} "
+                f"note_sql={result.get('note_sql_count', 0)} "
+                f"note_fts={result.get('note_fts_count', 0)} "
+                f"自动修复={'是' if result.get('auto_repaired', False) else '否'}"
+            )
+            return "success"
+        except Exception as e:
+            deepmind.logger.warning(
+                f"[睡眠维护] FTS5 一致性巡检：失败，异常={e}",
+                exc_info=True,
+            )
+            return "failed"
 
     async def _task_memory_vector_sync(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind

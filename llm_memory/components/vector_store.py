@@ -22,7 +22,6 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory
-from ..models.note_models import NoteData
 from ..config.system_config import system_config
 
 
@@ -341,7 +340,7 @@ class VectorStore:
                     if len(vector_results) >= limit:
                         break
 
-        # FlashRank语义重排
+        # 二阶段重排（通过上游 rerank_provider）
         final_results = await self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
@@ -361,7 +360,7 @@ class VectorStore:
         Args:
             collection: 目标 ChromaDB 集合.
             vector: 预计算的查询向量
-            query: 原始查询文本，用于FlashRank语义重排
+            query: 原始查询文本，用于二阶段语义重排
             limit: 返回结果的最大数量
             where_filter: 可选的元数据过滤器字典 (e.g., {"memory_type": "EventMemory", "is_consolidated": False})
             similarity_threshold: 相似度阈值(0.0-1.0),低于此阈值的结果将被过滤
@@ -415,7 +414,7 @@ class VectorStore:
                     if len(vector_results) >= limit:
                         break
 
-        # FlashRank语义重排
+        # 二阶段重排（通过上游 rerank_provider）
         final_results = await self._rerank_results(query, vector_results, collection, limit)
 
         return final_results
@@ -1202,12 +1201,6 @@ class VectorStore:
             self.logger.warning(f"记忆重排失败，降级为向量排序: {e}")
             return vector_results[:limit]
 
-    def _rerank_notes(
-        self, query: str, vector_results: List[NoteData], collection, limit: int
-    ) -> List[NoteData]:
-        """笔记检索不做二阶段重排，直接返回向量结果。"""
-        return vector_results[:limit] if vector_results else []
-
     def _extract_ranked_scores(
         self,
         rerank_resp: Any,
@@ -1282,38 +1275,38 @@ class VectorStore:
     ) -> List[BaseMemory]:
         """
         根据 3:7 加权融合策略重新排序结果
-        Score = 0.3 * VectorScore + 0.7 * FlashRankScore
+        Score = 0.3 * VectorScore + 0.7 * RerankScore
 
         策略：
-        1. 如果 FlashRank 失败 (ranked_scores为空)，则默认 FlashRank 分数为 1.0 (保留向量排序)
-        2. 如果 FlashRank 成功但截断了结果，未在 ranked_scores 中的项默认分数为 0.0
+        1. 如果重排失败 (ranked_scores为空)，则默认重排分数为 1.0 (保留向量排序)
+        2. 如果重排成功但截断了结果，未在 ranked_scores 中的项默认分数为 0.0
         3. 始终保留所有原始候选结果，防止数据丢失
         """
-        # 1. 准备 FlashRank 分数逻辑
-        flashrank_score_map = {}
-        default_flash_score = 0.0
+        # 1. 准备重排分数逻辑
+        rerank_score_map = {}
+        default_rerank_score = 0.0
 
         if ranked_scores:
-            flashrank_score_map = {doc_id: score for doc_id, score in ranked_scores}
-            # 既然 FlashRank 返回了结果，说明未选中的确实相关性低，给 0.0
-            default_flash_score = 0.0
+            rerank_score_map = {doc_id: score for doc_id, score in ranked_scores}
+            # 既然重排返回了结果，说明未选中的确实相关性低，给 0.0
+            default_rerank_score = 0.0
         else:
-            # FlashRank 失败或未返回任何结果，为了保持原有向量排序并归一化，给予满分 1.0
+            # 重排失败或未返回任何结果，为了保持原有向量排序并归一化，给予满分 1.0
             # 这样 Final = 0.3 * Vector + 0.7 * 1.0，顺序由 Vector 决定
-            default_flash_score = 1.0
+            default_rerank_score = 1.0
 
         fused_results = []
 
         # 2. 遍历所有原始结果（确保不丢失数据）
         for mem in original_results:
-            # 获取 FlashRank 分数
-            flash_score = flashrank_score_map.get(mem.id, default_flash_score)
+            # 获取重排分数
+            rerank_score = rerank_score_map.get(mem.id, default_rerank_score)
 
             # 获取向量分数
             vector_score = getattr(mem, "similarity", 0.0)
 
-            # 核心公式: 0.3 * Vector + 0.7 * FlashRank
-            final_score = (0.3 * vector_score) + (0.7 * flash_score)
+            # 核心公式: 0.3 * Vector + 0.7 * Rerank
+            final_score = (0.3 * vector_score) + (0.7 * rerank_score)
 
             mem.similarity = final_score
             fused_results.append(mem)
@@ -1322,50 +1315,6 @@ class VectorStore:
         fused_results.sort(key=lambda x: x.similarity, reverse=True)
 
         return fused_results
-
-    def _reorder_notes_by_score(
-        self,
-        original_results: List[NoteData],
-        ranked_scores: List[Tuple[str, float]],
-        collection
-    ) -> List[NoteData]:
-        """
-        根据 3:7 加权融合策略重新排序笔记
-        Score = 0.3 * VectorScore + 0.7 * FlashRankScore
-        """
-        # 1. 准备 FlashRank 分数逻辑
-        flashrank_score_map = {}
-        default_flash_score = 0.0
-
-        if ranked_scores:
-            flashrank_score_map = {doc_id: score for doc_id, score in ranked_scores}
-            # 既然 FlashRank 返回了结果，说明未选中的确实相关性低，给 0.0
-            default_flash_score = 0.0
-        else:
-            # FlashRank 失败或未返回任何结果，为了保持原有向量排序并归一化，给予满分 1.0
-            default_flash_score = 1.0
-
-        fused_results = []
-
-        # 2. 遍历所有原始结果（确保不丢失数据）
-        for note in original_results:
-            # 获取 FlashRank 分数
-            flash_score = flashrank_score_map.get(note.id, default_flash_score)
-
-            # 获取向量分数
-            vector_score = getattr(note, "similarity", 0.0)
-
-            # 核心公式: 0.3 * Vector + 0.7 * FlashRank
-            final_score = (0.3 * vector_score) + (0.7 * flash_score)
-
-            note.similarity = final_score
-            fused_results.append(note)
-
-        # 3. 重新按融合分数排序
-        fused_results.sort(key=lambda x: x.similarity, reverse=True)
-
-        return fused_results
-
 
     def _get_memories_by_ids(self, collection, doc_ids: List[str]) -> List[BaseMemory]:
         """根据文档ID列表获取记忆对象"""
@@ -1412,109 +1361,3 @@ class VectorStore:
         self.clear_collection_cache()
 
         self.logger.info("向量存储已成功关闭")
-
-    # ===== 笔记专用检索方法 =====
-
-    async def store_note(self, collection, note: NoteData):
-        """
-        存储笔记到向量数据库.
-
-        Args:
-            collection: 目标 ChromaDB 集合
-            note: NoteData 对象
-        """
-        raise RuntimeError(
-            "旧笔记写入接口已废弃（NoteData -> metadata）。"
-            "请使用 NoteService + 中央索引链路。"
-        )
-
-    async def search_notes_with_vector(
-        self,
-        collection,
-        vector: List[float],
-        query: str,
-        limit: int = 10,
-        where_filter: Optional[dict] = None,
-    ) -> List[NoteData]:
-        """
-        使用预计算的向量搜索笔记,返回 NoteData 对象列表.
-
-        Args:
-            collection: 目标 ChromaDB 集合
-            vector: 预计算的查询向量
-            query: 原始查询文本，用于FlashRank语义重排
-            limit: 返回结果的最大数量
-            where_filter: 可选的元数据过滤器
-
-        Returns:
-            相关的笔记对象列表(NoteData)
-        """
-        raise RuntimeError(
-            "旧笔记向量检索接口已废弃。请使用 recall_note_source_ids + NoteService。"
-        )
-
-    async def search_notes(
-        self,
-        collection,
-        query: str,
-        limit: int = 10,
-        where_filter: Optional[dict] = None,
-        vector: Optional[List[float]] = None,
-    ) -> List[NoteData]:
-        """
-        搜索笔记,返回 NoteData 对象列表.
-
-        Args:
-            collection: 目标 ChromaDB 集合
-            query: 搜索查询字符串
-            limit: 返回结果的最大数量
-            where_filter: 可选的元数据过滤器
-            vector: 可选的预计算向量,如果提供则直接使用,否则向量化查询文本
-
-        Returns:
-            相关的笔记对象列表(NoteData)
-        """
-        raise RuntimeError(
-            "旧笔记检索接口已废弃。请使用 recall_note_source_ids + NoteService。"
-        )
-
-    async def _search_vector_scores(
-        self,
-        collection,
-        query: str,
-        limit: int = 100,
-        vector: Optional[List[float]] = None
-    ) -> dict:
-        """
-        执行向量搜索,只返回 ID 和相似度分数的映射.
-
-        专为副集合设计(该集合不存储 metadata).
-        避免了 NoteData 对象构造,性能更高,逻辑更清晰.
-
-        Args:
-            collection: 目标 ChromaDB 集合(通常是副集合)
-            query: 搜索查询字符串
-            limit: 返回结果的最大数量
-            vector: 可选的预计算向量，如果提供则直接使用
-
-        Returns:
-            {'note_id': similarity_score, ...} 的字典
-        """
-        raise RuntimeError(
-            "旧笔记向量分数接口已废弃。请使用 recall_note_source_ids。"
-        )
-
-    def get_notes_by_ids(self, collection, note_ids: List[str]) -> List[NoteData]:
-        """
-        根据笔记ID列表获取笔记对象.
-
-        Args:
-            collection: 目标 ChromaDB 集合
-            note_ids: 笔记ID列表
-
-        Returns:
-            笔记对象列表
-        """
-        raise RuntimeError(
-            "旧笔记按ID读取接口已废弃。请使用 note_short_id + note_recall。"
-        )

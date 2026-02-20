@@ -60,11 +60,11 @@ LLM决策调用工具 → FunctionTool.run()
 ```
 查询输入 → 预处理(实体提取) → memory_runtime.chained_recall()
 → 向量模式（VectorMemoryRuntime）：
-  向量相似度检索 → FlashRank语义重排 → 实体优先召回 → 类型分组 → 结果融合
+  向量相似度检索 → 可选二阶段重排（rerank_provider）→ 实体优先召回 → 类型分组 → 结果融合
 → Simple模式（SimpleMemoryRuntime）：
-  实体提取结果会并入查询词（query + entities）后执行标签子串匹配
-  当前不执行 FlashRank 语义重排；保留实体优先与类型分组阶段；最终返回合并结果
-  排序依据为命中次数/日期桶/强度（SQL侧排序）
+  实体提取结果会并入查询词（query + entities）后执行 FTS5 检索（jieba 预分词）
+  FTS5 候选按 rank 归一后与默认向量分融合（记忆阈值0.5，笔记阈值0.6）
+  当前不执行二阶段语义重排；保留实体优先与类型分组阶段；最终返回合并结果
 ```
 
 ### 记忆反馈流程
@@ -134,8 +134,8 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - **SQLite**：标签管理、文件索引、SimpleMemory存储（`MemorySqlManager`）
 
 ### 检索层
-- **向量模式**：语义检索（向量相似度+FlashRank重排）+ 链式召回（实体优先+类型分组）
-- **Simple模式**：标签子串匹配 → 命中次数/日期/强度排序
+- **向量模式**：语义检索（向量相似度 + 可选rerank_provider重排）+ 链式召回（实体优先+类型分组）
+- **Simple模式**：FTS5（jieba 预分词）检索 + rank归一融合 + 阈值过滤
 
 ### 嵌入层
 - **本地模型**：SentenceTransformers（BAAI/bge-small-zh-v1.5）
@@ -279,6 +279,12 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - 采用约定式提交（Conventional Commits），推荐格式：`type(scope): 简要中文描述`。
 - 提交信息默认使用中文，便于与现有项目历史保持一致。
 - 常用类型：`feat`、`fix`、`perf`、`refactor`、`docs`、`chore`。
+
+### 计划与归档流程
+- 新功能开发必须先产出计划文档（放在 `plan/` 目录）。
+- 计划必须先得到用户明确确认后，才可进入实现阶段。
+- 功能完成后，必须先等待用户在生产环境测试并明确反馈“通过”，之后才可将计划归档到 `plan/done/`。
+- 归档判定以用户结论为准，不以开发者自测或主观判断替代。
 
 ### 日志标准
 - 日志文案默认使用中文，避免中英混杂；仅在必要时保留英文标识（如集合名、配置键名、异常类名）。

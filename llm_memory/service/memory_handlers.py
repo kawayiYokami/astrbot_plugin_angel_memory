@@ -148,10 +148,24 @@ class MemoryHandler:
 
         # 新架构下 recall 统一走中央 SQL 的 tags 召回。
         if self.memory_sql_manager is not None:
+            vector_scores = None
+            if self.memory_index_collection is not None:
+                try:
+                    id_scores = await self.store.recall_memory_ids(
+                        collection=self.memory_index_collection,
+                        query=query,
+                        limit=max(1, int(limit) * 4),
+                        similarity_threshold=0.0,
+                    )
+                    if id_scores:
+                        vector_scores = {mid: score for mid, score in id_scores}
+                except Exception as e:
+                    self.logger.warning(f"记忆 recall 读取向量分失败，降级为 FTS-only: {e}")
             recalled = await self.memory_sql_manager.recall_by_tags(
                 query=query,
                 limit=limit,
                 memory_scope=memory_scope or "public",
+                vector_scores=vector_scores,
             )
             filtered = [
                 mem for mem in recalled
