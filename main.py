@@ -52,7 +52,7 @@ def configure_logging_behavior():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "0.4.1",
+    "1.2.1",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -95,6 +95,8 @@ class AngelMemoryPlugin(Star):
         self.file_monitor = None
         # 会话ID日志提示：插件启动后每个会话只提示一次（群聊/私聊统一）
         self._conversation_id_logged_once: set[str] = set()
+        self._background_tasks: set[asyncio.Task] = set()
+        self._is_terminating: bool = False
 
         # 3. 在主线程获取完整配置（包含提供商信息）
         self._load_complete_config()
@@ -293,6 +295,10 @@ class AngelMemoryPlugin(Star):
         """
         self.logger.debug("开始执行 after_message_sent - 记忆整理")
         try:
+            if self._is_terminating:
+                self.logger.debug("插件正在关闭，跳过记忆整理任务提交")
+                return
+
             # 检查LLM工具是否可用
             if not self.are_llm_tools_enabled():
                 self.logger.debug("LLM工具未启用，跳过记忆整理")
@@ -307,24 +313,52 @@ class AngelMemoryPlugin(Star):
                 return
 
             # 将记忆整理任务提交到事件循环，但不等待其完成，以避免阻塞主事件流程
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self.plugin_manager.handle_memory_consolidation(
                     event, self.plugin_context
                 )
             )
+            self._track_background_task(task)
             self.logger.debug("记忆整理任务已提交至后台，不等待完成。")
 
         except Exception as e:
             self.logger.error(f"after_message_sent failed: {e}")
 
+    def _track_background_task(self, task: asyncio.Task) -> None:
+        """追踪后台任务，便于 terminate 阶段统一取消并等待收束。"""
+        self._background_tasks.add(task)
+
+        def _cleanup(done_task: asyncio.Task) -> None:
+            self._background_tasks.discard(done_task)
+            try:
+                if done_task.cancelled():
+                    return
+                exc = done_task.exception()
+                if exc is not None:
+                    self.logger.error(f"后台任务异常退出: {exc}", exc_info=True)
+            except Exception:
+                pass
+
+        task.add_done_callback(_cleanup)
+
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""
         try:
             self.logger.info("Angel Memory Plugin 正在关闭...")
+            self._is_terminating = True
+
+            # 先停止插件内自行提交的后台任务，避免与组件关闭并发冲突。
+            pending_tasks = [t for t in self._background_tasks if not t.done()]
+            if pending_tasks:
+                self.logger.info(f"检测到待收束后台任务: {len(pending_tasks)} 个，开始取消")
+                for task in pending_tasks:
+                    task.cancel()
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+                self.logger.info("插件内后台任务已收束")
 
             # 停止核心服务
             if self.plugin_manager:
-                self.plugin_manager.shutdown()
+                await self.plugin_manager.shutdown()
 
             # 获取最终状态
             status = (
