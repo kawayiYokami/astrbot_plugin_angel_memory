@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from ..migrations.memory_scope_migration import MemoryScopeMigration
 from .simple_memory_backup_service import SimpleMemoryBackupService
-from .simple_to_vector_sync_service import SimpleToVectorSyncService
+from .memory_vector_sync_service import MemoryVectorSyncService
 
 
 class SleepMaintenanceService:
@@ -25,7 +25,8 @@ class SleepMaintenanceService:
             "memory_scope_migration_done": False,
             "deprecated_field_cleanup_done": False,
             "vector_to_center_migration_last_provider": "",
-            "simple_to_vector_sync_last_provider": "",
+            "memory_vector_sync_last_provider": "",
+            "notes_vector_sync_last_provider": "",
             "daily_json_backup_last_day": "",
             "cleanup_last_sleep_at": 0.0,
         }
@@ -59,7 +60,7 @@ class SleepMaintenanceService:
         state = self._load_state()
         try:
             migration_status = await self._task_vector_to_center_migration(state)
-            sync_status = await self._task_simple_to_vector_sync(state)
+            sync_status = await self._task_memory_vector_sync(state)
             self._save_state(state)
             if "failed" in (migration_status, sync_status):
                 return "failed"
@@ -68,7 +69,7 @@ class SleepMaintenanceService:
             return "skipped"
         except Exception as e:
             deepmind.logger.error(
-                f"[sleep_maintenance] task=pre_consolidate status=failed error={e}",
+                f"[睡眠维护] 前置维护执行失败: {e}",
                 exc_info=True,
             )
             self._save_state(state)
@@ -81,7 +82,7 @@ class SleepMaintenanceService:
         enable_simple = getattr(deepmind.config, "enable_simple_memory", False)
         if enable_simple:
             deepmind.logger.info(
-                "[sleep_maintenance] task=vector_to_center_migration status=skipped detail=simple模式"
+                "[睡眠维护] 向量到中央迁移：跳过（simple 模式）"
             )
             return "skipped"
 
@@ -92,7 +93,7 @@ class SleepMaintenanceService:
         )
         if current_provider and last_provider == current_provider:
             deepmind.logger.info(
-                "[sleep_maintenance] task=vector_to_center_migration status=skipped detail=provider已迁移"
+                "[睡眠维护] 向量到中央迁移：跳过（当前供应商已迁移）"
             )
             return "skipped"
 
@@ -104,7 +105,7 @@ class SleepMaintenanceService:
             or not hasattr(cognitive_service, "main_collection")
         ):
             deepmind.logger.warning(
-                "[sleep_maintenance] task=vector_to_center_migration status=failed detail=组件不可用"
+                "[睡眠维护] 向量到中央迁移：失败（组件不可用）"
             )
             return "failed"
 
@@ -117,14 +118,14 @@ class SleepMaintenanceService:
         )
         if int(result.get("failed", 0)) > 0:
             deepmind.logger.warning(
-                "[sleep_maintenance] task=vector_to_center_migration status=failed detail=存在失败项"
+                "[睡眠维护] 向量到中央迁移：失败（存在失败项）"
             )
             return "failed"
 
         state["vector_to_center_migration_last_provider"] = current_provider
         deepmind.logger.info(
-            "[sleep_maintenance] task=vector_to_center_migration status=success "
-            f"detail=upserted={result.get('upserted', 0)}"
+            "[睡眠维护] 向量到中央迁移：完成 "
+            f"写入条数={result.get('upserted', 0)}"
         )
         return "success"
 
@@ -143,10 +144,11 @@ class SleepMaintenanceService:
         failed = 0
         skipped = 0
 
-        deepmind.logger.info("[sleep_maintenance] start_post_consolidate")
+        deepmind.logger.info("[睡眠维护] 后置维护开始")
         for runner in (
             self._task_memory_scope_migration,
             self._task_deprecated_field_cleanup,
+            self._task_notes_vector_sync,
             self._task_daily_json_backup,
         ):
             try:
@@ -159,15 +161,15 @@ class SleepMaintenanceService:
                     skipped += 1
             except Exception as e:
                 failed += 1
-                deepmind.logger.error(f"[sleep_maintenance] task={runner.__name__} status=failed error={e}", exc_info=True)
+                deepmind.logger.error(f"[睡眠维护] 任务异常 {runner.__name__}: {e}", exc_info=True)
 
         self._save_state(state)
         cost_ms = int((time.time() - start) * 1000)
         deepmind.logger.info(
-            f"[sleep_maintenance] done_post_consolidate success={success} failed={failed} skipped={skipped} cost_ms={cost_ms}"
+            f"[睡眠维护] 后置维护完成 成功={success} 失败={failed} 跳过={skipped} 耗时毫秒={cost_ms}"
         )
 
-    async def _task_simple_to_vector_sync(self, state: Dict[str, Any]) -> str:
+    async def _task_memory_vector_sync(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind
         plugin_context = deepmind.plugin_context
         enable_simple = getattr(deepmind.config, "enable_simple_memory", False)
@@ -176,82 +178,169 @@ class SleepMaintenanceService:
         target_provider = "simple" if enable_simple else current_provider
 
         if enable_simple:
-            if state.get("simple_to_vector_sync_last_provider", "") != "simple":
-                state["simple_to_vector_sync_last_provider"] = "simple"
-            deepmind.logger.info("[sleep_maintenance] task=simple_to_vector_sync status=skipped detail=当前为simple模式")
+            if state.get("memory_vector_sync_last_provider", "") != "simple":
+                state["memory_vector_sync_last_provider"] = "simple"
+            deepmind.logger.info("[睡眠维护] 记忆向量库同步：跳过（当前为 simple 模式）")
             return "skipped"
 
-        last_provider = str(state.get("simple_to_vector_sync_last_provider", "") or "")
+        last_provider = str(state.get("memory_vector_sync_last_provider", "") or "")
         if last_provider == target_provider:
-            deepmind.logger.info("[sleep_maintenance] task=simple_to_vector_sync status=skipped detail=provider未变化")
+            deepmind.logger.info("[睡眠维护] 记忆向量库同步：跳过（供应商未变化）")
             return "skipped"
 
         cognitive_service = plugin_context.get_component("cognitive_service")
         memory_sql_manager = plugin_context.get_component("memory_sql_manager")
         if cognitive_service is None or memory_sql_manager is None:
-            deepmind.logger.warning("[sleep_maintenance] task=simple_to_vector_sync status=failed detail=组件不可用")
+            deepmind.logger.warning("[睡眠维护] 记忆向量库同步：失败（组件不可用）")
             return "failed"
 
-        sync_service = SimpleToVectorSyncService(deepmind.logger)
-        result = await sync_service.sync_missing_memories(
+        sync_service = MemoryVectorSyncService(deepmind.logger)
+        result = await sync_service.sync_memory_vector_index(
             cognitive_service=cognitive_service,
             memory_sql_manager=memory_sql_manager,
             provider_id=current_provider,
         )
         if int(result.get("failed", 0)) > 0:
-            deepmind.logger.warning("[sleep_maintenance] task=simple_to_vector_sync status=failed detail=存在失败项")
+            deepmind.logger.warning("[睡眠维护] 记忆向量库同步：失败（存在失败项）")
             return "failed"
 
-        state["simple_to_vector_sync_last_provider"] = target_provider
-        deepmind.logger.info("[sleep_maintenance] task=simple_to_vector_sync status=success")
+        state["memory_vector_sync_last_provider"] = target_provider
+        deepmind.logger.info("[睡眠维护] 记忆向量库同步：完成")
         return "success"
+
+    async def _task_notes_vector_sync(self, state: Dict[str, Any]) -> str:
+        deepmind = self.deepmind
+        plugin_context = deepmind.plugin_context
+        if getattr(deepmind.config, "enable_simple_memory", False):
+            deepmind.logger.info("[睡眠维护] 笔记向量库同步：跳过（simple 模式）")
+            return "skipped"
+
+        provider = plugin_context.get_current_provider()
+        current_provider = str(provider) if provider is not None else ""
+        last_provider = str(state.get("notes_vector_sync_last_provider", "") or "")
+
+        memory_sql_manager = plugin_context.get_component("memory_sql_manager")
+        vector_store = plugin_context.get_component("vector_store")
+        if memory_sql_manager is None or vector_store is None:
+            deepmind.logger.warning("[睡眠维护] 笔记向量库同步：失败（组件不可用）")
+            return "failed"
+
+        try:
+            notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
+            rows = await memory_sql_manager.list_note_index_vector_rows()
+
+            # 供应商变化：全量重建（embedding 语义空间变化）
+            if current_provider and last_provider != current_provider:
+                vector_store.clear_collection(notes_index)
+                notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
+                await vector_store.upsert_note_index_rows(notes_index, rows)
+                state["notes_vector_sync_last_provider"] = current_provider
+                deepmind.logger.info(
+                    "[睡眠维护] 笔记向量库同步：完成（供应商变化全量重建） "
+                    f"写入条数={len(rows)}"
+                )
+                return "success"
+
+            # 供应商未变化：增量同步（只补新增、删失效）
+            sql_ids = {str(row.get("id") or "").strip() for row in rows if str(row.get("id") or "").strip()}
+            vector_ids = await self._list_collection_ids(notes_index)
+            vector_id_set = set(vector_ids)
+
+            to_add = sql_ids - vector_id_set
+            to_delete = vector_id_set - sql_ids
+
+            if to_delete:
+                await self._delete_collection_ids(notes_index, list(to_delete))
+
+            if to_add:
+                add_rows = [row for row in rows if str(row.get("id") or "").strip() in to_add]
+                await vector_store.upsert_note_index_rows(notes_index, add_rows)
+
+            if not to_add and not to_delete:
+                deepmind.logger.info("[睡眠维护] 笔记向量库同步：跳过（无增量变更）")
+                return "skipped"
+
+            deepmind.logger.info(
+                "[睡眠维护] 笔记向量库同步：完成（增量同步） "
+                f"新增={len(to_add)} 删除={len(to_delete)}"
+            )
+            return "success"
+        except Exception as e:
+            deepmind.logger.warning(
+                f"[睡眠维护] 笔记向量库同步：失败，异常={e}",
+                exc_info=True,
+            )
+            return "failed"
+
+    @staticmethod
+    async def _list_collection_ids(collection, batch_size: int = 5000) -> list[str]:
+        ids: list[str] = []
+        offset = 0
+        while True:
+            result = collection.get(limit=batch_size, offset=offset, include=[])
+            batch = result.get("ids", []) if isinstance(result, dict) else []
+            if not batch:
+                break
+            ids.extend([str(x) for x in batch if str(x)])
+            if len(batch) < batch_size:
+                break
+            offset += len(batch)
+        return ids
+
+    @staticmethod
+    async def _delete_collection_ids(collection, ids: list[str], batch_size: int = 5000) -> None:
+        if not ids:
+            return
+        for i in range(0, len(ids), batch_size):
+            chunk = ids[i : i + batch_size]
+            collection.delete(ids=chunk)
 
     async def _task_memory_scope_migration(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind
         if bool(state.get("memory_scope_migration_done", False)):
-            deepmind.logger.info("[sleep_maintenance] task=memory_scope_migration status=skipped detail=done")
+            deepmind.logger.info("[睡眠维护] memory_scope 补齐：跳过（已完成）")
             return "skipped"
 
         # 中央库真相源模式下，不再依赖旧向量 metadata 的 memory_scope 迁移。
         if deepmind.plugin_context.get_component("memory_sql_manager") is not None:
             state["memory_scope_migration_done"] = True
-            deepmind.logger.info("[sleep_maintenance] task=memory_scope_migration status=skipped detail=central_sql_mode")
+            deepmind.logger.info("[睡眠维护] memory_scope 补齐：跳过（中央库模式无需执行）")
             return "skipped"
 
         if getattr(deepmind.config, "enable_simple_memory", False):
-            deepmind.logger.info("[sleep_maintenance] task=memory_scope_migration status=skipped detail=simple模式")
+            deepmind.logger.info("[睡眠维护] memory_scope 补齐：跳过（simple 模式）")
             return "skipped"
 
         cognitive_service = deepmind.plugin_context.get_component("cognitive_service")
         if cognitive_service is None or not hasattr(cognitive_service, "main_collection"):
-            deepmind.logger.warning("[sleep_maintenance] task=memory_scope_migration status=failed detail=collection不可用")
+            deepmind.logger.warning("[睡眠维护] memory_scope 补齐：失败（集合不可用）")
             return "failed"
 
         migrator = MemoryScopeMigration(deepmind.logger)
         await migrator.migrate_missing_memory_scope(collection=cognitive_service.main_collection)
         state["memory_scope_migration_done"] = True
-        deepmind.logger.info("[sleep_maintenance] task=memory_scope_migration status=success")
+        deepmind.logger.info("[睡眠维护] memory_scope 补齐：完成")
         return "success"
 
     async def _task_deprecated_field_cleanup(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind
         if bool(state.get("deprecated_field_cleanup_done", False)):
-            deepmind.logger.info("[sleep_maintenance] task=deprecated_field_cleanup status=skipped detail=done")
+            deepmind.logger.info("[睡眠维护] 废弃字段清理：跳过（已完成）")
             return "skipped"
 
         # 中央库真相源模式下，不再依赖旧向量 metadata 的 is_consolidated 清理。
         if deepmind.plugin_context.get_component("memory_sql_manager") is not None:
             state["deprecated_field_cleanup_done"] = True
-            deepmind.logger.info("[sleep_maintenance] task=deprecated_field_cleanup status=skipped detail=central_sql_mode")
+            deepmind.logger.info("[睡眠维护] 废弃字段清理：跳过（中央库模式无需执行）")
             return "skipped"
 
         if getattr(deepmind.config, "enable_simple_memory", False):
-            deepmind.logger.info("[sleep_maintenance] task=deprecated_field_cleanup status=skipped detail=simple模式")
+            deepmind.logger.info("[睡眠维护] 废弃字段清理：跳过（simple 模式）")
             return "skipped"
 
         cognitive_service = deepmind.plugin_context.get_component("cognitive_service")
         if cognitive_service is None or not hasattr(cognitive_service, "main_collection"):
-            deepmind.logger.warning("[sleep_maintenance] task=deprecated_field_cleanup status=failed detail=collection不可用")
+            deepmind.logger.warning("[睡眠维护] 废弃字段清理：失败（集合不可用）")
             return "failed"
 
         collection = cognitive_service.main_collection
@@ -282,7 +371,7 @@ class SleepMaintenanceService:
             offset += len(ids)
 
         state["deprecated_field_cleanup_done"] = True
-        deepmind.logger.info(f"[sleep_maintenance] task=deprecated_field_cleanup status=success detail=cleaned={cleaned}")
+        deepmind.logger.info(f"[睡眠维护] 废弃字段清理：完成 清理条数={cleaned}")
         return "success"
 
     async def _task_daily_json_backup(self, state: Dict[str, Any]) -> str:
@@ -290,12 +379,12 @@ class SleepMaintenanceService:
         plugin_context = deepmind.plugin_context
         memory_sql_manager = plugin_context.get_component("memory_sql_manager")
         if memory_sql_manager is None:
-            deepmind.logger.warning("[sleep_maintenance] task=daily_json_backup status=failed detail=memory_sql_manager不可用")
+            deepmind.logger.warning("[睡眠维护] 每日 JSON 备份：失败（memory_sql_manager 不可用）")
             return "failed"
 
         today = time.strftime("%Y%m%d", time.localtime())
         if str(state.get("daily_json_backup_last_day", "")) == today:
-            deepmind.logger.info("[sleep_maintenance] task=daily_json_backup status=skipped detail=今日已备份")
+            deepmind.logger.info("[睡眠维护] 每日 JSON 备份：跳过（今日已备份）")
             return "skipped"
 
         center_dir = plugin_context.get_memory_center_dir()
@@ -313,10 +402,10 @@ class SleepMaintenanceService:
             try:
                 stale.unlink(missing_ok=True)
             except Exception as e:
-                deepmind.logger.warning(f"[sleep_maintenance] 删除旧备份失败: {stale.name} error={e}")
+                deepmind.logger.warning(f"[睡眠维护] 删除旧备份失败 文件={stale.name} 异常={e}")
 
         state["daily_json_backup_last_day"] = today
         deepmind.logger.info(
-            f"[sleep_maintenance] task=daily_json_backup status=success detail=file={backup_file.name}"
+            f"[睡眠维护] 每日 JSON 备份：完成 文件={backup_file.name}"
         )
         return "success"

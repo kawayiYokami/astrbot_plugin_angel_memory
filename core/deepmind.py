@@ -13,14 +13,12 @@ import json
 from typing import List, Dict, Any, Optional
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
-from astrbot.core.agent.message import TextPart
 from .soul.soul_state import SoulState
 from .utils.memory_id_resolver import MemoryIDResolver
 from ..llm_memory.utils.json_parser import JsonParser
 from .session_memory import SessionMemoryManager
 from .memory_runtime import MemoryRuntime
 from .utils import SmallModelPromptBuilder, MemoryInjector
-from .utils.feedback_queue import get_feedback_queue
 from .utils.query_processor import get_query_processor
 from .services.retrieval_service import DeepMindRetrievalService
 from .services.injection_service import DeepMindInjectionService
@@ -54,7 +52,6 @@ class DeepMind:
     # 潜意识回忆的规则
     CHAINED_RECALL_PER_TYPE_LIMIT = 7  # 每种记忆最多想7条，防止信息过载
     CHAINED_RECALL_FINAL_LIMIT = 7  # 最终给主意识最多7条记忆
-    NOTE_CANDIDATE_COUNT = 50  # 先找50条笔记，让小AI帮忙筛选有用的
 
     def __init__(
         self,
@@ -90,9 +87,8 @@ class DeepMind:
         self.logger = logger
         self.json_parser = JsonParser()
 
-        # 获取配置值 - 支持嵌套配置和向后兼容
-        # 新格式：memory_behavior.min_message_length, token_budget.small_model_budget
-        # 旧格式：min_message_length, small_model_note_budget
+        # 获取配置值（嵌套配置）
+        # 当前格式：memory_behavior.*, note_topk.*
 
         # 记忆行为参数
         memory_behavior = getattr(config, "memory_behavior", {})
@@ -100,10 +96,17 @@ class DeepMind:
         self.short_term_memory_capacity = memory_behavior.get("short_term_memory_capacity") if isinstance(memory_behavior, dict) else getattr(config, "short_term_memory_capacity", 1.0)
         self.sleep_interval = memory_behavior.get("sleep_interval") if isinstance(memory_behavior, dict) else getattr(config, "sleep_interval", 3600)
 
-        # Token预算参数
-        token_budget = getattr(config, "token_budget", {})
-        self.small_model_note_budget = token_budget.get("small_model_budget") if isinstance(token_budget, dict) else getattr(config, "small_model_note_budget", 2000)
-        self.large_model_note_budget = token_budget.get("large_model_budget") if isinstance(token_budget, dict) else getattr(config, "large_model_note_budget", 200)
+        # 笔记 Top-K 参数（候选固定为注入的 7 倍）
+        note_topk = getattr(config, "note_topk", {})
+        note_top_k = (
+            int(note_topk.get("top_k", 8))
+            if isinstance(note_topk, dict)
+            else int(getattr(config, "note_top_k", 8))
+        )
+        if note_top_k < 0:
+            note_top_k = 0
+        self.note_inject_top_k = note_top_k
+        self.note_candidate_top_k = note_top_k * 7
 
         # 初始化短期记忆管理器
         self.session_memory_manager = SessionMemoryManager(
@@ -341,27 +344,10 @@ class DeepMind:
         # 6. 构建笔记上下文（复用NoteContextBuilder）
         note_context = ""
         if candidate_notes:
-            from ..llm_memory.utils.token_utils import count_tokens
             from .utils.note_context_builder import NoteContextBuilder
 
-            # 使用贪婪填充策略选择最终要显示的笔记
-            selected_notes = []
-            current_tokens = 0
-
-            for note in candidate_notes:
-                # 模拟构建最终文本以进行精确的token计算
-                # 这里我们只关心token，所以格式可以简化
-                temp_text = NoteContextBuilder.build_candidate_list_for_prompt([note])
-                note_tokens = count_tokens(temp_text)
-
-                if not selected_notes: # 第一条无条件添加
-                    selected_notes.append(note)
-                    current_tokens += note_tokens
-                elif current_tokens + note_tokens <= self.large_model_note_budget:
-                    selected_notes.append(note)
-                    current_tokens += note_tokens
-                else:
-                    break
+            # Top-K 注入策略：不再按 token 预算裁剪
+            selected_notes = candidate_notes[: max(0, int(self.note_inject_top_k))]
 
             # 使用 NoteContextBuilder 来构建最终的上下文
             if selected_notes:
@@ -370,7 +356,7 @@ class DeepMind:
 
                 self.logger.debug(
                     f"笔记上下文构建完成：{len(selected_notes)}条笔记，"
-                    f"估算token数≈{current_tokens}（预算={self.large_model_note_budget}）"
+                    f"注入上限K={self.note_inject_top_k}"
                 )
 
         # 7. 获取灵魂状态值

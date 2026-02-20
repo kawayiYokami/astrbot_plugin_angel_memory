@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Dict, List, Set
+from typing import Dict, Set
 
 from ...llm_memory.components.memory_sql_manager import MemorySqlManager
 from ...llm_memory.service.cognitive_service import CognitiveService
 
 
-class SimpleToVectorSyncService:
-    """向量模式启动时：将 simple 库中缺失记忆回灌到向量库。"""
+class MemoryVectorSyncService:
+    """记忆向量库同步服务：将中央记忆索引缺失项同步到向量库。"""
 
     def __init__(self, logger):
         self.logger = logger
 
-    async def sync_missing_memories(
+    async def sync_memory_vector_index(
         self,
         cognitive_service: CognitiveService,
         memory_sql_manager: MemorySqlManager,
@@ -22,7 +22,7 @@ class SimpleToVectorSyncService:
     ) -> Dict[str, int]:
         start_time = time.time()
         self.logger.info(
-            f"[simple_to_vector_sync] start provider={provider_id or 'unknown'}"
+            f"[记忆向量库同步] 开始，供应商={provider_id or 'unknown'}"
         )
 
         index_collection = cognitive_service.vector_store.get_or_create_collection_with_dimension_check(
@@ -35,7 +35,7 @@ class SimpleToVectorSyncService:
             vector_ids: Set[str] = {str(mid) for mid in vector_ids_raw if mid}
         except Exception as e:
             self.logger.error(
-                f"[simple_to_vector_sync] failed error=读取向量库失败: {e}",
+                f"[记忆向量库同步] 失败：读取向量库异常: {e}",
                 exc_info=True,
             )
             return {"sql_total": 0, "vector_total": 0, "missing": 0, "migrated": 0, "failed": 1}
@@ -44,7 +44,7 @@ class SimpleToVectorSyncService:
             sql_index_rows = await memory_sql_manager.list_memory_index_rows()
         except Exception as e:
             self.logger.error(
-                f"[simple_to_vector_sync] list_memory_index_rows failed: {e}",
+                f"[记忆向量库同步] 读取中央记忆索引失败: {e}",
                 exc_info=True,
             )
             sql_index_rows = []
@@ -66,18 +66,18 @@ class SimpleToVectorSyncService:
         except Exception as e:
             failed = len(missing) if missing else 1
             self.logger.warning(
-                f"[simple_to_vector_sync] migrate_failed error={e}"
+                f"[记忆向量库同步] 写入向量索引失败: {e}"
             )
 
         cost_ms = int((time.time() - start_time) * 1000)
         self.logger.info(
-            "[simple_to_vector_sync] done "
-            f"sql_total={len(sql_index_rows)} "
-            f"vector_total={len(vector_ids)} "
-            f"missing={len(missing)} "
-            f"migrated={migrated} "
-            f"failed={failed} "
-            f"cost_ms={cost_ms}"
+            "[记忆向量库同步] 完成 "
+            f"中央总数={len(sql_index_rows)} "
+            f"向量总数={len(vector_ids)} "
+            f"缺失数={len(missing)} "
+            f"同步成功={migrated} "
+            f"同步失败={failed} "
+            f"耗时毫秒={cost_ms}"
         )
         return {
             "sql_total": len(sql_index_rows),

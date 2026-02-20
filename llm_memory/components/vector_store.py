@@ -6,6 +6,7 @@
 
 import chromadb
 import inspect
+import re
 from typing import Any, Dict, List, Optional, Tuple
 import traceback
 from pathlib import Path
@@ -585,6 +586,27 @@ class VectorStore:
             self.logger.error(f"清空所有记忆失败: {e}")
             raise
 
+    def _detect_max_batch_size(self) -> int:
+        """
+        尝试从 Chroma client 获取最大批量写入条数，失败时使用保守默认值。
+        """
+        candidates = []
+        for attr in ("get_max_batch_size", "max_batch_size"):
+            value = getattr(self.client, attr, None)
+            if value is None:
+                continue
+            try:
+                if callable(value):
+                    value = value()
+                candidates.append(int(value))
+            except Exception:
+                continue
+        valid = [x for x in candidates if x > 0]
+        if valid:
+            return min(valid)
+        # 保守默认值，避免大批次直接触发上限异常
+        return 5000
+
     async def upsert_documents(
         self,
         collection,
@@ -632,30 +654,53 @@ class VectorStore:
         if not ids_list:
             return timings if _return_timings else None
 
-        # 1. 使用嵌入提供商从源文本生成 embeddings(异步调用)
-        t_embed = time.time()
-        embeddings = await self.embed_documents(embedding_texts_list)
+        max_batch_size = self._detect_max_batch_size()
+        total = len(ids_list)
+
+        total_embed_ms = 0.0
+        total_db_ms = 0.0
+        pos = 0
+        while pos < total:
+            end = min(pos + max_batch_size, total)
+            batch_ids = ids_list[pos:end]
+            batch_texts = embedding_texts_list[pos:end]
+            batch_docs = documents_list[pos:end] if documents_list is not None else None
+            batch_metas = metadatas_list[pos:end] if metadatas_list is not None else None
+
+            # 1) 先向量化当前批次
+            t_embed = time.time()
+            embeddings = await self.embed_documents(batch_texts)
+            total_embed_ms += (time.time() - t_embed) * 1000
+
+            # 2) 写入当前批次
+            upsert_params = {
+                "ids": batch_ids,
+                "embeddings": embeddings,
+            }
+            if batch_docs is not None:
+                upsert_params["documents"] = batch_docs
+            if batch_metas is not None:
+                upsert_params["metadatas"] = batch_metas
+
+            t_db = time.time()
+            try:
+                collection.upsert(**upsert_params)
+            except ValueError as e:
+                msg = str(e)
+                match = re.search(r"max batch size of (\d+)", msg)
+                # 防御性降级：若服务端上限更小，动态收敛后重试本批次
+                if match:
+                    detected_limit = int(match.group(1))
+                    if detected_limit > 0 and detected_limit < max_batch_size:
+                        max_batch_size = detected_limit
+                        continue
+                raise
+            total_db_ms += (time.time() - t_db) * 1000
+            pos = end
+
         if _return_timings:
-            timings["embed"] = (time.time() - t_embed) * 1000
-
-        # 2. 调用底层的 upsert
-        upsert_params = {
-            "ids": ids_list,
-            "embeddings": embeddings,
-        }
-
-        # 只在 documents 不为 None 时才添加到 upsert 参数中
-        if documents_list is not None:
-            upsert_params["documents"] = documents_list
-
-        if metadatas_list is not None:
-            upsert_params["metadatas"] = metadatas_list
-
-        # 直接upsert(数据库内部处理并发)
-        t_db = time.time()
-        collection.upsert(**upsert_params)
-        if _return_timings:
-            timings["db_upsert"] = (time.time() - t_db) * 1000
+            timings["embed"] = total_embed_ms
+            timings["db_upsert"] = total_db_ms
 
         return timings if _return_timings else None
 
@@ -733,6 +778,71 @@ class VectorStore:
             if similarity < similarity_threshold:
                 continue
             recalled.append((str(memory_id), similarity))
+        return recalled
+
+    async def upsert_note_index_rows(
+        self,
+        collection,
+        rows: List[Dict[str, str]],
+    ) -> None:
+        """轻量笔记索引写入：仅写 source_id + vector_text。"""
+        if not rows:
+            return
+
+        ids: List[str] = []
+        texts: List[str] = []
+        metadatas: List[Dict[str, str]] = []
+        for row in rows:
+            source_id = str(row.get("id") or "").strip()
+            vector_text = str(row.get("vector_text") or "").strip()
+            if not source_id or not vector_text:
+                continue
+            ids.append(source_id)
+            texts.append(vector_text)
+            metadatas.append({"source_id": source_id})
+
+        if not ids:
+            return
+
+        await self.upsert_documents(
+            collection=collection,
+            ids=ids,
+            embedding_texts=texts,
+            documents=texts,
+            metadatas=metadatas,
+        )
+
+    async def recall_note_source_ids(
+        self,
+        collection,
+        query: str,
+        limit: int = 10,
+        vector: Optional[List[float]] = None,
+        similarity_threshold: float = 0.0,
+    ) -> List[Tuple[str, float]]:
+        """轻量笔记索引召回：仅返回 (source_id, similarity)。"""
+        query_vector = vector
+        if query_vector is None:
+            query_vector = await self.embed_single_document(query, is_query=True)
+        if query_vector is None:
+            return []
+
+        results = collection.query(
+            query_embeddings=[query_vector],
+            n_results=max(1, int(limit)),
+        )
+        ids = (results or {}).get("ids", [[]])
+        distances = (results or {}).get("distances", [[]])
+        flat_ids = ids[0] if ids else []
+        flat_distances = distances[0] if distances else []
+
+        recalled: List[Tuple[str, float]] = []
+        for idx, source_id in enumerate(flat_ids):
+            distance = flat_distances[idx] if idx < len(flat_distances) else 2.0
+            similarity = max(0.0, 1.0 - (float(distance) / 2.0))
+            if similarity < similarity_threshold:
+                continue
+            recalled.append((str(source_id), similarity))
         return recalled
 
     async def embed_documents(

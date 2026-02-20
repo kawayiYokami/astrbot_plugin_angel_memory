@@ -81,8 +81,7 @@ class MemoryConstants:
     SHORT_TERM_MEMORY_CAPACITY = 1.0
     SLEEP_INTERVAL = 3600  # 默认睡眠间隔（秒）
     DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
-    SMALL_MODEL_NOTE_BUDGET = 200  # 默认小模型笔记Token预算
-    LARGE_MODEL_NOTE_BUDGET = 200  # 默认大模型笔记Token预算
+    NOTE_TOP_K = 8  # 默认注入笔记数量（候选固定为 7 倍）
 
     # 时间常量（秒）
     TIME_SECOND = 1
@@ -168,21 +167,15 @@ class MemoryConfig:
         self._provider_id = config_get("provider_id", "")
         self._rerank_provider_id = config_get("rerank_provider_id", "")
 
-        # Token预算配置 - 支持新旧格式兼容
-        # 新格式：token_budget.small_model_budget
-        # 旧格式：small_model_note_budget
-        token_budget = config_get("token_budget", {})
-
-        self._small_model_note_budget = ConfigValidator.validate_non_negative_int(
-            token_budget.get("small_model_budget") or config_get("small_model_note_budget", MemoryConstants.SMALL_MODEL_NOTE_BUDGET),
-            "small_model_note_budget",
-            max_value=64000,
+        # 笔记 Top-K 配置（候选固定为注入的 7 倍）
+        note_topk = config_get("note_topk", {})
+        self._note_top_k = ConfigValidator.validate_non_negative_int(
+            note_topk.get("top_k", MemoryConstants.NOTE_TOP_K),
+            "note_topk.top_k",
+            max_value=1000,
         )
-        self._large_model_note_budget = ConfigValidator.validate_non_negative_int(
-            token_budget.get("large_model_budget") or config_get("large_model_note_budget", MemoryConstants.LARGE_MODEL_NOTE_BUDGET),
-            "large_model_note_budget",
-            max_value=64000,
-        )
+        self._note_candidate_top_k = self._note_top_k * 7
+        self._note_inject_top_k = self._note_top_k
         self._enable_local_embedding = config_get("enable_local_embedding", False)
         self._conversation_scope_map = config_get("conversation_scope_map", {}) or {}
 
@@ -323,14 +316,18 @@ class MemoryConfig:
         return self._rerank_provider_id
 
     @property
-    def small_model_note_budget(self) -> int:
-        """获取小模型笔记Token预算"""
-        return self._small_model_note_budget
+    def note_candidate_top_k(self) -> int:
+        """获取候选笔记数量上限"""
+        return self._note_candidate_top_k
 
     @property
-    def large_model_note_budget(self) -> int:
-        """获取大模型笔记Token预算"""
-        return self._large_model_note_budget
+    def note_inject_top_k(self) -> int:
+        """获取注入笔记数量上限"""
+        return self._note_inject_top_k
+    @property
+    def note_top_k(self) -> int:
+        """获取统一注入Top-K配置值"""
+        return self._note_top_k
     @property
     def enable_local_embedding(self) -> bool:
         """是否启用本地嵌入模型"""
@@ -401,8 +398,9 @@ class MemoryConfig:
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "rerank_provider_id": self.rerank_provider_id,
-            "small_model_note_budget": self.small_model_note_budget,
-            "large_model_note_budget": self.large_model_note_budget,
+            "note_top_k": self.note_top_k,
+            "note_candidate_top_k": self.note_candidate_top_k,
+            "note_inject_top_k": self.note_inject_top_k,
         }
 
     def get_capacity_config(self) -> MemoryCapacityConfig:

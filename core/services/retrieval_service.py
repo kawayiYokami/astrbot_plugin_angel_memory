@@ -112,14 +112,12 @@ class DeepMindRetrievalService:
 
         candidate_notes = []
         if deepmind.note_service:
-            candidate_notes = await deepmind.note_service.search_notes_by_token_limit(
+            candidate_notes = await deepmind.note_service.search_notes_by_top_k(
                 query=note_query,
-                max_tokens=deepmind.small_model_note_budget,
-                recall_count=deepmind.NOTE_CANDIDATE_COUNT,
+                recall_count=deepmind.note_candidate_top_k,
+                top_k=deepmind.note_candidate_top_k,
                 vector=note_vector,
             )
-        elif getattr(deepmind.config, "enable_simple_memory", False):
-            deepmind.logger.debug("当前为简化记忆模式，已跳过笔记检索。")
 
         note_id_mapping = {}
         for note in candidate_notes:

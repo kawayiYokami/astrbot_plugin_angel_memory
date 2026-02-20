@@ -53,16 +53,23 @@ class IDService:
         if plugin_context:
             self.data_directory = str(plugin_context.get_index_dir())
             self.provider_id = plugin_context.get_current_provider()
+            path_manager = plugin_context.get_path_manager()
+            self.file_index_directory = str(path_manager.get_memory_center_index_dir())
+            self.file_index_provider = "global"
         else:
             # 不再使用默认值，强制要求PluginContext
             raise ValueError("PluginContext必须提供，无法使用默认配置")
 
         # 初始化底层管理器
         self.tag_manager = TagManager(self.data_directory, self.provider_id)
-        self.file_manager = FileIndexManager(self.data_directory, self.provider_id)
+        # 文件扫描状态属于中央真相源，不按 provider 分仓
+        self.file_manager = FileIndexManager(
+            self.file_index_directory, self.file_index_provider
+        )
 
         self.logger.info(
-            f"ID服务初始化完成 (提供商: {self.provider_id}, 目录: {self.data_directory})"
+            f"ID服务初始化完成 (提供商: {self.provider_id}, 标签目录: {self.data_directory}, "
+            f"文件索引目录: {self.file_index_directory}, 文件索引作用域: {self.file_index_provider})"
         )
 
     def ids_to_tags(self, tag_ids: List[int]) -> List[str]:

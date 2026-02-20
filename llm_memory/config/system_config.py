@@ -35,15 +35,6 @@ class MemorySystemConfig:
         )
     )
 
-    # 笔记服务专用集合名称
-    notes_main_collection_name: str = field(
-        default_factory=lambda: os.getenv("NOTES_MAIN_COLLECTION_NAME", "notes_main")
-    )
-
-    notes_sub_collection_name: str = field(
-        default_factory=lambda: os.getenv("NOTES_SUB_COLLECTION_NAME", "notes_sub")
-    )
-
     # 注意：storage_dir 和 index_dir 应该从 PathManager 实例获取（在设置供应商后）
     # 这里不再设置默认值，由外部传入或通过 PathManager 动态获取
     storage_dir: Path = field(default=None)
