@@ -819,7 +819,7 @@ class VectorStore:
         query: str,
         limit: int = 10,
         vector: Optional[List[float]] = None,
-        similarity_threshold: float = 0.0,
+        similarity_threshold: float = 0.5,
     ) -> List[Tuple[str, float]]:
         """轻量笔记索引召回：仅返回 (source_id, similarity)。"""
         query_vector = vector

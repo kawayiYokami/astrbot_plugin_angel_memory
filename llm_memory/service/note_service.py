@@ -115,7 +115,7 @@ class NoteService:
                     query=query,
                     limit=recall_count,
                     vector=vector,
-                    similarity_threshold=0.0,
+                    similarity_threshold=0.5,
                 )
             except Exception as e:
                 # notes_index 在睡眠维护中可能被重建，旧句柄会失效；此处自动刷新并重试一次。
@@ -130,7 +130,7 @@ class NoteService:
                         query=query,
                         limit=recall_count,
                         vector=vector,
-                        similarity_threshold=0.0,
+                        similarity_threshold=0.5,
                     )
                 else:
                     raise
