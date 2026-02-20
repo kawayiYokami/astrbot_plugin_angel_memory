@@ -194,9 +194,18 @@ class MemoryManager:
                 vector=vector,
                 similarity_threshold=0.5,
             )
+            score_map = {mid: score for mid, score in id_scores}
+            hybrid_memories = await self.memory_sql_manager.recall_by_tags(
+                query=processed_query,
+                limit=limit * 3,
+                memory_scope=memory_scope,
+                vector_scores=score_map if score_map else None,
+            )
+            if hybrid_memories:
+                return hybrid_memories[:limit]
+
             if not id_scores:
                 return []
-            score_map = {mid: score for mid, score in id_scores}
             ordered_ids = [mid for mid, _ in id_scores]
             sql_memories = await self.memory_sql_manager.get_memories_by_ids(ordered_ids)
             filtered: List[BaseMemory] = []

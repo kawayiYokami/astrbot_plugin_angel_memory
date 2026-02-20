@@ -136,16 +136,25 @@ class NoteService:
                     raise
             source_ids = [sid for sid, _ in recalled]
             score_map = {sid: score for sid, score in recalled}
-            if source_ids:
-                by_ids = await memory_sql_manager.get_note_index_by_source_ids(source_ids)
-                row_map = {str(row.get("source_id")): row for row in by_ids}
-                rows = [row_map[sid] for sid in source_ids if sid in row_map]
-                for row in rows:
-                    row["similarity"] = float(score_map.get(str(row.get("source_id")), 0.0))
+            rows = await memory_sql_manager.search_note_index_by_tags(
+                query=query,
+                limit=recall_count,
+                vector_scores=score_map if source_ids else None,
+            )
         else:
             rows = await memory_sql_manager.search_note_index_by_tags(query=query, limit=recall_count)
             for row in rows:
-                row["similarity"] = float(row.get("hit_count", 0))
+                raw_similarity = row.get("similarity", None)
+                if raw_similarity is None:
+                    raw_similarity = row.get("hit_count", 0)
+                try:
+                    row["similarity"] = float(raw_similarity)
+                except (TypeError, ValueError):
+                    fallback = row.get("hit_count", 0)
+                    try:
+                        row["similarity"] = float(fallback)
+                    except (TypeError, ValueError):
+                        row["similarity"] = 0.0
 
         return [self._format_note_index_row(row) for row in rows]
 

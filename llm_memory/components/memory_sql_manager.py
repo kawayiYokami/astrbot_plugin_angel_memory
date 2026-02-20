@@ -18,6 +18,7 @@ except ImportError:
 from ..config.system_config import system_config
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
 from ..service.memory_decay_policy import MemoryDecayConfig, MemoryDecayPolicy
+from .bm25_retriever import FTS5HybridRetriever
 
 
 class MemorySqlManager:
@@ -32,11 +33,26 @@ class MemorySqlManager:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._fts_lock = threading.Lock()
         self._tag_names: set[str] = set()
         self.decay_policy = MemoryDecayPolicy(decay_config)
+        self._fts_retriever = FTS5HybridRetriever(
+            db_path=str(self.db_path),
+            tokenizer_mode="jieba_cut",
+            memory_threshold=0.5,
+            note_threshold=0.6,
+            memory_default_vector_score=0.5,
+            note_default_vector_score=0.6,
+        )
+        self._fts_ready = False
 
         self._init_db()
         self._load_tag_cache()
+        # 启动阶段主动完成一次 FTS5 索引构建，避免首次查询触发冷启动延迟。
+        start_ts = time.time()
+        self._ensure_fts_ready_sync(force_rebuild=True)
+        elapsed_ms = int((time.time() - start_ts) * 1000)
+        self.logger.info(f"[FTS5重建] 启动预构建完成 耗时={elapsed_ms}ms")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
@@ -201,6 +217,242 @@ class MemorySqlManager:
                 self._tag_names = {str(row["name"]) for row in rows if row["name"]}
         self.logger.info(f"SimpleMemory 标签缓存加载完成: {len(self._tag_names)} 个")
 
+    def _list_memory_rows_for_fts_sync(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    mr.id,
+                    mr.judgment,
+                    IFNULL(tags.tags_text, '') AS tags_text
+                FROM memory_records mr
+                LEFT JOIN (
+                    SELECT
+                        mtr.memory_id AS memory_id,
+                        GROUP_CONCAT(gt.name, ', ') AS tags_text
+                    FROM memory_tag_rel mtr
+                    JOIN global_tags gt ON gt.id = mtr.tag_id
+                    GROUP BY mtr.memory_id
+                ) tags ON tags.memory_id = mr.id
+                """
+            ).fetchall()
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            tags = [t.strip() for t in str(row["tags_text"] or "").split(",") if t.strip()]
+            result.append(
+                {
+                    "id": str(row["id"] or ""),
+                    "judgment": str(row["judgment"] or ""),
+                    "tags": tags,
+                }
+            )
+        return [r for r in result if r["id"]]
+
+    def _list_note_rows_for_fts_sync(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    nir.source_id,
+                    IFNULL(tags.tags_text, '') AS tags_text
+                FROM note_index_records nir
+                LEFT JOIN (
+                    SELECT
+                        ntr.source_id AS source_id,
+                        GROUP_CONCAT(gt.name, ', ') AS tags_text
+                    FROM note_tag_rel ntr
+                    JOIN global_tags gt ON gt.id = ntr.tag_id
+                    GROUP BY ntr.source_id
+                ) tags ON tags.source_id = nir.source_id
+                """
+            ).fetchall()
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            tags = [t.strip() for t in str(row["tags_text"] or "").split(",") if t.strip()]
+            result.append({"id": str(row["source_id"] or ""), "tags": tags})
+        return [r for r in result if r["id"]]
+
+    def _ensure_fts_ready_sync(self, force_rebuild: bool = False) -> None:
+        rebuilt = False
+        with self._fts_lock:
+            if self._fts_ready and not force_rebuild:
+                return
+            previous_ready = self._fts_ready
+            try:
+                self._fts_retriever.rebuild_memory(self._list_memory_rows_for_fts_sync())
+                self._fts_retriever.rebuild_note(self._list_note_rows_for_fts_sync())
+                self._fts_ready = True
+                rebuilt = True
+            except Exception as e:
+                self._fts_ready = previous_ready
+                self.logger.error(f"[FTS5重建] 失败，异常={e}", exc_info=True)
+                raise
+        if rebuilt:
+            self._log_fts_index_size_sync()
+
+    def _log_fts_index_size_sync(self) -> None:
+        """输出 FTS5 索引构建后的体积与行数。"""
+        db_size_bytes = 0
+        try:
+            db_size_bytes = int(self.db_path.stat().st_size)
+        except Exception:
+            db_size_bytes = 0
+
+        memory_rows = 0
+        note_rows = 0
+        try:
+            with self._connect() as conn:
+                memory_rows = int(
+                    conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0]
+                )
+                note_rows = int(
+                    conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0]
+                )
+        except Exception as e:
+            self.logger.warning(f"[FTS5重建] 索引大小统计失败: {e}")
+            return
+
+        db_size_mb = db_size_bytes / (1024 * 1024)
+        self.logger.info(
+            f"[FTS5重建] 完成 memory_fts={memory_rows} note_fts={note_rows} "
+            f"db_size={db_size_bytes}B ({db_size_mb:.2f}MB)"
+        )
+
+    def _sync_memory_fts_by_id_sync(self, memory_id: str) -> None:
+        if not self._fts_ready:
+            return
+        mid = str(memory_id or "").strip()
+        if not mid:
+            return
+        memories = self._get_memories_by_ids_sync([mid])
+        if not memories:
+            self._fts_retriever.delete_memory(mid)
+            return
+        mem = memories[0]
+        self._fts_retriever.upsert_memory(
+            item_id=mem.id,
+            tags=getattr(mem, "tags", []) or [],
+            judgment=str(getattr(mem, "judgment", "") or ""),
+        )
+
+    def _sync_memory_fts_batch_sync(
+        self,
+        upsert_ids: Optional[List[str]] = None,
+        delete_ids: Optional[List[str]] = None,
+    ) -> None:
+        if not self._fts_ready:
+            return
+        upsert_list = [str(x).strip() for x in (upsert_ids or []) if str(x).strip()]
+        delete_list = [str(x).strip() for x in (delete_ids or []) if str(x).strip()]
+        if delete_list:
+            for memory_id in delete_list:
+                self._fts_retriever.delete_memory(memory_id)
+        for memory_id in upsert_list:
+            self._sync_memory_fts_by_id_sync(memory_id)
+
+    def _sync_note_fts_by_source_id_sync(self, source_id: str) -> None:
+        if not self._fts_ready:
+            return
+        sid = str(source_id or "").strip()
+        if not sid:
+            return
+        rows = self._get_note_index_by_source_ids_sync([sid])
+        if not rows:
+            self._fts_retriever.delete_note(sid)
+            return
+        row = rows[0]
+        tags_text = str(row.get("tags_text") or "")
+        tags = [t.strip() for t in tags_text.split(",") if t.strip()]
+        self._fts_retriever.upsert_note(item_id=sid, tags=tags)
+
+    async def audit_and_repair_fts_indexes(self, sample_size: int = 50) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._audit_and_repair_fts_indexes_sync, sample_size)
+
+    def _audit_and_repair_fts_indexes_sync(self, sample_size: int = 50) -> Dict[str, Any]:
+        self._ensure_fts_ready_sync()
+        sample_n = max(1, int(sample_size or 50))
+        with self._connect() as conn:
+            sql_memory_count = int(conn.execute("SELECT COUNT(1) FROM memory_records").fetchone()[0] or 0)
+            fts_memory_count = int(conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0] or 0)
+            sql_note_count = int(conn.execute("SELECT COUNT(1) FROM note_index_records").fetchone()[0] or 0)
+            fts_note_count = int(conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0] or 0)
+
+            sql_memory_sample = [
+                str(r[0])
+                for r in conn.execute(
+                    "SELECT id FROM memory_records ORDER BY updated_at DESC LIMIT ?",
+                    (sample_n,),
+                ).fetchall()
+            ]
+            sql_note_sample = [
+                str(r[0])
+                for r in conn.execute(
+                    "SELECT source_id FROM note_index_records ORDER BY updated_at DESC LIMIT ?",
+                    (sample_n,),
+                ).fetchall()
+            ]
+
+        repair_required = False
+        if sql_memory_count != fts_memory_count or sql_note_count != fts_note_count:
+            repair_required = True
+        if not repair_required:
+            missing_memory_ids: List[str] = []
+            missing_note_ids: List[str] = []
+            with self._connect() as conn:
+                for memory_id in sql_memory_sample:
+                    exists = conn.execute(
+                        "SELECT 1 FROM memory_fts WHERE item_id = ? LIMIT 1",
+                        (memory_id,),
+                    ).fetchone()
+                    if exists:
+                        continue
+                    missing_memory_ids.append(memory_id)
+                for source_id in sql_note_sample:
+                    exists = conn.execute(
+                        "SELECT 1 FROM note_fts WHERE item_id = ? LIMIT 1",
+                        (source_id,),
+                    ).fetchone()
+                    if exists:
+                        continue
+                    missing_note_ids.append(source_id)
+            for memory_id in missing_memory_ids:
+                self._sync_memory_fts_by_id_sync(memory_id)
+            for source_id in missing_note_ids:
+                self._sync_note_fts_by_source_id_sync(source_id)
+
+        # 采样修正后再次校验总量；若仍不一致则全量重建自动修复。
+        with self._connect() as conn:
+            fts_memory_count_after = int(conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0] or 0)
+            fts_note_count_after = int(conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0] or 0)
+        if sql_memory_count != fts_memory_count_after or sql_note_count != fts_note_count_after:
+            self.logger.warning(
+                "[FTS5巡检] 检测到索引不一致，开始自动全量修复 "
+                f"memory_sql={sql_memory_count} memory_fts={fts_memory_count_after} "
+                f"note_sql={sql_note_count} note_fts={fts_note_count_after}"
+            )
+            self._ensure_fts_ready_sync(force_rebuild=True)
+            repaired = True
+        else:
+            repaired = repair_required
+
+        with self._connect() as conn:
+            final_memory = int(conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0] or 0)
+            final_note = int(conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0] or 0)
+
+        self.logger.info(
+            "[FTS5巡检] 完成 "
+            f"memory_sql={sql_memory_count} memory_fts={final_memory} "
+            f"note_sql={sql_note_count} note_fts={final_note} "
+            f"auto_repaired={'是' if repaired else '否'}"
+        )
+        return {
+            "memory_sql_count": sql_memory_count,
+            "memory_fts_count": final_memory,
+            "note_sql_count": sql_note_count,
+            "note_fts_count": final_note,
+            "auto_repaired": repaired,
+        }
+
     @staticmethod
     def _normalize_scope(memory_scope: str) -> str:
         scope = str(memory_scope or "").strip()
@@ -243,6 +495,14 @@ class MemorySqlManager:
         if scope == "public":
             return f"{alias}.memory_scope = ?", ["public"]
         return f"({alias}.memory_scope = ? OR {alias}.memory_scope = 'public')", [scope]
+
+    @staticmethod
+    def _is_scope_allowed(memory_scope: str, target_scope: str) -> bool:
+        scope = str(memory_scope or "").strip() or "public"
+        target = str(target_scope or "").strip()
+        if target == "public":
+            return scope == "public"
+        return scope in {target, "public"}
 
     @staticmethod
     def _row_to_memory(row: sqlite3.Row, tags: List[str]) -> BaseMemory:
@@ -428,6 +688,7 @@ class MemorySqlManager:
         scanned = len(entries or [])
         upserted = 0
         failed = 0
+        synced_source_ids: List[str] = []
         with self._connect() as conn:
             for item in entries or []:
                 try:
@@ -489,10 +750,14 @@ class MemorySqlManager:
                     # 使用同一连接写入 tags，避免事务内嵌套连接导致 SQLite 锁冲突
                     self._bind_note_tags_with_conn(conn, source_id, tags)
                     upserted += 1
+                    synced_source_ids.append(source_id)
                 except Exception:
                     failed += 1
                     self.logger.exception("笔记索引写入失败")
             conn.commit()
+        if self._fts_ready and synced_source_ids:
+            for source_id in synced_source_ids:
+                self._sync_note_fts_by_source_id_sync(source_id)
         return {"scanned": scanned, "upserted": upserted, "failed": failed}
 
     async def delete_note_index_by_file_id(self, file_id: str) -> List[str]:
@@ -516,6 +781,9 @@ class MemorySqlManager:
                 )
             conn.execute("DELETE FROM note_index_records WHERE file_id = ?", (fid,))
             conn.commit()
+        if self._fts_ready and source_ids:
+            for source_id in source_ids:
+                self._fts_retriever.delete_note(source_id)
         return source_ids
 
     async def get_note_index_by_source_ids(self, source_ids: List[str]) -> List[Dict[str, Any]]:
@@ -560,55 +828,50 @@ class MemorySqlManager:
         self,
         query: str,
         limit: int = 20,
+        vector_scores: Optional[Dict[str, float]] = None,
     ) -> List[Dict[str, Any]]:
-        return await asyncio.to_thread(self._search_note_index_by_tags_sync, query, limit)
+        return await asyncio.to_thread(
+            self._search_note_index_by_tags_sync, query, limit, vector_scores
+        )
 
-    def _search_note_index_by_tags_sync(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
-        text = str(query or "")
-        if not text.strip():
-            return []
-        with self._lock:
-            matched_tags = [tag for tag in self._tag_names if tag and tag in text]
-        if not matched_tags:
+    def _search_note_index_by_tags_sync(
+        self,
+        query: str,
+        limit: int = 20,
+        vector_scores: Optional[Dict[str, float]] = None,
+    ) -> List[Dict[str, Any]]:
+        text = str(query or "").strip()
+        if not text:
             return []
 
-        placeholders = ",".join(["?" for _ in matched_tags])
-        sql = f"""
-            SELECT
-                nir.source_id,
-                nir.note_short_id,
-                nir.file_id,
-                nir.source_file_path,
-                nir.heading_h1,
-                nir.heading_h2,
-                nir.heading_h3,
-                nir.heading_h4,
-                nir.heading_h5,
-                nir.heading_h6,
-                nir.total_lines,
-                nir.updated_at,
-                COUNT(DISTINCT gt.id) AS hit_count,
-                CAST(nir.updated_at / 86400 AS INTEGER) AS day_bucket,
-                IFNULL(tags.tags_text, '') AS tags_text
-            FROM note_index_records nir
-            JOIN note_tag_rel ntr ON ntr.source_id = nir.source_id
-            JOIN global_tags gt ON gt.id = ntr.tag_id
-            LEFT JOIN (
-                SELECT
-                    ntr2.source_id AS source_id,
-                    GROUP_CONCAT(gt2.name, ', ') AS tags_text
-                FROM note_tag_rel ntr2
-                JOIN global_tags gt2 ON gt2.id = ntr2.tag_id
-                GROUP BY ntr2.source_id
-            ) tags ON tags.source_id = nir.source_id
-            WHERE gt.name IN ({placeholders})
-            GROUP BY nir.source_id
-            ORDER BY hit_count DESC, day_bucket DESC, nir.source_file_path ASC
-            LIMIT ?
-        """
-        with self._connect() as conn:
-            rows = conn.execute(sql, tuple([*matched_tags, int(limit)])).fetchall()
-        return [dict(row) for row in rows]
+        self._ensure_fts_ready_sync()
+        hits = self._fts_retriever.search_note(
+            query=text,
+            limit=max(1, int(limit)),
+            fts_limit=max(10, int(limit) * 6),
+            vector_scores=vector_scores,
+        )
+        if not hits:
+            return []
+
+        source_ids = [
+            str(item.get("id") or "").strip()
+            for item in hits
+            if str(item.get("id") or "").strip()
+        ]
+        rows = self._get_note_index_by_source_ids_sync(source_ids)
+        row_map = {str(row.get("source_id") or ""): row for row in rows}
+
+        result: List[Dict[str, Any]] = []
+        for item in hits:
+            source_id = str(item.get("id") or "").strip()
+            row = row_map.get(source_id)
+            if row is None:
+                continue
+            row = dict(row)
+            row["similarity"] = float(item.get("final_score", 0.0))
+            result.append(row)
+        return result[: max(0, int(limit))]
 
     async def list_note_index_vector_rows(self) -> List[Dict[str, str]]:
         return await asyncio.to_thread(self._list_note_index_vector_rows_sync)
@@ -840,6 +1103,7 @@ class MemorySqlManager:
             )
             self._upsert_tags_and_bind(conn, memory.id, normalized_tags)
             conn.commit()
+        self._sync_memory_fts_by_id_sync(memory.id)
 
         return memory
 
@@ -891,6 +1155,7 @@ class MemorySqlManager:
             )
             self._replace_memory_tags(conn, memory_id, normalized_tags)
             conn.commit()
+        self._sync_memory_fts_by_id_sync(memory_id)
         return memory
 
     async def upsert_memories_by_judgment(self, memories: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -929,6 +1194,8 @@ class MemorySqlManager:
 
         upserted = 0
         now = time.time()
+        fts_upsert_ids: List[str] = []
+        fts_delete_ids: List[str] = []
 
         with self._connect() as conn:
             for judgment, raw in deduped_map.items():
@@ -989,6 +1256,7 @@ class MemorySqlManager:
                             )
                             self._replace_memory_tags(conn, keep_id, normalized_tags)
                             upserted += 1
+                            fts_upsert_ids.append(keep_id)
 
                         duplicate_ids = [str(row["id"]) for row in existing_rows[1:]]
                         if duplicate_ids:
@@ -1001,6 +1269,7 @@ class MemorySqlManager:
                                 f"DELETE FROM memory_tag_rel WHERE memory_id IN ({placeholders})",
                                 tuple(duplicate_ids),
                             )
+                            fts_delete_ids.extend(duplicate_ids)
                     else:
                         # 中央记忆库ID必须由本项目生成，禁止复用外部传入ID。
                         memory_id = str(uuid.uuid4())
@@ -1029,6 +1298,7 @@ class MemorySqlManager:
                         )
                         self._replace_memory_tags(conn, memory_id, normalized_tags)
                         upserted += 1
+                        fts_upsert_ids.append(memory_id)
 
                 except Exception:
                     failed += 1
@@ -1041,6 +1311,10 @@ class MemorySqlManager:
                 """
             )
             conn.commit()
+        self._sync_memory_fts_batch_sync(
+            upsert_ids=fts_upsert_ids,
+            delete_ids=fts_delete_ids,
+        )
 
         return {
             "scanned": scanned,
@@ -1185,54 +1459,52 @@ class MemorySqlManager:
         query: str,
         limit: int,
         memory_scope: str,
+        vector_scores: Optional[Dict[str, float]] = None,
     ) -> List[BaseMemory]:
-        scope_sql, scope_params = self._scope_sql(memory_scope)
-        text = str(query or "")
-        with self._lock:
-            matched_tags = [tag for tag in self._tag_names if tag and tag in text]
-
-        if not text.strip():
+        text = str(query or "").strip()
+        if not text:
             return []
 
-        if not matched_tags:
+        self._ensure_fts_ready_sync()
+        hits = self._fts_retriever.search_memory(
+            query=text,
+            # scope 在 Python 侧过滤，需要提高候选池并放宽阈值避免候选不足。
+            limit=max(20, int(limit) * 20),
+            fts_limit=max(50, int(limit) * 30),
+            vector_scores=vector_scores,
+            min_final_score=0.0,
+        )
+        if not hits:
             return []
 
-        placeholders = ",".join(["?" for _ in matched_tags])
-        sql = f"""
-            SELECT
-                mr.id,
-                mr.memory_type,
-                mr.judgment,
-                mr.reasoning,
-                mr.strength,
-                mr.is_active,
-                mr.useful_count,
-                mr.useful_score,
-                mr.last_recalled_at,
-                mr.memory_scope,
-                mr.created_at,
-                COUNT(DISTINCT mt.id) AS hit_count,
-                CAST(mr.created_at / 86400 AS INTEGER) AS day_bucket
-            FROM memory_records mr
-            JOIN memory_tag_rel mtr ON mtr.memory_id = mr.id
-            JOIN global_tags mt ON mt.id = mtr.tag_id
-            WHERE {scope_sql}
-              AND mt.name IN ({placeholders})
-            GROUP BY mr.id
-            ORDER BY hit_count DESC, day_bucket DESC, mr.strength DESC, mr.created_at DESC
-            LIMIT ?
-        """
+        ordered_ids = [
+            str(item.get("id") or "").strip()
+            for item in hits
+            if str(item.get("id") or "").strip()
+        ]
+        score_map = {
+            str(item.get("id") or "").strip(): float(item.get("final_score", 0.0))
+            for item in hits
+            if str(item.get("id") or "").strip()
+        }
+        memories = self._get_memories_by_ids_sync(ordered_ids)
+        memory_map = {mem.id: mem for mem in memories}
 
-        params: List[Any] = [*scope_params, *matched_tags, int(limit)]
-        with self._connect() as conn:
-            rows = conn.execute(sql, tuple(params)).fetchall()
-            memory_ids = [str(row["id"]) for row in rows]
-            tags_map = self._fetch_tags_for_memory_ids(conn, memory_ids)
-            memories = [
-                self._row_to_memory(row, tags_map.get(str(row["id"]), []))
-                for row in rows
-            ]
-        return memories
+        ordered: List[BaseMemory] = []
+        for memory_id in ordered_ids:
+            mem = memory_map.get(memory_id)
+            if mem is None:
+                continue
+            if not self._is_scope_allowed(getattr(mem, "memory_scope", "public"), memory_scope):
+                continue
+            final_score = float(score_map.get(memory_id, 0.0))
+            if final_score < 0.5:
+                continue
+            mem.similarity = final_score
+            ordered.append(mem)
+            if len(ordered) >= int(limit):
+                break
+        return ordered
 
     async def reinforce_memories(self, memory_ids: List[str], delta: int = 1) -> None:
         ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
@@ -1358,7 +1630,12 @@ class MemorySqlManager:
     async def consolidate_memories(self) -> None:
         # T0 时间衰减（T1/T2 不参与自然遗忘）
         await self.natural_decay_tier0()
+        deleted_ids: List[str] = []
         with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM memory_records WHERE is_active = 0 AND strength <= 0"
+            ).fetchall()
+            deleted_ids = [str(row["id"]) for row in rows]
             conn.execute("DELETE FROM memory_records WHERE is_active = 0 AND strength <= 0")
             conn.execute(
                 """
@@ -1367,6 +1644,7 @@ class MemorySqlManager:
                 """
             )
             conn.commit()
+        self._sync_memory_fts_batch_sync(delete_ids=deleted_ids)
 
     def _get_memories_by_ids_sync(self, memory_ids: List[str]) -> List[BaseMemory]:
         ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
@@ -1470,6 +1748,10 @@ class MemorySqlManager:
                 with self._lock:
                     self._tag_names = cache_snapshot
                 raise
+        self._sync_memory_fts_batch_sync(
+            upsert_ids=[new_memory.id],
+            delete_ids=ids,
+        )
 
         return new_memory
 
