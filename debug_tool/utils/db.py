@@ -6,7 +6,7 @@ import os
 import sqlite3
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import chromadb
 
@@ -426,6 +426,138 @@ class DBManager:
             logger.error("unified_tag_hit_search failed: %s", e)
             return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": [], "error": str(e)}
 
+    # ===== notes index =====
+
+    def get_note_index_stats(self) -> Dict[str, int]:
+        if not self.central_conn:
+            return {"note_index_count": 0, "note_tag_rel_count": 0}
+        try:
+            cur = self.central_conn.cursor()
+            cur.execute("SELECT COUNT(*) AS cnt FROM note_index_records")
+            note_index_count = int((cur.fetchone() or {"cnt": 0})["cnt"])
+            cur.execute("SELECT COUNT(*) AS cnt FROM note_tag_rel")
+            note_tag_rel_count = int((cur.fetchone() or {"cnt": 0})["cnt"])
+            return {
+                "note_index_count": note_index_count,
+                "note_tag_rel_count": note_tag_rel_count,
+            }
+        except Exception as e:
+            logger.error("get_note_index_stats failed: %s", e)
+            return {"note_index_count": 0, "note_tag_rel_count": 0}
+
+    def browse_note_index_records(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        keyword: str = "",
+        return_total: bool = False,
+    ):
+        if not self.central_conn:
+            return ([], 0) if return_total else []
+        try:
+            where_sql = ""
+            params: List[Any] = []
+            if (keyword or "").strip():
+                kw = (
+                    keyword.strip()
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+                where_sql = (
+                    "WHERE (nir.source_file_path LIKE ? ESCAPE '\\' "
+                    "OR IFNULL(nir.heading_h1,'') LIKE ? ESCAPE '\\' "
+                    "OR IFNULL(nir.heading_h2,'') LIKE ? ESCAPE '\\' "
+                    "OR IFNULL(nir.heading_h3,'') LIKE ? ESCAPE '\\' "
+                    "OR IFNULL(nir.heading_h4,'') LIKE ? ESCAPE '\\' "
+                    "OR IFNULL(nir.heading_h5,'') LIKE ? ESCAPE '\\' "
+                    "OR IFNULL(nir.heading_h6,'') LIKE ? ESCAPE '\\' "
+                    "OR IFNULL(tags.tags_text, '') LIKE ? ESCAPE '\\')"
+                )
+                like = f"%{kw}%"
+                params.extend([like, like, like, like, like, like, like, like])
+
+            total = 0
+            if return_total:
+                sql_count = f"""
+                    SELECT COUNT(*) AS cnt
+                    FROM note_index_records nir
+                    LEFT JOIN (
+                        SELECT ntr.source_id, GROUP_CONCAT(gt.name, ', ') AS tags_text
+                        FROM note_tag_rel ntr
+                        JOIN global_tags gt ON gt.id = ntr.tag_id
+                        GROUP BY ntr.source_id
+                    ) tags ON tags.source_id = nir.source_id
+                    {where_sql}
+                """
+                cur = self.central_conn.cursor()
+                cur.execute(sql_count, params)
+                total = int((cur.fetchone() or {"cnt": 0})["cnt"])
+
+            sql = f"""
+                SELECT
+                    nir.source_id, IFNULL(nir.note_short_id, -1) AS note_short_id, nir.file_id, nir.source_file_path,
+                    IFNULL(nir.heading_h1, '') AS heading_h1,
+                    IFNULL(nir.heading_h2, '') AS heading_h2,
+                    IFNULL(nir.heading_h3, '') AS heading_h3,
+                    IFNULL(nir.heading_h4, '') AS heading_h4,
+                    IFNULL(nir.heading_h5, '') AS heading_h5,
+                    IFNULL(nir.heading_h6, '') AS heading_h6,
+                    IFNULL(nir.total_lines, 0) AS total_lines,
+                    nir.updated_at,
+                    IFNULL(tags.tags_text, '') AS tags_text
+                FROM note_index_records nir
+                LEFT JOIN (
+                    SELECT ntr.source_id, GROUP_CONCAT(gt.name, ', ') AS tags_text
+                    FROM note_tag_rel ntr
+                    JOIN global_tags gt ON gt.id = ntr.tag_id
+                    GROUP BY ntr.source_id
+                ) tags ON tags.source_id = nir.source_id
+                {where_sql}
+                ORDER BY nir.updated_at DESC, nir.source_file_path ASC
+                LIMIT ? OFFSET ?
+            """
+            query_params = [*params, int(limit), int(offset)]
+            cur = self.central_conn.cursor()
+            cur.execute(sql, query_params)
+            rows = [dict(row) for row in cur.fetchall()]
+            return (rows, total) if return_total else rows
+        except Exception as e:
+            logger.error("browse_note_index_records failed: %s", e)
+            return ([], 0) if return_total else []
+
+    def get_note_index_by_short_id(self, note_short_id: int) -> Optional[Dict[str, Any]]:
+        if not self.central_conn:
+            return None
+        try:
+            cur = self.central_conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    nir.source_id,
+                    IFNULL(nir.note_short_id, -1) AS note_short_id,
+                    nir.file_id,
+                    nir.source_file_path,
+                    IFNULL(nir.heading_h1, '') AS heading_h1,
+                    IFNULL(nir.heading_h2, '') AS heading_h2,
+                    IFNULL(nir.heading_h3, '') AS heading_h3,
+                    IFNULL(nir.heading_h4, '') AS heading_h4,
+                    IFNULL(nir.heading_h5, '') AS heading_h5,
+                    IFNULL(nir.heading_h6, '') AS heading_h6,
+                    IFNULL(nir.total_lines, 0) AS total_lines,
+                    nir.updated_at
+                FROM note_index_records nir
+                WHERE nir.note_short_id = ?
+                LIMIT 1
+                """,
+                (int(note_short_id),),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error("get_note_index_by_short_id failed: %s", e)
+            return None
+
     # ===== import / export =====
 
     @staticmethod
@@ -648,4 +780,3 @@ class DBManager:
             }
         except Exception as e:
             return {"error": str(e)}
-

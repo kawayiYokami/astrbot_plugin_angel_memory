@@ -168,3 +168,6 @@ data/
 CLAUDE.md
 GEMINI.md
 AGNET.md
+
+# Codex CLI configuration (contains API keys)
+.codex/
