@@ -378,8 +378,6 @@ class DeepMind:
         # 9. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
         try:
             memory_id_mapping = MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in long_term_memories], "id")
-            note_id_mapping = MemoryIDResolver.generate_id_mapping(candidate_notes, "id")
-
             angelmemory_context = {
                 "memories": self._memories_to_json(self.session_memory_manager.get_session_memories(session_id)),
                 "recall_query": query,
@@ -390,7 +388,7 @@ class DeepMind:
                 "raw_notes": candidate_notes,
                 "core_topic": core_topic,
                 "memory_id_mapping": memory_id_mapping,
-                "note_id_mapping": note_id_mapping
+                "note_id_mapping": {}
             }
             event.angelmemory_context = json.dumps(angelmemory_context)
         except Exception as e:
