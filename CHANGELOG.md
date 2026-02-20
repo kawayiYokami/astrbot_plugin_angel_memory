@@ -2,6 +2,16 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.2.2] - 2026-02-20
+
+### Highlights
+- 统一笔记展开工具的代码命名，避免“文件/类名与工具名不一致”造成维护误导。
+
+### Core Changes
+- `refactor(tooling)`: `tools/expand_note_context.py` 重命名为 `tools/note_recall.py`。
+- `refactor(tooling)`: 工具类 `ExpandNoteContextTool` 重命名为 `NoteRecallTool`。
+- `refactor(tooling)`: `main.py` 同步更新导入与注册日志文案，保持对外工具名 `note_recall` 与代码命名一致。
+
 ## [1.2.1] - 2026-02-20
 
 ### Highlights

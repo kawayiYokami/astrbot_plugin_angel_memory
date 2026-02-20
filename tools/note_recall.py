@@ -16,7 +16,7 @@ except ImportError:
 
 
 @dataclass
-class ExpandNoteContextTool(FunctionTool):
+class NoteRecallTool(FunctionTool):
     name: str = "note_recall"
     description: str = "读取笔记内容。请使用 note_short_id，支持按行范围读取。"
     parameters: dict = field(
