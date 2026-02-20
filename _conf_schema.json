@@ -182,7 +182,8 @@
       },
       "provider_id": {
         "type": "string",
-        "description": "研究专用 LLM 提供商",
+        "description": "[核心模型设置] 用于研究助手的LLM提供商ID",
+        "_special": "select_provider",
         "default": "",
         "hint": "指定用于执行研究任务的 LLM 提供商 ID。留空则使用当前会话的提供商。推荐使用 DeepSeek V3.2 或 Gemini pro 等推理能力强的模型。"
       },
