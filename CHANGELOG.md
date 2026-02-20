@@ -2,6 +2,16 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.2.1] - 2026-02-20
+
+### Highlights
+- 修复插件卸载阶段异步任务清理不完整问题，避免出现 pending task 销毁与协程未等待风险。
+
+### Core Changes
+- `fix(shutdown)`: `PluginManager.shutdown()` 与 `BackgroundInitializer.shutdown()` 调整为异步关闭链路，统一执行任务取消与等待收束。
+- `fix(shutdown)`: `AngelMemoryPlugin` 追踪 `after_message_sent` 创建的后台任务，并在 `terminate()` 中先取消并等待，再关闭组件。
+- `fix(stability)`: 增加关闭流程幂等保护，避免重复关闭导致状态混乱。
+
 ## [1.2.0] - 2026-02-20
 
 ### Highlights

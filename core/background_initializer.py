@@ -38,6 +38,7 @@ class BackgroundInitializer:
         self.config = config
         self.plugin_context = plugin_context
         self._post_init_tasks = []
+        self._shutdown_started = False
 
         self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
         self.logger.info(
@@ -145,23 +146,31 @@ class BackgroundInitializer:
         """获取组件工厂"""
         return self.component_factory
 
-    def shutdown(self):
+    async def shutdown(self):
         """关闭后台初始化器和所有组件"""
+        if self._shutdown_started:
+            self.logger.info("后台初始化器已在关闭流程中，跳过重复执行")
+            return
+        self._shutdown_started = True
         self.logger.info("后台初始化器正在关闭...")
 
-        # 取消后台初始化任务（如果仍在运行）
+        # 先取消并等待所有后台任务，避免 pending task 被事件循环强制销毁。
+        pending_tasks = []
         if self.background_task and not self.background_task.done():
             self.background_task.cancel()
-            self.logger.info("后台初始化任务已取消")
+            pending_tasks.append(self.background_task)
 
         for task in self._post_init_tasks:
             if task and not task.done():
                 task.cancel()
-        if self._post_init_tasks:
-            self.logger.info("初始化后后台任务已取消")
+                pending_tasks.append(task)
+
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+            self.logger.info(f"后台任务已收束: {len(pending_tasks)} 个")
 
         # 关闭所有由ComponentFactory创建的组件
         if self.component_factory:
-            self.component_factory.shutdown()
+            await asyncio.to_thread(self.component_factory.shutdown)
 
         self.logger.info("后台初始化器已成功关闭")
