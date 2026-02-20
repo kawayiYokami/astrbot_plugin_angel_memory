@@ -19,6 +19,7 @@ from ..components.vector_store import VectorStore
 from ..config.system_config import system_config
 from .memory_handlers import MemoryHandlerFactory
 from .memory_manager import MemoryManager
+from .memory_decay_policy import MemoryDecayConfig
 
 
 class CognitiveService:
@@ -35,7 +36,12 @@ class CognitiveService:
     - 清醒睡眠：支持清醒模式（学习强化）和睡眠模式（巩固遗忘）
     """
 
-    def __init__(self, vector_store: VectorStore, memory_sql_manager=None):
+    def __init__(
+        self,
+        vector_store: VectorStore,
+        memory_sql_manager=None,
+        decay_config: MemoryDecayConfig | None = None,
+    ):
         """
         初始化认知服务。
 
@@ -77,6 +83,7 @@ class CognitiveService:
             self.vector_store,
             memory_sql_manager=self.memory_sql_manager,
             memory_index_collection=self.memory_index_collection,
+            decay_config=decay_config,
         )
 
         # 记录初始化状态以验证VectorStore
@@ -236,6 +243,7 @@ class CognitiveService:
     async def feedback(
         self,
         useful_memory_ids: List[str] = None,
+        recalled_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
         merge_groups: List[List[str]] = None,
         memory_scope: str = "public",
@@ -244,6 +252,7 @@ class CognitiveService:
         memory_handlers = self.memory_handler_factory.handlers
         return await self.memory_manager.process_feedback(
             useful_memory_ids,
+            recalled_memory_ids,
             new_memories,
             merge_groups,
             memory_handlers,

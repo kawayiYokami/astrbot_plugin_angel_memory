@@ -7,6 +7,7 @@
 
 from typing import List, Optional, Dict, Any
 import logging
+import time
 from collections import defaultdict
 
 # 导入日志记录器
@@ -16,6 +17,7 @@ except ImportError:
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
 from ..config.system_config import system_config
+from .memory_decay_policy import MemoryDecayConfig, MemoryDecayPolicy
 
 # 导入查询处理器（用于统一检索词预处理）
 from ...core.utils.query_processor import get_query_processor
@@ -35,6 +37,7 @@ class MemoryManager:
         vector_store,
         memory_sql_manager=None,
         memory_index_collection=None,
+        decay_config: MemoryDecayConfig | None = None,
     ):
         """
         初始化记忆管理器。
@@ -48,6 +51,7 @@ class MemoryManager:
         self.memory_sql_manager = memory_sql_manager
         self.memory_index_collection = memory_index_collection
         self.logger = logger
+        self.decay_policy = MemoryDecayPolicy(decay_config)
 
         # 初始化查询处理器（用于统一检索词预处理）
         self.query_processor = get_query_processor()
@@ -96,7 +100,7 @@ class MemoryManager:
             memory_ids: 要强化的记忆ID列表
         """
         if self.memory_sql_manager is not None:
-            await self.memory_sql_manager.reinforce_memories(memory_ids, delta=3)
+            await self.memory_sql_manager.reinforce_memories(memory_ids, delta=1)
             return
 
         for memory_id in memory_ids:
@@ -106,11 +110,25 @@ class MemoryManager:
                 if result and result["metadatas"] and result["ids"]:
                     current_meta = result["metadatas"][0]
                     current_strength = current_meta.get("strength", 1)
+                    current_useful_count = int(current_meta.get("useful_count", 0) or 0)
+                    current_useful_score = float(current_meta.get("useful_score", 0.0) or 0.0)
+                    decay_config = getattr(self.decay_policy, "config", None)
+                    consolidate_speed = float(
+                        getattr(decay_config, "consolidate_speed", 2.5) or 2.5
+                    )
+                    now_ts = time.time()
                     # 获取 ChromaDB 的文档 ID
                     chroma_doc_id = result["ids"][0]
                     # 使用 ChromaDB 文档 ID 进行更新
                     await self.store.update_memory(
-                        self.collection, chroma_doc_id, {"strength": current_strength + 3}
+                        self.collection,
+                        chroma_doc_id,
+                        {
+                            "strength": current_strength + 1,
+                            "useful_count": current_useful_count + 1,
+                            "useful_score": current_useful_score + consolidate_speed,
+                            "last_recalled_at": now_ts,
+                        },
                     )
             except Exception as e:
                 self.logger.error(f"强化记忆 {memory_id} 失败: {str(e)}")
@@ -299,28 +317,6 @@ class MemoryManager:
         # 步骤4: 合并所有记忆
         all_memories = entity_memories + [mem for mems in type_memories.values() for mem in mems]
 
-        # 步骤5: 被动记忆衰减（强度-1，最低为0）
-        batch_updates = []
-        for mem in all_memories:
-            if not mem.is_active:  # 只对被动记忆衰减
-                new_strength = max(0, mem.strength - 1)
-                if new_strength != mem.strength:
-                    mem.strength = new_strength
-                    batch_updates.append({"id": mem.id, "updates": {"strength": new_strength}})
-
-        if batch_updates:
-            if self.memory_sql_manager is not None:
-                await self.memory_sql_manager.decay_memories(
-                    [item["id"] for item in batch_updates], delta=1
-                )
-                refreshed = await self.memory_sql_manager.get_memories_by_ids(
-                    [item["id"] for item in batch_updates]
-                )
-                refreshed_map = {mem.id: mem for mem in refreshed}
-                all_memories = [refreshed_map.get(mem.id, mem) for mem in all_memories]
-            else:
-                await self.store.update_memory(self.collection, batch_updates)
-
         self.logger.debug(f"链式回忆: 实体记忆={len(entity_memories)}, 类型记忆={sum(len(v) for v in type_memories.values())}, 总计={len(all_memories)}")
 
         return all_memories
@@ -471,6 +467,7 @@ class MemoryManager:
     async def process_feedback(
         self,
         useful_memory_ids: List[str] = None,
+        recalled_memory_ids: List[str] = None,
         new_memories: List[dict] = None,
         merge_groups: List[List[str]] = None,
         memory_handlers: Dict[str, object] = None,
@@ -504,12 +501,14 @@ class MemoryManager:
         if self.memory_sql_manager is not None:
             return await self.memory_sql_manager.process_feedback(
                 useful_memory_ids=useful_memory_ids,
+                recalled_memory_ids=recalled_memory_ids,
                 new_memories=new_memories,
                 merge_groups=merge_groups,
                 memory_scope=memory_scope,
             )
 
         useful_memory_ids = useful_memory_ids or []
+        recalled_memory_ids = recalled_memory_ids or []
         new_memories = new_memories or []
         merge_groups = merge_groups or []
         memory_handlers = memory_handlers or {}
@@ -522,6 +521,36 @@ class MemoryManager:
         if useful_memory_ids:
             # 强化记忆强度
             await self.reinforce_memories(useful_memory_ids)
+
+        # 1.5 被召回但无用：仅衰减 T1（兼容向量直连链路）
+        if recalled_memory_ids:
+            useful_set = set(str(x) for x in useful_memory_ids)
+            useless_ids = [str(x) for x in recalled_memory_ids if str(x) not in useful_set]
+            if useless_ids:
+                for memory_id in useless_ids:
+                    try:
+                        result = self.collection.get(where={"id": memory_id}, limit=1)
+                        if not result or not result.get("metadatas") or not result.get("ids"):
+                            continue
+                        meta = result["metadatas"][0] or {}
+                        if bool(meta.get("is_active", False)):
+                            continue
+                        useful_score = float(meta.get("useful_score", 0.0) or 0.0)
+                        tier = self.decay_policy.tier_of(useful_score)
+                        if tier != 1:
+                            continue
+                        current_strength = int(meta.get("strength", 0) or 0)
+                        new_strength = max(0, current_strength - 1)
+                        if new_strength == current_strength:
+                            continue
+                        chroma_doc_id = result["ids"][0]
+                        await self.store.update_memory(
+                            self.collection,
+                            chroma_doc_id,
+                            {"strength": new_strength},
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"召回无用衰减失败 id={memory_id}: {e}")
         # 2. 批量创建新记忆
         for mem_data in new_memories:
             mem_type = mem_data.get("type", "knowledge")

@@ -870,10 +870,25 @@ class VectorStore:
         # --- 性能敏感的查询路径 ---
         if is_query:
             try:
+                # 查询场景输入净化：避免把空文本/超长文本传给上游导致 400 参数错误
+                sanitized_docs: List[str] = []
+                max_query_chars = 4000
+                for doc in documents:
+                    text = str(doc or "").strip()
+                    if not text:
+                        self.logger.warning("查询向量化收到空文本，已跳过本次查询。")
+                        return None
+                    if len(text) > max_query_chars:
+                        self.logger.debug(
+                            f"查询文本过长，已截断: 原长度={len(text)} 截断后={max_query_chars}"
+                        )
+                        text = text[:max_query_chars]
+                    sanitized_docs.append(text)
+
                 # 使用 asyncio.wait_for 实现超时控制
                 import asyncio
                 embeddings = await asyncio.wait_for(
-                    self.embedding_provider.embed_documents(documents),
+                    self.embedding_provider.embed_documents(sanitized_docs),
                     timeout=timeout
                 )
                 return embeddings
@@ -963,6 +978,8 @@ class VectorStore:
         Returns:
             单个文档的向量, 或在查询失败时返回 None.
         """
+        if not str(document or "").strip():
+            return None
         embeddings = await self.embed_documents(
             [document], is_query=is_query, timeout=timeout
         )

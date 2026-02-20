@@ -67,6 +67,55 @@
         "description": "记忆巩固（睡眠）的执行间隔（秒）",
         "default": 3600,
         "hint": "默认1小时执行一次。设置为0则禁用定期睡眠。"
+      },
+      "decay_policy_override": {
+        "type": "object",
+        "description": "【可选高级项】遗忘/巩固参数覆盖",
+        "hint": "默认参数经过复杂测试，能兼顾长期记忆积累与垃圾记忆清退。若没有相当信心，请不要修改。仅当 enabled=true 时生效。",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "启用自定义遗忘策略参数",
+            "default": false,
+            "hint": "关闭时完全使用系统默认参数。"
+          },
+          "tier0_threshold": {
+            "type": "float",
+            "description": "T0->T1 升档阈值（useful_score）",
+            "default": 3.0,
+            "hint": "达到该分数后，记忆从自然遗忘档升到召回判定档。"
+          },
+          "tier1_threshold": {
+            "type": "float",
+            "description": "T1->T2 升档阈值（useful_score）",
+            "default": 10.0,
+            "hint": "达到该分数后进入长期保留档。建议不小于 tier0_threshold。"
+          },
+          "consolidate_speed": {
+            "type": "float",
+            "description": "每次被判定有用时 useful_score 增量",
+            "default": 2.5,
+            "hint": "值越大，记忆升档越快。建议范围 0.5-5.0，必须 > 0。"
+          },
+          "forget_speed": {
+            "type": "float",
+            "description": "全局遗忘速度倍率",
+            "default": 1.0,
+            "hint": "值越大，整体遗忘越快。建议范围 0.5-3.0。"
+          },
+          "tier0_forget_speed": {
+            "type": "float",
+            "description": "T0（自然遗忘档）遗忘速度倍率",
+            "default": 1.0,
+            "hint": "与 forget_speed 相乘后作用于 T0 自然衰减周期。"
+          },
+          "cycle_tier0_days": {
+            "type": "int",
+            "description": "T0 自然遗忘基础周期（天）",
+            "default": 3,
+            "hint": "实际周期会按 forget_speed 与 tier0_forget_speed 调整。"
+          }
+        }
       }
     }
   },
