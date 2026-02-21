@@ -35,6 +35,12 @@ class MemorySqlManager:
         self._lock = threading.RLock()
         self._fts_lock = threading.Lock()
         self._tag_names: set[str] = set()
+        self._jieba_dict_ready = False
+        self._jieba_pending_tags: set[str] = set()
+        self._jieba_new_tags_since_rebuild = 0
+        self._fts_rebuild_required = False
+        self._jieba_rebuild_added_threshold = 50
+        self._jieba_rebuild_ratio_threshold = 0.10
         self.decay_policy = MemoryDecayPolicy(decay_config)
         self._fts_retriever = FTS5HybridRetriever(
             db_path=str(self.db_path),
@@ -217,6 +223,83 @@ class MemorySqlManager:
                 self._tag_names = {str(row["name"]) for row in rows if row["name"]}
         self.logger.info(f"SimpleMemory 标签缓存加载完成: {len(self._tag_names)} 个")
 
+    def _list_global_tag_names_sync(self) -> List[str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT name FROM global_tags").fetchall()
+        names: List[str] = []
+        seen = set()
+        for row in rows:
+            tag = str(row["name"] or "").strip()
+            if not tag or tag in seen:
+                continue
+            seen.add(tag)
+            names.append(tag)
+        return names
+
+    def _mark_new_tags_sync(self, tags: List[str]) -> None:
+        normalized = self._normalize_tags(tags)
+        if not normalized:
+            return
+        with self._lock:
+            new_tags = [tag for tag in normalized if tag not in self._tag_names]
+            if not new_tags:
+                return
+            self._tag_names.update(new_tags)
+            self._jieba_pending_tags.update(new_tags)
+            self._jieba_new_tags_since_rebuild += len(new_tags)
+            # 新词加入后标记词典待刷新，查询路径会懒加载注词。
+            self._jieba_dict_ready = False
+
+    def _load_jieba_tags_dict_locked_sync(self, trigger: str) -> Dict[str, int]:
+        """
+        加载并注入 tags 词表到 jieba（需在 _fts_lock 保护下调用）。
+        - 数据源：global_tags（统一不区分 memory/note）
+        - 注词：jieba.add_word(word)，不设 freq/tag
+        """
+        start_ts = time.time()
+        with self._lock:
+            pending = list(self._jieba_pending_tags)
+        if pending:
+            target_words = pending
+        else:
+            target_words = self._list_global_tag_names_sync()
+
+        stats = self._fts_retriever.add_jieba_words(target_words)
+        tags_total = len(target_words)
+        elapsed_ms = int((time.time() - start_ts) * 1000)
+
+        with self._lock:
+            if pending:
+                self._jieba_pending_tags.difference_update(set(target_words))
+            self._jieba_dict_ready = True
+
+        self.logger.info(
+            "[FTS5词表] 完成 "
+            f"trigger={trigger} tags_total={tags_total} "
+            f"added={int(stats.get('added', 0))} skipped={int(stats.get('skipped', 0))} "
+            f"cost_ms={elapsed_ms}"
+        )
+        return {
+            "tags_total": tags_total,
+            "added": int(stats.get("added", 0)),
+            "skipped": int(stats.get("skipped", 0)),
+            "cost_ms": elapsed_ms,
+        }
+
+    def _ensure_jieba_tags_ready_sync(self, trigger: str) -> None:
+        with self._fts_lock:
+            with self._lock:
+                pending_exists = bool(self._jieba_pending_tags)
+                dict_ready = bool(self._jieba_dict_ready)
+            if dict_ready and not pending_exists:
+                return
+            try:
+                self._load_jieba_tags_dict_locked_sync(trigger=trigger)
+            except Exception as e:
+                self._jieba_dict_ready = False
+                self.logger.error(f"[FTS5词表] 失败 trigger={trigger} 异常={e}", exc_info=True)
+                raise
+
     def _list_memory_rows_for_fts_sync(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -275,13 +358,46 @@ class MemorySqlManager:
     def _ensure_fts_ready_sync(self, force_rebuild: bool = False) -> None:
         rebuilt = False
         with self._fts_lock:
-            if self._fts_ready and not force_rebuild:
+            with self._lock:
+                pending_exists = bool(self._jieba_pending_tags)
+                dict_ready = bool(self._jieba_dict_ready)
+            if force_rebuild or pending_exists or not dict_ready:
+                try:
+                    self._load_jieba_tags_dict_locked_sync(
+                        trigger="rebuild" if force_rebuild else "query-lazy"
+                    )
+                except Exception as e:
+                    self._jieba_dict_ready = False
+                    self.logger.error(
+                        f"[FTS5词表] 失败 trigger={'rebuild' if force_rebuild else 'query-lazy'} 异常={e}",
+                        exc_info=True,
+                    )
+                    raise
+
+            with self._lock:
+                total_tags = max(1, len(self._tag_names))
+                added_since_rebuild = int(self._jieba_new_tags_since_rebuild)
+            threshold_reached = (
+                added_since_rebuild >= int(self._jieba_rebuild_added_threshold)
+                or (added_since_rebuild / float(total_tags)) >= float(self._jieba_rebuild_ratio_threshold)
+            )
+            if threshold_reached and self._fts_ready and not force_rebuild:
+                self._fts_rebuild_required = True
+                self.logger.info(
+                    "[FTS5重建] 触发阈值达到，准备执行全量重建 "
+                    f"added={added_since_rebuild} total_tags={total_tags}"
+                )
+
+            effective_force_rebuild = bool(force_rebuild or self._fts_rebuild_required)
+            if self._fts_ready and not effective_force_rebuild:
                 return
             previous_ready = self._fts_ready
             try:
                 self._fts_retriever.rebuild_memory(self._list_memory_rows_for_fts_sync())
                 self._fts_retriever.rebuild_note(self._list_note_rows_for_fts_sync())
                 self._fts_ready = True
+                self._fts_rebuild_required = False
+                self._jieba_new_tags_since_rebuild = 0
                 rebuilt = True
             except Exception as e:
                 self._fts_ready = previous_ready
@@ -321,6 +437,7 @@ class MemorySqlManager:
     def _sync_memory_fts_by_id_sync(self, memory_id: str) -> None:
         if not self._fts_ready:
             return
+        self._ensure_jieba_tags_ready_sync(trigger="incremental")
         mid = str(memory_id or "").strip()
         if not mid:
             return
@@ -353,6 +470,7 @@ class MemorySqlManager:
     def _sync_note_fts_by_source_id_sync(self, source_id: str) -> None:
         if not self._fts_ready:
             return
+        self._ensure_jieba_tags_ready_sync(trigger="incremental")
         sid = str(source_id or "").strip()
         if not sid:
             return
@@ -573,8 +691,7 @@ class MemorySqlManager:
                     "INSERT OR IGNORE INTO memory_tag_rel(memory_id, tag_id) VALUES (?, ?)",
                     rel_rows,
                 )
-            with self._lock:
-                self._tag_names.update(tags)
+            self._mark_new_tags_sync(tags)
 
     def _replace_memory_tags(
         self, conn: sqlite3.Connection, memory_id: str, tags: List[str]
@@ -596,8 +713,7 @@ class MemorySqlManager:
                 f"SELECT id, name FROM global_tags WHERE name IN ({placeholders})",
                 tuple(normalized),
             ).fetchall()
-        with self._lock:
-            self._tag_names.update(normalized)
+        self._mark_new_tags_sync(normalized)
         by_name = {str(row["name"]): int(row["id"]) for row in rows}
         return [by_name[tag] for tag in normalized if tag in by_name]
 
@@ -616,8 +732,7 @@ class MemorySqlManager:
             f"SELECT id, name FROM global_tags WHERE name IN ({placeholders})",
             tuple(normalized),
         ).fetchall()
-        with self._lock:
-            self._tag_names.update(normalized)
+        self._mark_new_tags_sync(normalized)
         by_name = {str(row["name"]): int(row["id"]) for row in rows}
         return [by_name[tag] for tag in normalized if tag in by_name]
 
