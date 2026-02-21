@@ -13,6 +13,7 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 import re
+import threading
 
 try:
     from astrbot.api import logger
@@ -26,6 +27,9 @@ import jieba
 
 class FTS5HybridRetriever:
     """SQLite FTS5 + 向量分数融合检索器。"""
+
+    _jieba_lock = threading.Lock()
+    _jieba_loaded_words: set[str] = set()
 
     def __init__(
         self,
@@ -112,6 +116,32 @@ class FTS5HybridRetriever:
             return ""
         source = " ".join([str(t) for t in tags if str(t).strip()])
         return self._pretokenized_text(source)
+
+    @classmethod
+    def add_jieba_words(cls, words: Iterable[str]) -> Dict[str, int]:
+        """
+        批量注入自定义词到 jieba 词典（默认参数，不设 freq/tag）。
+        使用全局锁保护，避免并发 add_word 的竞态问题。
+        """
+        total = 0
+        added = 0
+        skipped = 0
+        if words is None:
+            return {"total": 0, "added": 0, "skipped": 0}
+
+        with cls._jieba_lock:
+            for word in words:
+                text = str(word or "").strip()
+                if not text:
+                    continue
+                total += 1
+                if text in cls._jieba_loaded_words:
+                    skipped += 1
+                    continue
+                jieba.add_word(text)
+                cls._jieba_loaded_words.add(text)
+                added += 1
+        return {"total": total, "added": added, "skipped": skipped}
 
     @staticmethod
     def _build_match_query(tokens: List[str]) -> str:
