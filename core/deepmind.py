@@ -8,9 +8,11 @@ DeepMind潜意识核心模块
 - 就像人睡觉时整理记忆一样
 """
 
+import asyncio
 import time
 import json
 from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from .soul.soul_state import SoulState
@@ -24,6 +26,7 @@ from .services.retrieval_service import DeepMindRetrievalService
 from .services.injection_service import DeepMindInjectionService
 from .services.feedback_service import DeepMindFeedbackService
 from .services.sleep_service import DeepMindSleepService
+from .utils.feedback_queue import get_feedback_queue
 
 try:
     from astrbot.api import logger
@@ -31,6 +34,19 @@ except ImportError:
     import logging
 
     logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ReflectionInput:
+    """反思入口的纯数据载体（与 AstrMessageEvent 解耦）。"""
+
+    session_id: str
+    memory_scope: str
+    latest_user_text: str
+    latest_assistant_text: str
+    secretary_decision: Dict[str, Any] = field(default_factory=dict)
+    chat_records: List[Dict[str, Any]] = field(default_factory=list)
+    memory_context: Dict[str, Any] = field(default_factory=dict)
 
 
 class DeepMind:
@@ -124,6 +140,43 @@ class DeepMind:
         self.injection_service = DeepMindInjectionService(self)
         self.feedback_service = DeepMindFeedbackService(self)
         self.sleep_service = DeepMindSleepService(self)
+        self._reflection_state_lock = asyncio.Lock()
+        self._reflection_states: Dict[str, Dict[str, Any]] = {}
+        self._reflection_tick_task: Optional[asyncio.Task] = None
+        self._reflection_stop_event = asyncio.Event()
+        self._reflection_turn_threshold = max(
+            1,
+            int(
+                (
+                    memory_behavior.get("reflection_turn_threshold", 6)
+                    if isinstance(memory_behavior, dict)
+                    else getattr(config, "reflection_turn_threshold", 6)
+                )
+                or 6
+            ),
+        )
+        self._reflection_idle_seconds = max(
+            1,
+            int(
+                (
+                    memory_behavior.get("reflection_idle_seconds", 600)
+                    if isinstance(memory_behavior, dict)
+                    else getattr(config, "reflection_idle_seconds", 600)
+                )
+                or 600
+            ),
+        )
+        self._reflection_tick_seconds = max(
+            10,
+            int(
+                (
+                    memory_behavior.get("reflection_tick_seconds", 600)
+                    if isinstance(memory_behavior, dict)
+                    else getattr(config, "reflection_tick_seconds", 600)
+                )
+                or 600
+            ),
+        )
 
         # 初始化灵魂状态管理器
         try:
@@ -132,6 +185,7 @@ class DeepMind:
         except Exception as e:
             self.logger.error(f"灵魂状态管理器初始化失败: {e}")
             self.soul = None
+
 
     def is_enabled(self) -> bool:
         """检查记忆系统是否可用"""
@@ -278,27 +332,28 @@ class DeepMind:
 
         session_id = self._get_session_id(event)
 
-        # 1. 从 event.angelheart_context 中获取对话历史
-        chat_records = []
+        # 1. 从 event.angelheart_context 中获取对话历史（仅保留未处理消息）
+        chat_records: List[Dict[str, Any]] = []
+        unprocessed_chat_records: List[Dict[str, Any]] = []
+        secretary_decision = {}
         if hasattr(event, "angelheart_context"):
             try:
                 angelheart_data = json.loads(event.angelheart_context)
-                chat_records = angelheart_data.get("chat_records", [])
-            except (json.JSONDecodeError, KeyError):
+                chat_records = angelheart_data.get("chat_records", []) or []
+                if not isinstance(chat_records, list):
+                    chat_records = []
+                unprocessed_chat_records = [
+                    msg
+                    for msg in chat_records
+                    if isinstance(msg, dict) and msg.get("is_processed", True) is False
+                ]
+                secretary_decision = angelheart_data.get("secretary_decision", {}) or {}
+            except (json.JSONDecodeError, KeyError, TypeError):
                 self.logger.error(f"为会话 {session_id} 解析 angelheart_context 失败")
 
         # 2. 从 secretary_decision 构建查询字符串
         query = ""
         user_list = []
-
-        # 尝试从 secretary_decision 中提取关键信息
-        secretary_decision = {}
-        if hasattr(event, "angelheart_context"):
-            try:
-                angelheart_data = json.loads(event.angelheart_context)
-                secretary_decision = angelheart_data.get("secretary_decision", {})
-            except (json.JSONDecodeError, KeyError):
-                self.logger.error(f"为会话 {session_id} 解析 secretary_decision 失败")
 
         if secretary_decision:
             # 从 secretary_decision 构建查询词
@@ -321,11 +376,11 @@ class DeepMind:
             query = " ".join(query_parts)
         else:
             # 降级到原始逻辑
-            if not chat_records:
+            if not unprocessed_chat_records:
                 message_text = self._extract_message_text(event)
                 query = message_text if message_text else ""
             else:
-                query, user_list = self.prompt_builder.format_chat_records(chat_records)
+                query, user_list = self.prompt_builder.format_chat_records(unprocessed_chat_records)
 
         # 3. 如果未配置 provider_id，跳过记忆整理
         if not self.provider_id:
@@ -385,6 +440,7 @@ class DeepMind:
                 "recall_time": time.time(),
                 "session_id": session_id,
                 "user_list": user_list,
+                "raw_chat_records": unprocessed_chat_records,
                 "raw_memories": [memory.to_dict() for memory in long_term_memories],
                 "raw_notes": candidate_notes,
                 "core_topic": core_topic,
@@ -485,6 +541,12 @@ class DeepMind:
 
     def shutdown(self):
         """关闭潜意识系统，让AI好好休息"""
+        try:
+            self._reflection_stop_event.set()
+            if self._reflection_tick_task and not self._reflection_tick_task.done():
+                self._reflection_tick_task.cancel()
+        except Exception:
+            pass
 
         # 停止记忆整理任务
         from .utils.feedback_queue import stop_feedback_queue
@@ -501,77 +563,373 @@ class DeepMind:
         """
         # 获取会话ID
         session_id = self._get_session_id(event)
+        await self._ensure_reflection_tick_task()
+        await self._buffer_reflection_turn(event, response, session_id)
+        await self._trigger_reflection_if_needed(session_id, reason="count")
 
-        await self.feedback_service.submit_async_analysis_task(
-            event, response, session_id
+    async def _ensure_reflection_tick_task(self) -> None:
+        if self._reflection_tick_task and not self._reflection_tick_task.done():
+            return
+        self._reflection_stop_event.clear()
+        self._reflection_tick_task = asyncio.create_task(self._reflection_tick_loop())
+        self.logger.info(
+            f"[反思调度] 开始 tick={self._reflection_tick_seconds}s "
+            f"idle={self._reflection_idle_seconds}s turns={self._reflection_turn_threshold}"
         )
 
-    def _serialize_event_data(self, event: AstrMessageEvent) -> Dict:
-        """序列化事件数据以便在后台线程中使用"""
+    async def _reflection_tick_loop(self) -> None:
+        while not self._reflection_stop_event.is_set():
+            try:
+                await asyncio.sleep(self._reflection_tick_seconds)
+            except asyncio.CancelledError:
+                break
+
+            now = time.time()
+            async with self._reflection_state_lock:
+                session_ids = [
+                    sid
+                    for sid, state in self._reflection_states.items()
+                    if int(state.get("pending_turns", 0)) > 0
+                    and not bool(state.get("processing", False))
+                    and (now - float(state.get("last_activity_at", 0.0)))
+                    >= float(self._reflection_idle_seconds)
+                ]
+            if session_ids:
+                self.logger.info(
+                    f"[反思调度] tick扫描命中会话数={len(session_ids)} "
+                    f"idle阈值={self._reflection_idle_seconds}s"
+                )
+
+            for sid in session_ids:
+                await self._trigger_reflection_if_needed(sid, reason="idle")
+
+    def _build_reflection_records_for_turn(self, event: AstrMessageEvent, response) -> List[Dict[str, Any]]:
+        """
+        生成“本轮新增”的反思聊天记录。
+        分支：
+        - AngelHeart：取已处理历史 + 最新一条未处理用户消息。
+        - 原生：仅当前轮 用户 -> 助理。
+        """
+        now_ts = time.time()
+        response_text = (
+            getattr(response, "completion_text", str(response))
+            if response is not None
+            else ""
+        )
+
+        # 分支1：AngelHeart 提供完整 chat_records
+        if hasattr(event, "angelheart_context") and getattr(event, "angelheart_context", None):
+            try:
+                angelheart_data = json.loads(event.angelheart_context)
+                chat_records = angelheart_data.get("chat_records", []) or []
+                if isinstance(chat_records, list) and chat_records:
+                    processed = [
+                        msg
+                        for msg in chat_records
+                        if isinstance(msg, dict) and bool(msg.get("is_processed", False))
+                    ]
+                    latest_user_unprocessed = None
+                    for msg in reversed(chat_records):
+                        if (
+                            isinstance(msg, dict)
+                            and str(msg.get("role", "")).strip() == "user"
+                            and msg.get("is_processed", True) is False
+                        ):
+                            latest_user_unprocessed = msg
+                            break
+                    combined = list(processed)
+                    if latest_user_unprocessed is not None:
+                        combined.append(latest_user_unprocessed)
+                    self.logger.debug(
+                        f"[反思调度] 使用天使之心聊天记录: processed={len(processed)} "
+                        f"+ latest_unprocessed_user={1 if latest_user_unprocessed else 0}"
+                    )
+                    return self._dedupe_and_sort_chat_records(combined)
+            except (json.JSONDecodeError, TypeError, KeyError) as e:
+                self.logger.warning(f"反思聊天记录解析失败，降级到原生分支: {e}")
+
+        # 分支2：原生消息（每轮仅用户输入）
+        user_text = self._extract_message_text(event) or ""
+        records: List[Dict[str, Any]] = []
+        if user_text.strip():
+            records.append(
+                {
+                    "role": "user",
+                    "content": user_text,
+                    "sender_id": str(getattr(event, "sender_id", "") or "user"),
+                    "sender_name": str(getattr(event, "sender_name", "") or "用户"),
+                    "timestamp": float(now_ts),
+                    "is_processed": False,
+                    "is_structured_toolcall": False,
+                }
+            )
+        if str(response_text).strip():
+            records.append(
+                {
+                    "role": "assistant",
+                    "content": str(response_text),
+                    "sender_id": "assistant",
+                    "sender_name": "助理",
+                    "timestamp": float(now_ts + 0.001),
+                    "is_processed": False,
+                    "is_structured_toolcall": False,
+                }
+            )
+        self.logger.debug(f"[反思调度] 使用原生分支构建本轮记录: count={len(records)}")
+        return records
+
+    def _build_reflection_input(
+        self,
+        event: AstrMessageEvent,
+        response,
+        session_id: str,
+    ) -> ReflectionInput:
+        """
+        从主线程事件中提取反思所需最小数据结构，避免反思执行阶段依赖 AstrMessageEvent。
+        """
+        records = self._build_reflection_records_for_turn(event, response)
+
+        latest_user_text = ""
+        latest_assistant_text = ""
+        for msg in reversed(records):
+            role = str(msg.get("role", "")).strip()
+            content = self.prompt_builder.extract_text_from_content(msg.get("content", ""))
+            if role == "assistant" and not latest_assistant_text and str(content).strip():
+                latest_assistant_text = str(content).strip()
+            if role == "user" and not latest_user_text and str(content).strip():
+                latest_user_text = str(content).strip()
+            if latest_user_text and latest_assistant_text:
+                break
+
+        secretary_decision: Dict[str, Any] = {}
+        if hasattr(event, "angelheart_context") and getattr(event, "angelheart_context", None):
+            try:
+                angelheart_data = json.loads(event.angelheart_context)
+                sd = angelheart_data.get("secretary_decision", {}) or {}
+                if isinstance(sd, dict):
+                    secretary_decision = sd
+            except (json.JSONDecodeError, TypeError, KeyError):
+                secretary_decision = {}
+
+        memory_context: Dict[str, Any] = {}
+        if hasattr(event, "angelmemory_context") and getattr(event, "angelmemory_context", None):
+            try:
+                context_data = json.loads(event.angelmemory_context)
+                if isinstance(context_data, dict):
+                    memory_context = {
+                        "session_id": context_data.get("session_id", session_id),
+                        "query": context_data.get("recall_query", ""),
+                        "user_list": context_data.get("user_list", []),
+                        "raw_chat_records": context_data.get("raw_chat_records", []),
+                        "raw_memories": context_data.get("raw_memories", []),
+                        "raw_notes": context_data.get("raw_notes", []),
+                        "core_topic": context_data.get("core_topic", ""),
+                        "memory_id_mapping": context_data.get("memory_id_mapping", {}),
+                        "note_id_mapping": context_data.get("note_id_mapping", {}),
+                    }
+            except (json.JSONDecodeError, TypeError, KeyError):
+                memory_context = {}
+
         try:
-            # 提取事件中的关键数据
-            event_data = {
-                "angelmemory_context": getattr(event, "angelmemory_context", None),
-                "angelheart_context": getattr(event, "angelheart_context", None),
-                "unified_msg_origin": getattr(event, "unified_msg_origin", None),
+            memory_scope = self.plugin_context.resolve_memory_scope(session_id)
+        except Exception:
+            memory_scope = "public"
+
+        return ReflectionInput(
+            session_id=session_id,
+            memory_scope=memory_scope,
+            latest_user_text=latest_user_text,
+            latest_assistant_text=latest_assistant_text,
+            secretary_decision=secretary_decision,
+            chat_records=records,
+            memory_context=memory_context,
+        )
+
+    @staticmethod
+    def _dedupe_and_sort_chat_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        seen = set()
+        for msg in records or []:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role", "") or "").strip()
+            content = msg.get("content", "")
+            sender_id = str(msg.get("sender_id", "") or "").strip()
+            sender_name = str(msg.get("sender_name", "") or "").strip()
+            timestamp = float(msg.get("timestamp", 0.0) or 0.0)
+            if not role:
+                continue
+            # 去重键：角色+发送者+时间戳+内容
+            dedupe_key = (role, sender_id, round(timestamp, 6), str(content))
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            normalized.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "sender_id": sender_id,
+                    "sender_name": sender_name,
+                    "timestamp": timestamp,
+                    "is_processed": bool(msg.get("is_processed", False)),
+                    "is_structured_toolcall": bool(msg.get("is_structured_toolcall", False)),
+                    "tool_call_id": msg.get("tool_call_id"),
+                }
+            )
+        normalized.sort(key=lambda x: float(x.get("timestamp", 0.0) or 0.0))
+        return normalized
+
+    async def _buffer_reflection_turn(self, event: AstrMessageEvent, response, session_id: str) -> None:
+        reflection_input = self._build_reflection_input(event, response, session_id)
+        turn_records = list(reflection_input.chat_records)
+        now = time.time()
+
+        async with self._reflection_state_lock:
+            state = self._reflection_states.setdefault(
+                session_id,
+                {
+                    "pending_turns": 0,
+                    "last_activity_at": 0.0,
+                    "records": [],
+                    "latest_input": None,
+                    "processing": False,
+                },
+            )
+            merged = list(state.get("records", [])) + list(turn_records)
+            state["records"] = self._dedupe_and_sort_chat_records(merged)
+            state["pending_turns"] = int(state.get("pending_turns", 0)) + 1
+            state["last_activity_at"] = now
+            state["latest_input"] = reflection_input
+            self.logger.info(
+                f"[反思调度] 入缓冲 session={session_id} "
+                f"pending_turns={state['pending_turns']} records={len(state['records'])}"
+            )
+
+    async def _trigger_reflection_if_needed(self, session_id: str, reason: str) -> bool:
+        now = time.time()
+        payload: Dict[str, Any] = {}
+        async with self._reflection_state_lock:
+            state = self._reflection_states.get(session_id)
+            if not state:
+                return False
+            if bool(state.get("processing", False)):
+                return False
+
+            pending_turns = int(state.get("pending_turns", 0))
+            if pending_turns <= 0:
+                return False
+            idle_elapsed = now - float(state.get("last_activity_at", 0.0))
+            meets_count = pending_turns >= int(self._reflection_turn_threshold)
+            meets_idle = idle_elapsed >= float(self._reflection_idle_seconds)
+            if not (meets_count or meets_idle):
+                if reason == "count":
+                    self.logger.debug(
+                        f"[反思调度] 未触发 session={session_id} "
+                        f"pending={pending_turns}/{self._reflection_turn_threshold} "
+                        f"idle={int(idle_elapsed)}s/{self._reflection_idle_seconds}s"
+                    )
+                return False
+
+            state["processing"] = True
+            latest_input = state.get("latest_input")
+            if latest_input is None:
+                state["processing"] = False
+                return False
+            payload = {
+                "reflection_input": latest_input,
+                "historical_chat_records": list(state.get("records", [])),
+                "consumed_turns": pending_turns,
             }
+            state["pending_turns"] = 0
+            state["records"] = []
 
-            # 如果有 angelmemory_context，尝试解析它以确保数据完整性
-            if event_data["angelmemory_context"]:
-                try:
-                    context_json = json.loads(event_data["angelmemory_context"])
-                    event_data["angelmemory_context_parsed"] = context_json
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-            return event_data
-        except Exception as e:
-            self.logger.error(f"序列化事件数据失败: {e}")
-            return {}
-
-    def _serialize_response_data(self, response) -> Dict:
-        """序列化响应数据以便在后台线程中使用"""
+        historical_chat_text = ""
         try:
-            # 提取响应中的关键数据
-            response_data = {
-                "completion_text": getattr(response, "completion_text", str(response))
-                if response
-                else ""
-            }
-            return response_data
+            historical_chat_text, _ = self.prompt_builder.format_chat_records(
+                payload.get("historical_chat_records", [])
+            )
         except Exception as e:
-            self.logger.error(f"序列化响应数据失败: {e}")
-            return {"completion_text": ""}
+            self.logger.warning(f"格式化反思聊天记录失败，降级为空: {e}")
+            historical_chat_text = ""
+
+        self.logger.info(
+            f"[反思调度] 触发 reason={reason} session={session_id} "
+            f"turns={payload.get('consumed_turns', 0)} "
+            f"records={len(payload.get('historical_chat_records', []))}"
+        )
+        success = await get_feedback_queue().submit(
+            {
+                "feedback_fn": self._execute_async_analysis_task,
+                "session_id": session_id,
+                "payload": {
+                    "reflection_input": payload.get("reflection_input"),
+                    "historical_chat_text_override": historical_chat_text,
+                },
+            }
+        )
+
+        async with self._reflection_state_lock:
+            state = self._reflection_states.get(session_id)
+            if not state:
+                return bool(success)
+            state["processing"] = False
+            # 若执行失败，恢复已消费的轮次与记录，避免丢失待反思上下文。
+            if not bool(success):
+                state["pending_turns"] = int(state.get("pending_turns", 0)) + int(
+                    payload.get("consumed_turns", 0) or 0
+                )
+                restored = list(state.get("records", [])) + list(
+                    payload.get("historical_chat_records", [])
+                )
+                state["records"] = self._dedupe_and_sort_chat_records(restored)
+                self.logger.warning(
+                    f"[反思调度] 执行失败后回滚 session={session_id} "
+                    f"pending_turns={state['pending_turns']} records={len(state['records'])}"
+                )
+            else:
+                self.logger.info(f"[反思调度] 完成 session={session_id}")
+        return bool(success)
 
     async def _execute_async_analysis_task(
-        self, event_data: Dict, response_data: Dict, session_id: str
+        self,
+        reflection_input: ReflectionInput,
+        historical_chat_text_override: str = "",
     ):
         """
         异步执行的记忆分析任务
 
         Args:
-            event_data: 序列化的事件数据
-            response_data: 序列化的响应数据
-            session_id: 会话ID
+            reflection_input: 反思输入纯数据
         """
         try:
-            # 重构事件对象的部分数据用于处理
-            class SimpleEvent:
-                def __init__(self, data, plugin_context):
-                    self.angelmemory_context = data.get("angelmemory_context")
-                    self.angelheart_context = data.get("angelheart_context")
-                    self.unified_msg_origin = data.get("unified_msg_origin")
-                    # 注入plugin_context，确保QueryProcessor能够访问
-                    self.plugin_context = plugin_context
+            session_id = str(getattr(reflection_input, "session_id", "") or "").strip()
+            if not session_id:
+                return False
+            self.logger.info(
+                f"[反思执行] 开始 session={session_id} "
+                f"user_len={len(str(getattr(reflection_input, 'latest_user_text', '') or ''))} "
+                f"assistant_len={len(str(getattr(reflection_input, 'latest_assistant_text', '') or ''))}"
+            )
 
-            event = SimpleEvent(event_data, self.plugin_context)
+            context_data = getattr(reflection_input, "memory_context", {}) or {}
+            if not isinstance(context_data, dict):
+                context_data = {}
 
-            # 获取原始上下文数据
-            context_data = self._parse_memory_context(event)
-            if not context_data:
-                return
-
-            query = context_data["query"]
+            query = str(context_data.get("query", "") or "")
+            raw_chat_records = context_data.get("raw_chat_records", [])
+            historical_chat_text = ""
+            if str(historical_chat_text_override or "").strip():
+                historical_chat_text = str(historical_chat_text_override).strip()
+            elif isinstance(raw_chat_records, list) and raw_chat_records:
+                historical_chat_text, _ = self.prompt_builder.format_chat_records(
+                    raw_chat_records
+                )
+            if not historical_chat_text.strip():
+                historical_chat_text = query
+            if not historical_chat_text.strip():
+                historical_chat_text = str(
+                    getattr(reflection_input, "latest_user_text", "") or ""
+                ).strip()
 
             # 获取原始记忆数据
             raw_memories_data = context_data.get("raw_memories", [])
@@ -590,7 +948,9 @@ class DeepMind:
                     self.logger.error(f"转换记忆对象失败: {e}")
 
             # 获取主LLM的最终回答
-            response_text = response_data.get("completion_text", "")
+            response_text = str(
+                getattr(reflection_input, "latest_assistant_text", "") or ""
+            )
 
 
             # 从上下文数据中获取ID映射表
@@ -598,7 +958,7 @@ class DeepMind:
 
             # 构建反思提示词（只传递记忆数据，不传递笔记）
             prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompt(
-                historical_query=query,
+                historical_query=historical_chat_text,
                 main_llm_response=response_text,
                 raw_memories=long_term_memories,
                 core_topic=core_topic,
@@ -736,9 +1096,15 @@ class DeepMind:
                 self.session_memory_manager.add_memories_to_session(
                     session_id, memories_for_session
                 )
+            self.logger.info(
+                f"[反思执行] 完成 session={session_id} "
+                f"useful={len(useful_ids)} new={len(newly_created_memories)}"
+            )
 
         except Exception as e:
             import traceback
 
             self.logger.error(f"异步记忆分析失败 - 会话={session_id}: {e}")
             self.logger.error(f"错误详情: {traceback.format_exc()}")
+            return False
+        return True
