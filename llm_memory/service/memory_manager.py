@@ -568,9 +568,9 @@ class MemoryManager:
             judgment = mem_data.get("judgment")
             reasoning = mem_data.get("reasoning")
 
-            if not judgment or not reasoning:
+            if not judgment:
                 self.logger.warning(
-                    f"跳过缺少必需字段的记忆: judgment={bool(judgment)}, reasoning={bool(reasoning)}"
+                    f"跳过缺少必需字段的记忆: judgment={bool(judgment)}"
                 )
                 continue
 
