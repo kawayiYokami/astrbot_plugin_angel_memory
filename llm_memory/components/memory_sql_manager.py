@@ -1902,7 +1902,7 @@ class MemorySqlManager:
         for mem_data in (new_memories or []):
             judgment = str(mem_data.get("judgment") or "").strip()
             reasoning = str(mem_data.get("reasoning") or "").strip()
-            if not judgment or not reasoning:
+            if not judgment:
                 continue
             memory = await self.remember(
                 memory_type=str(mem_data.get("type") or "knowledge"),
