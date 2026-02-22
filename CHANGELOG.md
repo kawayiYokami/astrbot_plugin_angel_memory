@@ -2,6 +2,33 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.2.4] - 2026-02-22
+
+### Highlights
+- 移除“简化记忆模式”配置开关，检索模式改为按能力自动分档。
+- 新增“向量化检索”配置分组，集中管理嵌入与重排相关项。
+
+### Core Changes
+- `refactor(config)`: 删除 `enable_simple_memory` 配置入口与对应代码分支。
+- `feat(config)`: 新增 `retrieval` 分组（`embedding_provider_id` / `enable_local_embedding` / `rerank_provider_id`）。
+- `feat(runtime)`: 无向量能力时自动进入 BM25-only；有向量/重排能力时自动升级到融合或重排策略。
+- `refactor(maintenance)`: 睡眠维护中与 simple 模式相关的判定改为能力判定（BM25-only / vector）。
+
+## [1.2.3] - 2026-02-22
+
+### Highlights
+- 检索层重构为 Tantivy BM25，实现中文 `jieba` 预分词 + BM25 检索主链路。
+- 新增三档检索策略：BM25 直出、向量融合、向量+BM25 候选混合重排。
+- SimpleMemoryRuntime 路径接入 rerank_provider，不再与 Vector 路径能力割裂。
+
+### Core Changes
+- `refactor(retrieval)`: `llm_memory/components/bm25_retriever.py` 改为 Tantivy 检索实现，并保留模块引用路径。
+- `feat(retrieval)`: BM25 分数按最大值归一到 `[0,1]`，融合公式固定为 `0.7*vector + 0.3*bm25`。
+- `feat(retrieval)`: 在 `memory_sql_manager` 中实现三档策略调度与重排候选合并去重。
+- `feat(simple-runtime)`: `ComponentFactory` 创建 `MemorySqlManager` 时注入 `rerank_provider`。
+- `refactor(maintenance)`: 移除睡眠维护中的 FTS5 一致性巡检任务。
+- `chore(deps)`: 新增依赖 `tantivy>=0.22.0`。
+
 ## [1.2.2] - 2026-02-20
 
 ### Highlights

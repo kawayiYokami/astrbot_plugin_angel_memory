@@ -79,11 +79,8 @@ class SleepMaintenanceService:
         """向量主集合 -> 中央SQL（按 provider 仅执行一次，provider 变化时重跑）。"""
         deepmind = self.deepmind
         plugin_context = deepmind.plugin_context
-        enable_simple = getattr(deepmind.config, "enable_simple_memory", False)
-        if enable_simple:
-            deepmind.logger.info(
-                "[睡眠维护] 向量到中央迁移：跳过（simple 模式）"
-            )
+        if plugin_context.get_component("cognitive_service") is None:
+            deepmind.logger.info("[睡眠维护] 向量到中央迁移：跳过（当前为 BM25-only）")
             return "skipped"
 
         provider = plugin_context.get_current_provider()
@@ -149,7 +146,6 @@ class SleepMaintenanceService:
             self._task_memory_scope_migration,
             self._task_deprecated_field_cleanup,
             self._task_notes_vector_sync,
-            self._task_fts_consistency_audit,
             self._task_daily_json_backup,
         ):
             try:
@@ -170,44 +166,18 @@ class SleepMaintenanceService:
             f"[睡眠维护] 后置维护完成 成功={success} 失败={failed} 跳过={skipped} 耗时毫秒={cost_ms}"
         )
 
-    async def _task_fts_consistency_audit(self, state: Dict[str, Any]) -> str:
-        del state
-        deepmind = self.deepmind
-        plugin_context = deepmind.plugin_context
-        memory_sql_manager = plugin_context.get_component("memory_sql_manager")
-        if memory_sql_manager is None:
-            deepmind.logger.info("[睡眠维护] FTS5 一致性巡检：跳过（memory_sql_manager 不可用）")
-            return "skipped"
-        try:
-            result = await memory_sql_manager.audit_and_repair_fts_indexes(sample_size=50)
-            deepmind.logger.info(
-                "[睡眠维护] FTS5 一致性巡检：完成 "
-                f"memory_sql={result.get('memory_sql_count', 0)} "
-                f"memory_fts={result.get('memory_fts_count', 0)} "
-                f"note_sql={result.get('note_sql_count', 0)} "
-                f"note_fts={result.get('note_fts_count', 0)} "
-                f"自动修复={'是' if result.get('auto_repaired', False) else '否'}"
-            )
-            return "success"
-        except Exception as e:
-            deepmind.logger.warning(
-                f"[睡眠维护] FTS5 一致性巡检：失败，异常={e}",
-                exc_info=True,
-            )
-            return "failed"
-
     async def _task_memory_vector_sync(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind
         plugin_context = deepmind.plugin_context
-        enable_simple = getattr(deepmind.config, "enable_simple_memory", False)
+        is_bm25_only = plugin_context.get_component("cognitive_service") is None
         provider = plugin_context.get_current_provider()
         current_provider = str(provider) if provider is not None else ""
-        target_provider = "simple" if enable_simple else current_provider
+        target_provider = "bm25_only" if is_bm25_only else current_provider
 
-        if enable_simple:
-            if state.get("memory_vector_sync_last_provider", "") != "simple":
-                state["memory_vector_sync_last_provider"] = "simple"
-            deepmind.logger.info("[睡眠维护] 记忆向量库同步：跳过（当前为 simple 模式）")
+        if is_bm25_only:
+            if state.get("memory_vector_sync_last_provider", "") != "bm25_only":
+                state["memory_vector_sync_last_provider"] = "bm25_only"
+            deepmind.logger.info("[睡眠维护] 记忆向量库同步：跳过（当前为 BM25-only）")
             return "skipped"
 
         last_provider = str(state.get("memory_vector_sync_last_provider", "") or "")
@@ -238,8 +208,8 @@ class SleepMaintenanceService:
     async def _task_notes_vector_sync(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind
         plugin_context = deepmind.plugin_context
-        if getattr(deepmind.config, "enable_simple_memory", False):
-            deepmind.logger.info("[睡眠维护] 笔记向量库同步：跳过（simple 模式）")
+        if plugin_context.get_component("vector_store") is None:
+            deepmind.logger.info("[睡眠维护] 笔记向量库同步：跳过（当前为 BM25-only）")
             return "skipped"
 
         provider = plugin_context.get_current_provider()
@@ -353,8 +323,8 @@ class SleepMaintenanceService:
             deepmind.logger.info("[睡眠维护] memory_scope 补齐：跳过（中央库模式无需执行）")
             return "skipped"
 
-        if getattr(deepmind.config, "enable_simple_memory", False):
-            deepmind.logger.info("[睡眠维护] memory_scope 补齐：跳过（simple 模式）")
+        if deepmind.plugin_context.get_component("vector_store") is None:
+            deepmind.logger.info("[睡眠维护] memory_scope 补齐：跳过（当前为 BM25-only）")
             return "skipped"
 
         cognitive_service = deepmind.plugin_context.get_component("cognitive_service")
@@ -380,8 +350,8 @@ class SleepMaintenanceService:
             deepmind.logger.info("[睡眠维护] 废弃字段清理：跳过（中央库模式无需执行）")
             return "skipped"
 
-        if getattr(deepmind.config, "enable_simple_memory", False):
-            deepmind.logger.info("[睡眠维护] 废弃字段清理：跳过（simple 模式）")
+        if deepmind.plugin_context.get_component("vector_store") is None:
+            deepmind.logger.info("[睡眠维护] 废弃字段清理：跳过（当前为 BM25-only）")
             return "skipped"
 
         cognitive_service = deepmind.plugin_context.get_component("cognitive_service")

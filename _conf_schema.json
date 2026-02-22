@@ -6,29 +6,30 @@
     "default": "",
     "hint": "建议为拥有思考能力的模型。留空则只使用基础记忆功能。"
   },
-  "rerank_provider_id": {
-    "type": "string",
-    "description": "[核心模型设置] 用于记忆二阶段重排的提供商ID（可选）",
-    "default": "",
-    "hint": "仅作用于记忆检索重排，笔记检索不会使用重排。留空则自动尝试复用 provider_id，若仍不可用则降级为 Chroma 向量相似度排序。"
-  },
-  "astrbot_embedding_provider_id": {
-    "type": "string",
-    "description": "[核心模型设置] 用于向量化的嵌入模型提供商ID",
-    "default": "",
-    "hint": "优先使用官方API。留空则使用本地模型。"
-  },
-  "enable_local_embedding": {
-    "type": "bool",
-    "description": "[核心模型设置] 启用本地嵌入模型支持",
-    "default": false,
-    "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5，模型本体约96MB）。首次使用会自动安装运行依赖（如torch、sentence-transformers），总体占用通常为数百MB（与平台环境相关）。"
-  },
-  "enable_simple_memory": {
-    "type": "bool",
-    "description": "[核心模型设置] 启用简化记忆模式（SQL+tags）",
-    "default": false,
-    "hint": "开启后将使用简化记忆模式（非向量）：记忆按 tags 召回（命中次数->按天时间->强度排序）。笔记仍可检索（走中央SQL tags匹配），但不使用向量召回。"
+  "retrieval": {
+    "type": "object",
+    "description": "[向量化检索] 检索模型与重排配置",
+    "hint": "检索会按能力自动选择三档策略（BM25直出 / 向量融合 / 候选重排）。即使不使用向量化模型，也能获得非常好的体验，向量并非必须。",
+    "items": {
+      "embedding_provider_id": {
+        "type": "string",
+        "description": "用于向量化的嵌入模型提供商ID（可选）",
+        "default": "",
+        "hint": "并非必须；本项目已内置强关键词检索与精准生成链路，实测向量带来的额外提升通常较小。"
+      },
+      "rerank_provider_id": {
+        "type": "string",
+        "description": "用于检索重排的提供商ID（推荐）",
+        "default": "",
+        "hint": "推荐使用，检索效果提升明显；不依赖嵌入模型，BM25 候选也可以直接重排。留空则自动尝试复用 provider_id，若不可用则降级为非重排策略。"
+      },
+      "enable_local_embedding": {
+        "type": "bool",
+        "description": "启用本地嵌入模型支持",
+        "default": false,
+        "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5）。并非必须，实测整体提升有限。"
+      }
+    }
   },
   "conversation_scope_map": {
     "type": "text",

@@ -129,10 +129,36 @@ class PluginContext:
 
     def get_embedding_provider_id(self) -> str:
         """获取嵌入提供商ID"""
-        return self.config.get("astrbot_embedding_provider_id", "local")
+        retrieval = self.config.get("retrieval", {}) or {}
+        if isinstance(retrieval, dict):
+            value = str(retrieval.get("embedding_provider_id", "") or "").strip()
+            if value:
+                return value
+        legacy = str(self.config.get("astrbot_embedding_provider_id", "") or "").strip()
+        return legacy
+
     def get_enable_local_embedding(self) -> bool:
         """获取是否启用本地嵌入模型"""
-        return self.config.get("enable_local_embedding", False)
+        legacy_value = bool(self.config.get("enable_local_embedding", False))
+        retrieval = self.config.get("retrieval", {}) or {}
+        if isinstance(retrieval, dict) and "enable_local_embedding" in retrieval:
+            new_value = bool(retrieval.get("enable_local_embedding", False))
+            # 兼容迁移：当 retrieval 仍是默认空配置时，回退旧字段。
+            new_embedding_id = str(retrieval.get("embedding_provider_id", "") or "").strip()
+            new_rerank_id = str(retrieval.get("rerank_provider_id", "") or "").strip()
+            if not new_value and not new_embedding_id and not new_rerank_id and legacy_value:
+                return legacy_value
+            return new_value
+        return legacy_value
+
+    def get_rerank_provider_id(self) -> str:
+        """获取检索重排提供商ID。"""
+        retrieval = self.config.get("retrieval", {}) or {}
+        if isinstance(retrieval, dict):
+            value = str(retrieval.get("rerank_provider_id", "") or "").strip()
+            if value:
+                return value
+        return str(self.config.get("rerank_provider_id", "") or "").strip()
 
     def get_llm_provider_id(self) -> str:
         """获取LLM提供商ID"""

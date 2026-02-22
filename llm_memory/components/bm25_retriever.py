@@ -1,15 +1,16 @@
 """
-FTS5 混合检索组件（模块化，可单独测试）。
+Tantivy BM25 检索组件（模块化，可单独测试）。
 
 设计目标：
-1. 使用 SQLite FTS5 做稀疏检索（预分词 + 空格拼接）。
-2. 统一记忆/笔记的融合算法，索引物理分离。
-3. 支持离线单测（不依赖主流程组件）。
+1. 使用 Tantivy 做 BM25 稀疏检索。
+2. 中文分词由 Python 侧 jieba 预分词完成（索引/查询同流程）。
+3. 统一记忆/笔记融合算法，支持三档检索中的前两档：
+   - BM25 only
+   - 向量 + BM25 融合
 """
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 import re
@@ -24,9 +25,14 @@ except ImportError:
 
 import jieba
 
+try:
+    import tantivy
+except Exception:  # pragma: no cover - 依赖缺失时由运行时显式报错
+    tantivy = None
 
-class FTS5HybridRetriever:
-    """SQLite FTS5 + 向量分数融合检索器。"""
+
+class TantivyBM25Retriever:
+    """Tantivy BM25 + 向量融合检索器。"""
 
     _jieba_lock = threading.Lock()
     _jieba_loaded_words: set[str] = set()
@@ -40,53 +46,44 @@ class FTS5HybridRetriever:
         memory_default_vector_score: float = 0.5,
         note_default_vector_score: float = 0.6,
     ):
+        if tantivy is None:
+            raise RuntimeError(
+                "Tantivy 依赖不可用，请先安装依赖后再启动（例如: pip install tantivy）"
+            )
+
         self.db_path = str(db_path)
         self.tokenizer_mode = tokenizer_mode
         self.memory_threshold = float(memory_threshold)
         self.note_threshold = float(note_threshold)
         self.memory_default_vector_score = float(memory_default_vector_score)
         self.note_default_vector_score = float(note_default_vector_score)
-        self._ensure_db_parent()
-        self.init_schema()
+        self._init_indexes()
 
-    def _ensure_db_parent(self) -> None:
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+    def _init_indexes(self) -> None:
+        base_dir = Path(self.db_path).parent / "tantivy_indexes"
+        self._memory_dir = base_dir / "memory"
+        self._note_dir = base_dir / "note"
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
+        self._note_dir.mkdir(parents=True, exist_ok=True)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        return conn
+        # 使用 TEXT 字段存储预分词文本，检索时直接按 token 查询。
+        memory_builder = tantivy.SchemaBuilder()
+        memory_builder.add_text_field("item_id", stored=True)
+        memory_builder.add_text_field("tags_text", stored=False)
+        memory_builder.add_text_field("judgment_text", stored=False)
+        self._memory_schema = memory_builder.build()
 
-    def init_schema(self) -> None:
-        """初始化 FTS5 索引表。"""
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-                    item_id UNINDEXED,
-                    tags,
-                    judgment,
-                    tokenize='unicode61'
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
-                    item_id UNINDEXED,
-                    tags,
-                    tokenize='unicode61'
-                )
-                """
-            )
-            conn.commit()
+        note_builder = tantivy.SchemaBuilder()
+        note_builder.add_text_field("item_id", stored=True)
+        note_builder.add_text_field("tags_text", stored=False)
+        self._note_schema = note_builder.build()
+
+        self._memory_index = tantivy.Index(self._memory_schema, path=str(self._memory_dir))
+        self._note_index = tantivy.Index(self._note_schema, path=str(self._note_dir))
 
     @staticmethod
     def _normalize_token(token: str) -> str:
-        token = str(token or "").strip().lower()
-        return token
+        return str(token or "").strip().lower()
 
     def _tokenize(self, text: str) -> List[str]:
         raw_text = str(text or "")
@@ -119,10 +116,7 @@ class FTS5HybridRetriever:
 
     @classmethod
     def add_jieba_words(cls, words: Iterable[str]) -> Dict[str, int]:
-        """
-        批量注入自定义词到 jieba 词典（默认参数，不设 freq/tag）。
-        使用全局锁保护，避免并发 add_word 的竞态问题。
-        """
+        """批量注入自定义词到 jieba 词典。"""
         total = 0
         added = 0
         skipped = 0
@@ -144,180 +138,223 @@ class FTS5HybridRetriever:
         return {"total": total, "added": added, "skipped": skipped}
 
     @staticmethod
-    def _build_match_query(tokens: List[str]) -> str:
-        # FTS5 MATCH 查询中将 token 视为字面量：
-        # 1) 转义反斜杠和双引号
-        # 2) 去除控制字符
-        # 3) 使用双引号包裹，避免操作符/特殊字符造成语法注入
-        escaped_tokens: List[str] = []
-        for token in tokens:
-            raw = str(token or "").strip()
-            if not raw:
-                continue
-            safe = re.sub(r"[\x00-\x1f]+", " ", raw).strip()
-            if not safe:
-                continue
-            safe = safe.replace('"', '""')
-            escaped_tokens.append(f'"{safe}"')
-        return " OR ".join(escaped_tokens)
+    def _score_normalize(rows: List[Dict]) -> List[Dict]:
+        if not rows:
+            return []
+        max_score = 0.0
+        for row in rows:
+            score = float(row.get("bm25_score", 0.0))
+            if score > max_score:
+                max_score = score
+        normalized_rows: List[Dict] = []
+        for row in rows:
+            score = float(row.get("bm25_score", 0.0))
+            normalized = (score / max_score) if max_score > 0.0 else 0.0
+            item = dict(row)
+            item["bm25_normalized_score"] = normalized
+            normalized_rows.append(item)
+        return normalized_rows
 
     @staticmethod
-    def _rank_normalize(size: int) -> List[float]:
-        if size <= 0:
+    def _extract_doc_values(doc: object, field_name: str) -> List[str]:
+        """
+        兼容不同 tantivy.Document Python 绑定形态：
+        - dict-like（.get）
+        - .to_dict()
+        - __getitem__
+        - 属性访问
+        """
+        if doc is None:
             return []
-        if size == 1:
-            return [1.0]
-        denom = float(size - 1)
-        return [1.0 - (idx / denom) for idx in range(size)]
+
+        values: object = None
+
+        try:
+            if hasattr(doc, "to_dict"):
+                maybe_dict = doc.to_dict()
+                if isinstance(maybe_dict, dict):
+                    values = maybe_dict.get(field_name)
+        except Exception:
+            values = None
+
+        if values is None:
+            try:
+                if isinstance(doc, dict):
+                    values = doc.get(field_name)
+                elif hasattr(doc, "get"):
+                    values = doc.get(field_name)
+            except Exception:
+                values = None
+
+        if values is None:
+            try:
+                values = doc[field_name]  # type: ignore[index]
+            except Exception:
+                values = None
+
+        if values is None:
+            try:
+                values = getattr(doc, field_name, None)
+            except Exception:
+                values = None
+
+        if values is None:
+            return []
+        if isinstance(values, (list, tuple)):
+            return [str(v) for v in values if str(v).strip()]
+        text = str(values).strip()
+        return [text] if text else []
 
     def clear_index(self, target: str) -> None:
         normalized_target = str(target or "").strip().lower()
-        table_map = {
-            "memory": "memory_fts",
-            "note": "note_fts",
-        }
-        if normalized_target not in table_map:
-            raise ValueError(
-                "clear_index target 非法，允许值为 'memory' 或 'note'"
-            )
-        table = table_map[normalized_target]
-        with self._connect() as conn:
-            conn.execute(f"DELETE FROM {table}")
-            conn.commit()
+        if normalized_target == "memory":
+            index = self._memory_index
+        elif normalized_target == "note":
+            index = self._note_index
+        else:
+            raise ValueError("clear_index target 非法，允许值为 'memory' 或 'note'")
+        writer = index.writer()
+        writer.delete_all_documents()
+        writer.commit()
 
     def upsert_memory(self, item_id: str, tags: Iterable[str], judgment: str) -> None:
         if not item_id:
             return
-        tags_text = self._pretokenized_tags(tags)
-        judgment_text = self._pretokenized_text(judgment)
-        with self._connect() as conn:
-            conn.execute("DELETE FROM memory_fts WHERE item_id = ?", (str(item_id),))
-            conn.execute(
-                "INSERT INTO memory_fts(item_id, tags, judgment) VALUES(?, ?, ?)",
-                (str(item_id), tags_text, judgment_text),
+        writer = self._memory_index.writer()
+        writer.delete_documents("item_id", str(item_id))
+        writer.add_document(
+            tantivy.Document(
+                item_id=[str(item_id)],
+                tags_text=[self._pretokenized_tags(tags)],
+                judgment_text=[self._pretokenized_text(judgment)],
             )
-            conn.commit()
+        )
+        writer.commit()
 
     def upsert_note(self, item_id: str, tags: Iterable[str]) -> None:
         if not item_id:
             return
-        tags_text = self._pretokenized_tags(tags)
-        with self._connect() as conn:
-            conn.execute("DELETE FROM note_fts WHERE item_id = ?", (str(item_id),))
-            conn.execute(
-                "INSERT INTO note_fts(item_id, tags) VALUES(?, ?)",
-                (str(item_id), tags_text),
+        writer = self._note_index.writer()
+        writer.delete_documents("item_id", str(item_id))
+        writer.add_document(
+            tantivy.Document(
+                item_id=[str(item_id)],
+                tags_text=[self._pretokenized_tags(tags)],
             )
-            conn.commit()
+        )
+        writer.commit()
 
     def delete_memory(self, item_id: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM memory_fts WHERE item_id = ?", (str(item_id),))
-            conn.commit()
+        writer = self._memory_index.writer()
+        writer.delete_documents("item_id", str(item_id))
+        writer.commit()
 
     def delete_note(self, item_id: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM note_fts WHERE item_id = ?", (str(item_id),))
-            conn.commit()
+        writer = self._note_index.writer()
+        writer.delete_documents("item_id", str(item_id))
+        writer.commit()
 
     def rebuild_memory(self, rows: List[Dict]) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM memory_fts")
-            for row in rows:
-                item_id = str(row.get("id") or "").strip()
-                if not item_id:
-                    continue
-                tags_text = self._pretokenized_tags(row.get("tags") or [])
-                judgment_text = self._pretokenized_text(str(row.get("judgment") or ""))
-                conn.execute(
-                    "INSERT INTO memory_fts(item_id, tags, judgment) VALUES(?, ?, ?)",
-                    (item_id, tags_text, judgment_text),
+        writer = self._memory_index.writer()
+        writer.delete_all_documents()
+        for row in rows:
+            item_id = str(row.get("id") or "").strip()
+            if not item_id:
+                continue
+            writer.add_document(
+                tantivy.Document(
+                    item_id=[item_id],
+                    tags_text=[self._pretokenized_tags(row.get("tags") or [])],
+                    judgment_text=[self._pretokenized_text(str(row.get("judgment") or ""))],
                 )
-            conn.commit()
+            )
+        writer.commit()
 
     def rebuild_note(self, rows: List[Dict]) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM note_fts")
-            for row in rows:
-                item_id = str(row.get("id") or "").strip()
-                if not item_id:
-                    continue
-                tags_text = self._pretokenized_tags(row.get("tags") or [])
-                conn.execute(
-                    "INSERT INTO note_fts(item_id, tags) VALUES(?, ?)",
-                    (item_id, tags_text),
+        writer = self._note_index.writer()
+        writer.delete_all_documents()
+        for row in rows:
+            item_id = str(row.get("id") or "").strip()
+            if not item_id:
+                continue
+            writer.add_document(
+                tantivy.Document(
+                    item_id=[item_id],
+                    tags_text=[self._pretokenized_tags(row.get("tags") or [])],
                 )
-            conn.commit()
+            )
+        writer.commit()
 
-    def _search_memory_fts(self, query: str, limit: int = 50) -> List[Dict]:
+    def _build_query_text(self, query: str) -> str:
         tokens = self._tokenize(query)
         if not tokens:
-            return []
-        match_query = self._build_match_query(tokens)
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    item_id,
-                    bm25(memory_fts, 2.0, 1.0) AS bm25_score
-                FROM memory_fts
-                WHERE memory_fts MATCH ?
-                ORDER BY bm25_score ASC
-                LIMIT ?
-                """,
-                (match_query, int(limit)),
-            ).fetchall()
-        return [dict(r) for r in rows]
+            return ""
+        return " OR ".join(tokens)
 
-    def _search_note_fts(self, query: str, limit: int = 50) -> List[Dict]:
-        tokens = self._tokenize(query)
-        if not tokens:
+    def _search_memory_bm25(self, query: str, limit: int = 50) -> List[Dict]:
+        query_text = self._build_query_text(query)
+        if not query_text:
             return []
-        match_query = self._build_match_query(tokens)
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    item_id,
-                    bm25(note_fts, 1.0) AS bm25_score
-                FROM note_fts
-                WHERE note_fts MATCH ?
-                ORDER BY bm25_score ASC
-                LIMIT ?
-                """,
-                (match_query, int(limit)),
-            ).fetchall()
-        return [dict(r) for r in rows]
+
+        searcher = self._memory_index.searcher()
+        parsed_query = self._memory_index.parse_query(query_text, ["tags_text", "judgment_text"])
+        search_result = searcher.search(parsed_query, int(limit))
+        rows: List[Dict] = []
+        for score, addr in search_result.hits:
+            doc = searcher.doc(addr)
+            item_ids = self._extract_doc_values(doc, "item_id")
+            item_id = str(item_ids[0]) if item_ids else ""
+            if not item_id:
+                continue
+            rows.append({"item_id": item_id, "bm25_score": float(score)})
+        return self._score_normalize(rows)
+
+    def _search_note_bm25(self, query: str, limit: int = 50) -> List[Dict]:
+        query_text = self._build_query_text(query)
+        if not query_text:
+            return []
+
+        searcher = self._note_index.searcher()
+        parsed_query = self._note_index.parse_query(query_text, ["tags_text"])
+        search_result = searcher.search(parsed_query, int(limit))
+        rows: List[Dict] = []
+        for score, addr in search_result.hits:
+            doc = searcher.doc(addr)
+            item_ids = self._extract_doc_values(doc, "item_id")
+            item_id = str(item_ids[0]) if item_ids else ""
+            if not item_id:
+                continue
+            rows.append({"item_id": item_id, "bm25_score": float(score)})
+        return self._score_normalize(rows)
 
     @staticmethod
     def _fuse_scores(
-        fts_rows: List[Dict],
+        bm25_rows: List[Dict],
         vector_scores: Optional[Dict[str, float]],
-        fts_weight: float,
+        bm25_weight: float,
         vector_weight: float,
         threshold: float,
         default_vector_score: float,
         limit: int,
         min_final_score: Optional[float] = None,
     ) -> List[Dict]:
-        if not fts_rows:
+        if not bm25_rows:
             return []
-        normalized = FTS5HybridRetriever._rank_normalize(len(fts_rows))
         fused: List[Dict] = []
         effective_threshold = (
             float(min_final_score) if min_final_score is not None else float(threshold)
         )
-        for idx, row in enumerate(fts_rows):
+        for row in bm25_rows:
             item_id = str(row.get("item_id") or "").strip()
             if not item_id:
                 continue
-            fts_score = float(normalized[idx])
+            bm25_norm = float(row.get("bm25_normalized_score", 0.0))
             if vector_scores is None:
                 vector_score = float(default_vector_score)
             else:
                 vector_score = float(vector_scores.get(item_id, default_vector_score))
-            final_score = (float(fts_weight) * fts_score) + (
-                float(vector_weight) * vector_score
+            final_score = (float(vector_weight) * vector_score) + (
+                float(bm25_weight) * bm25_norm
             )
             if final_score < effective_threshold:
                 continue
@@ -325,7 +362,7 @@ class FTS5HybridRetriever:
                 {
                     "id": item_id,
                     "bm25_score": float(row.get("bm25_score", 0.0)),
-                    "fts_score": fts_score,
+                    "bm25_normalized_score": bm25_norm,
                     "vector_score": vector_score,
                     "final_score": final_score,
                 }
@@ -338,16 +375,16 @@ class FTS5HybridRetriever:
         query: str,
         limit: int = 20,
         fts_limit: int = 80,
-        fts_weight: float = 0.7,
-        vector_weight: float = 0.3,
+        fts_weight: float = 0.3,
+        vector_weight: float = 0.7,
         vector_scores: Optional[Dict[str, float]] = None,
         min_final_score: Optional[float] = None,
     ) -> List[Dict]:
-        rows = self._search_memory_fts(query=query, limit=fts_limit)
+        rows = self._search_memory_bm25(query=query, limit=fts_limit)
         return self._fuse_scores(
-            fts_rows=rows,
+            bm25_rows=rows,
             vector_scores=vector_scores,
-            fts_weight=fts_weight,
+            bm25_weight=fts_weight,
             vector_weight=vector_weight,
             threshold=self.memory_threshold,
             default_vector_score=self.memory_default_vector_score,
@@ -360,16 +397,16 @@ class FTS5HybridRetriever:
         query: str,
         limit: int = 20,
         fts_limit: int = 80,
-        fts_weight: float = 0.85,
-        vector_weight: float = 0.15,
+        fts_weight: float = 0.3,
+        vector_weight: float = 0.7,
         vector_scores: Optional[Dict[str, float]] = None,
         min_final_score: Optional[float] = None,
     ) -> List[Dict]:
-        rows = self._search_note_fts(query=query, limit=fts_limit)
+        rows = self._search_note_bm25(query=query, limit=fts_limit)
         return self._fuse_scores(
-            fts_rows=rows,
+            bm25_rows=rows,
             vector_scores=vector_scores,
-            fts_weight=fts_weight,
+            bm25_weight=fts_weight,
             vector_weight=vector_weight,
             threshold=self.note_threshold,
             default_vector_score=self.note_default_vector_score,
@@ -377,32 +414,32 @@ class FTS5HybridRetriever:
             min_final_score=min_final_score,
         )
 
-
-def _demo_self_test() -> None:
-    """模块级最小自测，可单独运行验证 FTS5 索引和检索。"""
-    demo_db = Path("data") / "fts5_hybrid_demo.db"
-    retriever = FTS5HybridRetriever(db_path=str(demo_db))
-    retriever.rebuild_memory(
-        [
-            {"id": "m1", "tags": ["猫", "过敏", "药物"], "judgment": "用户对猫毛过敏，春季会加重"},
-            {"id": "m2", "tags": ["宠物", "饮食"], "judgment": "用户给猫买了低敏猫粮"},
-            {"id": "m3", "tags": ["过敏", "旅行"], "judgment": "用户去海边旅行时过敏减轻"},
+    def search_memory_bm25_only(self, query: str, limit: int = 20) -> List[Dict]:
+        rows = self._search_memory_bm25(query=query, limit=limit)
+        return [
+            {
+                "id": str(r.get("item_id") or ""),
+                "bm25_score": float(r.get("bm25_score", 0.0)),
+                "bm25_normalized_score": float(r.get("bm25_normalized_score", 0.0)),
+                "final_score": float(r.get("bm25_normalized_score", 0.0)),
+            }
+            for r in rows
+            if str(r.get("item_id") or "").strip()
         ]
-    )
-    retriever.rebuild_note(
-        [
-            {"id": "n1", "tags": ["notes", "family", "travel", "plan.md"]},
-            {"id": "n2", "tags": ["notes", "health", "allergy", "daily.md"]},
+
+    def search_note_bm25_only(self, query: str, limit: int = 20) -> List[Dict]:
+        rows = self._search_note_bm25(query=query, limit=limit)
+        return [
+            {
+                "id": str(r.get("item_id") or ""),
+                "bm25_score": float(r.get("bm25_score", 0.0)),
+                "bm25_normalized_score": float(r.get("bm25_normalized_score", 0.0)),
+                "final_score": float(r.get("bm25_normalized_score", 0.0)),
+            }
+            for r in rows
+            if str(r.get("item_id") or "").strip()
         ]
-    )
-
-    logger.info("[检索] 开始 FTS5 模块自测")
-    mem_results = retriever.search_memory(query="我最近猫毛过敏又犯了", limit=5)
-    note_results = retriever.search_note(query="旅行 计划", limit=5)
-    logger.info(f"[检索] 完成 记忆结果={len(mem_results)} 笔记结果={len(note_results)}")
-    print("memory:", mem_results)
-    print("note:", note_results)
 
 
-if __name__ == "__main__":
-    _demo_self_test()
+# 兼容旧导入路径（避免一次性大面积修改）。
+FTS5HybridRetriever = TantivyBM25Retriever
