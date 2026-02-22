@@ -10,6 +10,8 @@ from typing import List, Dict, Any
 class MemoryIDResolver:
     """记忆ID解析器"""
 
+    ALLOWED_NEW_MEMORY_TYPES = {"knowledge", "skill", "emotional", "event"}
+
     @staticmethod
     def generate_id_mapping(
         items: List[Dict[str, Any]], id_field: str = "id"
@@ -80,6 +82,13 @@ class MemoryIDResolver:
 
         if isinstance(new_memories_raw, dict):
             for memory_type, memories in new_memories_raw.items():
+                normalized_type = str(memory_type or "").strip().lower()
+                if normalized_type not in MemoryIDResolver.ALLOWED_NEW_MEMORY_TYPES:
+                    if logger:
+                        logger.warning(
+                            f"Skipping unsupported memory type in new_memories: {memory_type}"
+                        )
+                    continue
                 if isinstance(memories, list):
                     for memory in memories:
                         # 检查 memory 是否是字典
@@ -90,11 +99,27 @@ class MemoryIDResolver:
                                 )
                             continue
                         # 添加类型字段
-                        memory["type"] = memory_type
+                        memory["type"] = normalized_type
                         new_memories.append(memory)
         elif isinstance(new_memories_raw, list):
             # 如果已经是列表，直接使用
-            new_memories = new_memories_raw
+            for memory in new_memories_raw:
+                if not isinstance(memory, dict):
+                    if logger:
+                        logger.warning(
+                            f"Skipping non-dict memory in list format: {type(memory)} - {memory}"
+                        )
+                    continue
+                normalized_type = str(memory.get("type", "knowledge") or "").strip().lower()
+                if normalized_type not in MemoryIDResolver.ALLOWED_NEW_MEMORY_TYPES:
+                    if logger:
+                        logger.warning(
+                            f"Skipping unsupported memory type in list format: {normalized_type}"
+                        )
+                    continue
+                normalized_memory = dict(memory)
+                normalized_memory["type"] = normalized_type
+                new_memories.append(normalized_memory)
 
         if logger:
             logger.debug(f"Converted new_memories: {new_memories}")
