@@ -18,7 +18,8 @@ except ImportError:
 from ..config.system_config import system_config
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
 from ..service.memory_decay_policy import MemoryDecayConfig, MemoryDecayPolicy
-from .bm25_retriever import FTS5HybridRetriever
+from .bm25_retriever import TantivyBM25Retriever
+from .hybrid_retrieval_engine import HybridRetrievalEngine
 
 
 class MemorySqlManager:
@@ -28,6 +29,7 @@ class MemorySqlManager:
         self,
         db_path: Path,
         decay_config: Optional[MemoryDecayConfig] = None,
+        rerank_provider: Optional[Any] = None,
     ):
         self.logger = logger
         self.db_path = Path(db_path)
@@ -42,13 +44,18 @@ class MemorySqlManager:
         self._jieba_rebuild_added_threshold = 50
         self._jieba_rebuild_ratio_threshold = 0.10
         self.decay_policy = MemoryDecayPolicy(decay_config)
-        self._fts_retriever = FTS5HybridRetriever(
+        self._rerank_provider = rerank_provider
+        self._fts_retriever = TantivyBM25Retriever(
             db_path=str(self.db_path),
             tokenizer_mode="jieba_cut",
             memory_threshold=0.5,
             note_threshold=0.6,
             memory_default_vector_score=0.5,
             note_default_vector_score=0.6,
+        )
+        self._hybrid_engine = HybridRetrievalEngine(
+            retriever=self._fts_retriever,
+            rerank_provider=self._rerank_provider,
         )
         self._fts_ready = False
 
@@ -407,31 +414,16 @@ class MemorySqlManager:
             self._log_fts_index_size_sync()
 
     def _log_fts_index_size_sync(self) -> None:
-        """输出 FTS5 索引构建后的体积与行数。"""
+        """输出检索索引构建后的体积信息。"""
         db_size_bytes = 0
         try:
             db_size_bytes = int(self.db_path.stat().st_size)
         except Exception:
             db_size_bytes = 0
 
-        memory_rows = 0
-        note_rows = 0
-        try:
-            with self._connect() as conn:
-                memory_rows = int(
-                    conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0]
-                )
-                note_rows = int(
-                    conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0]
-                )
-        except Exception as e:
-            self.logger.warning(f"[FTS5重建] 索引大小统计失败: {e}")
-            return
-
         db_size_mb = db_size_bytes / (1024 * 1024)
         self.logger.info(
-            f"[FTS5重建] 完成 memory_fts={memory_rows} note_fts={note_rows} "
-            f"db_size={db_size_bytes}B ({db_size_mb:.2f}MB)"
+            f"[检索索引] 完成 db_size={db_size_bytes}B ({db_size_mb:.2f}MB)"
         )
 
     def _sync_memory_fts_by_id_sync(self, memory_id: str) -> None:
@@ -487,88 +479,22 @@ class MemorySqlManager:
         return await asyncio.to_thread(self._audit_and_repair_fts_indexes_sync, sample_size)
 
     def _audit_and_repair_fts_indexes_sync(self, sample_size: int = 50) -> Dict[str, Any]:
-        self._ensure_fts_ready_sync()
-        sample_n = max(1, int(sample_size or 50))
+        del sample_size
+        self._ensure_fts_ready_sync(force_rebuild=True)
         with self._connect() as conn:
             sql_memory_count = int(conn.execute("SELECT COUNT(1) FROM memory_records").fetchone()[0] or 0)
-            fts_memory_count = int(conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0] or 0)
             sql_note_count = int(conn.execute("SELECT COUNT(1) FROM note_index_records").fetchone()[0] or 0)
-            fts_note_count = int(conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0] or 0)
-
-            sql_memory_sample = [
-                str(r[0])
-                for r in conn.execute(
-                    "SELECT id FROM memory_records ORDER BY updated_at DESC LIMIT ?",
-                    (sample_n,),
-                ).fetchall()
-            ]
-            sql_note_sample = [
-                str(r[0])
-                for r in conn.execute(
-                    "SELECT source_id FROM note_index_records ORDER BY updated_at DESC LIMIT ?",
-                    (sample_n,),
-                ).fetchall()
-            ]
-
-        repair_required = False
-        if sql_memory_count != fts_memory_count or sql_note_count != fts_note_count:
-            repair_required = True
-        if not repair_required:
-            missing_memory_ids: List[str] = []
-            missing_note_ids: List[str] = []
-            with self._connect() as conn:
-                for memory_id in sql_memory_sample:
-                    exists = conn.execute(
-                        "SELECT 1 FROM memory_fts WHERE item_id = ? LIMIT 1",
-                        (memory_id,),
-                    ).fetchone()
-                    if exists:
-                        continue
-                    missing_memory_ids.append(memory_id)
-                for source_id in sql_note_sample:
-                    exists = conn.execute(
-                        "SELECT 1 FROM note_fts WHERE item_id = ? LIMIT 1",
-                        (source_id,),
-                    ).fetchone()
-                    if exists:
-                        continue
-                    missing_note_ids.append(source_id)
-            for memory_id in missing_memory_ids:
-                self._sync_memory_fts_by_id_sync(memory_id)
-            for source_id in missing_note_ids:
-                self._sync_note_fts_by_source_id_sync(source_id)
-
-        # 采样修正后再次校验总量；若仍不一致则全量重建自动修复。
-        with self._connect() as conn:
-            fts_memory_count_after = int(conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0] or 0)
-            fts_note_count_after = int(conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0] or 0)
-        if sql_memory_count != fts_memory_count_after or sql_note_count != fts_note_count_after:
-            self.logger.warning(
-                "[FTS5巡检] 检测到索引不一致，开始自动全量修复 "
-                f"memory_sql={sql_memory_count} memory_fts={fts_memory_count_after} "
-                f"note_sql={sql_note_count} note_fts={fts_note_count_after}"
-            )
-            self._ensure_fts_ready_sync(force_rebuild=True)
-            repaired = True
-        else:
-            repaired = repair_required
-
-        with self._connect() as conn:
-            final_memory = int(conn.execute("SELECT COUNT(1) FROM memory_fts").fetchone()[0] or 0)
-            final_note = int(conn.execute("SELECT COUNT(1) FROM note_fts").fetchone()[0] or 0)
-
+        # Tantivy 模式下无法直接通过 SQL 查询索引行数，这里仅保留 SQL 侧计数。
         self.logger.info(
-            "[FTS5巡检] 完成 "
-            f"memory_sql={sql_memory_count} memory_fts={final_memory} "
-            f"note_sql={sql_note_count} note_fts={final_note} "
-            f"auto_repaired={'是' if repaired else '否'}"
+            "[检索巡检] 完成 "
+            f"memory_sql={sql_memory_count} note_sql={sql_note_count} auto_repaired=是"
         )
         return {
             "memory_sql_count": sql_memory_count,
-            "memory_fts_count": final_memory,
+            "memory_fts_count": -1,
             "note_sql_count": sql_note_count,
-            "note_fts_count": final_note,
-            "auto_repaired": repaired,
+            "note_fts_count": -1,
+            "auto_repaired": True,
         }
 
     @staticmethod
@@ -939,17 +865,38 @@ class MemorySqlManager:
             rows = conn.execute(sql, tuple(ids)).fetchall()
         return [dict(row) for row in rows]
 
-    async def search_note_index_by_tags(
-        self,
-        query: str,
-        limit: int = 20,
-        vector_scores: Optional[Dict[str, float]] = None,
-    ) -> List[Dict[str, Any]]:
-        return await asyncio.to_thread(
-            self._search_note_index_by_tags_sync, query, limit, vector_scores
-        )
+    def _build_note_doc_text_map_by_ids(self, source_ids: List[str]) -> Dict[str, str]:
+        rows = self._get_note_index_by_source_ids_sync(source_ids)
+        row_map = {str(row.get("source_id") or ""): row for row in rows}
+        doc_text_map: Dict[str, str] = {}
+        for sid in source_ids:
+            row = row_map.get(str(sid))
+            if row is None:
+                continue
+            tags_text = str(row.get("tags_text") or "")
+            h_values = [str(row.get(f"heading_h{i}") or "").strip() for i in range(1, 7)]
+            heading_text = " / ".join([h for h in h_values if h])
+            source_file_path = str(row.get("source_file_path") or "")
+            doc_text_map[str(sid)] = f"{source_file_path}\n{heading_text}\n{tags_text}".strip()
+        return doc_text_map
 
-    def _search_note_index_by_tags_sync(
+    def _build_memory_doc_text_map_by_ids(self, memory_ids: List[str]) -> Dict[str, str]:
+        memories = self._get_memories_by_ids_sync(memory_ids)
+        memory_map = {mem.id: mem for mem in memories}
+        doc_text_map: Dict[str, str] = {}
+        for memory_id in memory_ids:
+            mem = memory_map.get(str(memory_id))
+            if mem is None:
+                continue
+            tags = " ".join(
+                [str(t).strip() for t in (getattr(mem, "tags", []) or []) if str(t).strip()]
+            )
+            doc_text_map[str(memory_id)] = (
+                f"{getattr(mem, 'judgment', '')}\n{getattr(mem, 'reasoning', '')}\n{tags}"
+            ).strip()
+        return doc_text_map
+
+    async def search_note_index_by_tags(
         self,
         query: str,
         limit: int = 20,
@@ -959,13 +906,36 @@ class MemorySqlManager:
         if not text:
             return []
 
-        self._ensure_fts_ready_sync()
-        hits = self._fts_retriever.search_note(
-            query=text,
-            limit=max(1, int(limit)),
-            fts_limit=max(10, int(limit) * 6),
-            vector_scores=vector_scores,
-        )
+        await asyncio.to_thread(self._ensure_fts_ready_sync)
+        candidate_limit = max(10, int(limit) * 6)
+        # rerank 依赖当前事件循环任务上下文，不能在线程里 asyncio.run。
+        if self._hybrid_engine.has_rerank():
+            hits = await self._hybrid_engine.search_with_strategy(
+                query=text,
+                limit=max(1, int(limit)),
+                candidate_limit=candidate_limit,
+                bm25_limit=candidate_limit,
+                vector_scores=vector_scores,
+                bm25_only_search=lambda q, k: self._fts_retriever.search_note_bm25_only(query=q, limit=k),
+                fusion_search=lambda q, k, bk, scores: self._fts_retriever.search_note(
+                    query=q,
+                    limit=k,
+                    fts_limit=bk,
+                    fts_weight=0.3,
+                    vector_weight=0.7,
+                    vector_scores=scores,
+                    min_final_score=0.0,
+                ),
+                build_doc_text_map=self._build_note_doc_text_map_by_ids,
+            )
+        else:
+            hits = await asyncio.to_thread(
+                self._search_note_index_by_tags_without_rerank_sync,
+                text,
+                limit,
+                vector_scores,
+            )
+
         if not hits:
             return []
 
@@ -974,7 +944,7 @@ class MemorySqlManager:
             for item in hits
             if str(item.get("id") or "").strip()
         ]
-        rows = self._get_note_index_by_source_ids_sync(source_ids)
+        rows = await asyncio.to_thread(self._get_note_index_by_source_ids_sync, source_ids)
         row_map = {str(row.get("source_id") or ""): row for row in rows}
 
         result: List[Dict[str, Any]] = []
@@ -987,6 +957,32 @@ class MemorySqlManager:
             row["similarity"] = float(item.get("final_score", 0.0))
             result.append(row)
         return result[: max(0, int(limit))]
+
+    def _search_note_index_by_tags_without_rerank_sync(
+        self,
+        query: str,
+        limit: int,
+        vector_scores: Optional[Dict[str, float]],
+    ) -> List[Dict[str, Any]]:
+        text = str(query or "").strip()
+        if not text:
+            return []
+        self._ensure_fts_ready_sync()
+        candidate_limit = max(10, int(limit) * 6)
+        if vector_scores:
+            return self._fts_retriever.search_note(
+                query=text,
+                limit=max(1, int(limit)),
+                fts_limit=candidate_limit,
+                fts_weight=0.3,
+                vector_weight=0.7,
+                vector_scores=vector_scores,
+                min_final_score=0.0,
+            )
+        return self._fts_retriever.search_note_bm25_only(
+            query=text,
+            limit=max(1, int(limit)),
+        )
 
     async def list_note_index_vector_rows(self) -> List[Dict[str, str]]:
         return await asyncio.to_thread(self._list_note_index_vector_rows_sync)
@@ -1581,13 +1577,25 @@ class MemorySqlManager:
             return []
 
         self._ensure_fts_ready_sync()
-        hits = self._fts_retriever.search_memory(
+        candidate_limit = max(20, int(limit) * 20)
+        bm25_limit = max(50, int(limit) * 30)
+        hits = await self._hybrid_engine.search_with_strategy(
             query=text,
-            # scope 在 Python 侧过滤，需要提高候选池并放宽阈值避免候选不足。
-            limit=max(20, int(limit) * 20),
-            fts_limit=max(50, int(limit) * 30),
+            limit=candidate_limit,
+            candidate_limit=candidate_limit,
+            bm25_limit=bm25_limit,
             vector_scores=vector_scores,
-            min_final_score=0.0,
+            bm25_only_search=lambda q, k: self._fts_retriever.search_memory_bm25_only(query=q, limit=k),
+            fusion_search=lambda q, k, bk, scores: self._fts_retriever.search_memory(
+                query=q,
+                limit=k,
+                fts_limit=bk,
+                fts_weight=0.3,
+                vector_weight=0.7,
+                vector_scores=scores,
+                min_final_score=0.0,
+            ),
+            build_doc_text_map=self._build_memory_doc_text_map_by_ids,
         )
         if not hits:
             return []

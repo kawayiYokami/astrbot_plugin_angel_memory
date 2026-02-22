@@ -145,7 +145,7 @@ class AngelMemoryPlugin(Star):
                 self.logger.info(f"✅ 检测到嵌入提供商配置: {embedding_provider_id}")
             else:
                 self.logger.info(
-                    "ℹ️ 未配置嵌入提供商ID (astrbot_embedding_provider_id)，将使用本地模型"
+                    "ℹ️ 未配置嵌入提供商ID，将按能力自动降级为 BM25-only（向量非必须）"
                 )
 
             llm_provider_id = self.plugin_context.get_llm_provider_id()

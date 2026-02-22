@@ -74,13 +74,20 @@ class ComponentFactory:
 
         try:
             self.logger.info("🏭 开始创建核心组件...")
-            enable_simple_memory = bool(config.get("enable_simple_memory", False))
             decay_config = build_decay_config(config)
-            memory_sql_manager = self._create_memory_sql_manager(decay_config)
+            rerank_provider = self._resolve_rerank_provider()
+            memory_sql_manager = self._create_memory_sql_manager(
+                decay_config,
+                rerank_provider=rerank_provider,
+            )
             self._components["memory_sql_manager"] = memory_sql_manager
 
-            if enable_simple_memory:
-                self.logger.info("🧩 检测到 enable_simple_memory=true，使用 SimpleMemoryRuntime")
+            embedding_provider_id = self.plugin_context.get_embedding_provider_id()
+            enable_local_embedding = self.plugin_context.get_enable_local_embedding()
+            vector_enabled = bool(str(embedding_provider_id or "").strip() or enable_local_embedding)
+
+            if not vector_enabled:
+                self.logger.info("🧩 未启用向量化能力，使用 BM25-only 运行模式")
                 memory_runtime = self._create_memory_runtime(
                     cognitive_service=None,
                     memory_sql_manager=memory_sql_manager,
@@ -102,7 +109,7 @@ class ComponentFactory:
 
                 self._initialized = True
                 self.logger.info("✅ 所有核心组件创建完成")
-                self.logger.info("✅ 记忆运行时: SimpleMemoryRuntime")
+                self.logger.info("✅ 记忆运行时: BM25-only Runtime")
 
                 if self.init_manager:
                     self.init_manager.mark_ready()
@@ -111,40 +118,72 @@ class ComponentFactory:
                 await self._start_file_monitor(file_monitor)
                 return self._components
 
-            # 1. 创建嵌入提供商
-            embedding_provider = await self._create_embedding_provider()
-            self._components["embedding_provider"] = embedding_provider
-            self.plugin_context.set_embedding_provider(embedding_provider)
+            # 1. 创建嵌入提供商（若不可用则自动降级为 BM25-only）
+            embedding_provider = None
+            try:
+                embedding_provider = await self._create_embedding_provider()
+                self._components["embedding_provider"] = embedding_provider
+                self.plugin_context.set_embedding_provider(embedding_provider)
+            except Exception as e:
+                self.logger.warning(f"嵌入提供商初始化失败，自动降级为 BM25-only: {e}")
+                embedding_provider = None
 
-            # API提供商必须在启动期可用；本地提供商允许懒加载
-            provider_type = embedding_provider.get_provider_type()
-            if provider_type != "local" and not embedding_provider.is_available():
-                self.logger.critical(
-                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                )
-                self.logger.critical("!!! 核心组件 embedding_provider 加载失败！")
-                self.logger.critical(
-                    "!!! 当前为上游嵌入提供商模式：提供商不可用、配置错误或凭证异常。"
-                )
-                self.logger.critical(
-                    "!!! 这不是本地模型安装问题。若需本地兜底，请启用 enable_local_embedding。"
-                )
-                self.logger.critical(
-                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                )
+            # 检查嵌入提供商真实可用性（不存在则视为无向量能力）
+            if embedding_provider is None:
+                vector_enabled = False
+            else:
+                provider_type = embedding_provider.get_provider_type()
+                provider_available = bool(embedding_provider.is_available())
+                if provider_type == "local":
+                    # 本地模型允许懒加载：不可用也可继续向量模式初始化
+                    if not provider_available:
+                        self.logger.info("本地嵌入模型采用懒加载模式：将在首次向量化请求时加载。")
+                    vector_enabled = True
+                else:
+                    if not provider_available:
+                        self.logger.warning(
+                            "上游嵌入提供商不可用（模型不存在或配置异常），自动降级为 BM25-only。"
+                        )
+                        vector_enabled = False
+                    else:
+                        vector_enabled = True
 
-                # 标记初始化完成（以受限模式）并立即返回，不再创建后续组件
+            if not vector_enabled:
+                memory_runtime = self._create_memory_runtime(
+                    cognitive_service=None,
+                    memory_sql_manager=memory_sql_manager,
+                )
+                self._components["memory_runtime"] = memory_runtime
+
+                note_service = self._create_note_service(vector_store=None)
+                self._components["note_service"] = note_service
+
+                deepmind = await self._create_deepmind(
+                    vector_store=None,
+                    note_service=note_service,
+                    memory_runtime=memory_runtime,
+                )
+                self._components["deepmind"] = deepmind
+
+                file_monitor = self._create_file_monitor(note_service)
+                self._components["file_monitor"] = file_monitor
+
                 self._initialized = True
+                self.logger.info("✅ 所有核心组件创建完成")
+                self.logger.info("✅ 记忆运行时: BM25-only Runtime")
+
                 if self.init_manager:
-                    self.init_manager.mark_ready()  # 同样需要标记，否则主程序可能卡住
+                    self.init_manager.mark_ready()
+                    self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
+
+                await self._start_file_monitor(file_monitor)
                 return self._components
-            elif provider_type == "local" and not embedding_provider.is_available():
-                self.logger.info(
-                    "本地嵌入模型采用懒加载模式：将在首次向量化请求时加载。"
-                )
 
             # 2. 创建向量存储 (只有在 embedding_provider 可用时才会执行)
-            vector_store = self._create_vector_store(embedding_provider)
+            vector_store = self._create_vector_store(
+                embedding_provider,
+                rerank_provider=rerank_provider,
+            )
             self._components["vector_store"] = vector_store
             self.plugin_context.set_vector_store(vector_store)
 
@@ -180,7 +219,7 @@ class ComponentFactory:
             # 核心组件已就绪，立即标记初始化完成
             self._initialized = True
             self.logger.info("✅ 所有核心组件创建完成")
-            self.logger.info("✅ 记忆运行时: VectorMemoryRuntime")
+            self.logger.info("✅ 记忆运行时: Vector+BM25 Runtime")
 
             # 如果有初始化管理器，立即标记系统准备就绪
             # 此时"电脑已开机"，用户可以开始使用，不需要等待"硬盘整理"（文件监控）
@@ -218,15 +257,13 @@ class ComponentFactory:
 
         return embedding_provider
 
-    def _create_vector_store(self, embedding_provider):
+    def _create_vector_store(self, embedding_provider, rerank_provider=None):
         """创建向量存储"""
         self.logger.info("🗄️ 创建向量存储...")
 
         # 使用PluginContext的ChromaDB路径
         db_path = str(self.plugin_context.get_chroma_db_path())
         self.logger.info(f"📁 使用数据库路径: {db_path}")
-
-        rerank_provider = self._resolve_rerank_provider()
 
         vector_store = VectorStore(
             embedding_provider=embedding_provider,
@@ -257,7 +294,7 @@ class ComponentFactory:
         3. 上游 context 中第一个具备 rerank() 方法的提供商
         """
         try:
-            rerank_provider_id = self.plugin_context.get_config("rerank_provider_id", None)
+            rerank_provider_id = self.plugin_context.get_rerank_provider_id()
             llm_provider_id = self.plugin_context.get_llm_provider_id()
             candidate_ids = [
                 pid
@@ -322,11 +359,17 @@ class ComponentFactory:
         return cognitive_service
 
     def _create_memory_sql_manager(
-        self, decay_config: Optional[MemoryDecayConfig] = None
+        self,
+        decay_config: Optional[MemoryDecayConfig] = None,
+        rerank_provider: Optional[Any] = None,
     ) -> MemorySqlManager:
         """创建 SQL 记忆管理器（两种运行时共用）。"""
         simple_db_path = self.plugin_context.get_simple_memory_db_path()
-        manager = MemorySqlManager(simple_db_path, decay_config=decay_config)
+        manager = MemorySqlManager(
+            simple_db_path,
+            decay_config=decay_config,
+            rerank_provider=rerank_provider,
+        )
         self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
         return manager
 
@@ -334,16 +377,13 @@ class ComponentFactory:
         """创建统一记忆运行时。"""
         self.logger.info("🧩 创建统一记忆运行时...")
 
-        if self.plugin_context.get_config("enable_simple_memory", False):
+        if cognitive_service is None:
             runtime = SimpleMemoryRuntime(memory_sql_manager)
-            self.logger.info("✅ 统一记忆运行时创建完成 (SimpleMemoryRuntime)")
+            self.logger.info("✅ 统一记忆运行时创建完成 (BM25-only)")
             return runtime
 
-        if cognitive_service is None:
-            raise RuntimeError("向量模式下创建 memory_runtime 失败：cognitive_service 不可用。")
-
         runtime = VectorMemoryRuntime(cognitive_service)
-        self.logger.info("✅ 统一记忆运行时创建完成 (VectorMemoryRuntime)")
+        self.logger.info("✅ 统一记忆运行时创建完成 (Vector+BM25)")
         return runtime
 
     def _create_note_service(self, vector_store):

@@ -165,7 +165,14 @@ class MemoryConfig:
 
         self._data_directory = config_get("data_directory", self.data_dir)
         self._provider_id = config_get("provider_id", "")
-        self._rerank_provider_id = config_get("rerank_provider_id", "")
+        retrieval = config_get("retrieval", {}) or {}
+        if not isinstance(retrieval, dict):
+            retrieval = {}
+        self._rerank_provider_id = str(
+            retrieval.get("rerank_provider_id")
+            or config_get("rerank_provider_id", "")
+            or ""
+        )
 
         # 笔记 Top-K 配置（候选固定为注入的 7 倍）
         note_topk = config_get("note_topk", {})
@@ -176,7 +183,22 @@ class MemoryConfig:
         )
         self._note_candidate_top_k = self._note_top_k * 7
         self._note_inject_top_k = self._note_top_k
-        self._enable_local_embedding = config_get("enable_local_embedding", False)
+        legacy_local_embedding = bool(config_get("enable_local_embedding", False))
+        new_local_embedding = bool(retrieval.get("enable_local_embedding", False))
+        new_embedding_id = str(retrieval.get("embedding_provider_id", "") or "").strip()
+        new_rerank_id = str(retrieval.get("rerank_provider_id", "") or "").strip()
+        if (
+            "enable_local_embedding" in retrieval
+            and not new_local_embedding
+            and not new_embedding_id
+            and not new_rerank_id
+            and legacy_local_embedding
+        ):
+            self._enable_local_embedding = legacy_local_embedding
+        else:
+            self._enable_local_embedding = (
+                new_local_embedding if "enable_local_embedding" in retrieval else legacy_local_embedding
+            )
         self._conversation_scope_map = config_get("conversation_scope_map", {}) or {}
 
         # 灵魂系统配置 - 支持新旧格式兼容
