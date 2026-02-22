@@ -27,6 +27,7 @@ class DeepMindRetrievalService:
                 "session_id": context_data["session_id"],
                 "query": context_data.get("recall_query", ""),
                 "user_list": context_data.get("user_list", []),
+                "raw_chat_records": context_data.get("raw_chat_records", []),
                 "raw_memories": context_data.get("raw_memories", []),
                 "raw_notes": context_data.get("raw_notes", []),
                 "core_topic": context_data.get("core_topic", ""),

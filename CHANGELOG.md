@@ -2,6 +2,17 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.2.6] - 2026-02-22
+
+### Highlights
+- 反思链路从 `AstrMessageEvent` 解耦为纯数据输入，便于测试与审查。
+- 反思调度日志细化，覆盖入缓冲、触发判定、tick 扫描、执行完成与失败回滚。
+
+### Core Changes
+- `refactor(reflection)`: 新增 `ReflectionInput` 数据载体，反思执行入口改为 DTO 参数，不再依赖事件对象重建。
+- `refactor(reflection)`: 会话反思状态缓存改为持有 `latest_input`，移除反思路径中的事件/响应序列化依赖。
+- `feat(logging)`: 新增 `[反思调度]` / `[反思执行]` 关键日志，输出触发原因、会话、累计轮次、记录数、执行结果与回滚状态。
+
 ## [1.2.5] - 2026-02-22
 
 ### Highlights

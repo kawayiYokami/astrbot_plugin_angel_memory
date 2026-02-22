@@ -88,15 +88,14 @@ class DeepMindFeedbackService:
         else:
             deepmind.logger.error("记忆系统不可用，跳过反馈")
 
-    async def submit_async_analysis_task(self, event, response, session_id: str):
+    async def submit_async_analysis_task(self, reflection_input):
         deepmind = self.deepmind
+        session_id = getattr(reflection_input, "session_id", "unknown")
         task_payload = {
             "feedback_fn": deepmind._execute_async_analysis_task,
             "session_id": session_id,
             "payload": {
-                "event_data": deepmind._serialize_event_data(event),
-                "response_data": deepmind._serialize_response_data(response),
-                "session_id": session_id,
+                "reflection_input": reflection_input,
             },
         }
         await get_feedback_queue().submit(task_payload)
