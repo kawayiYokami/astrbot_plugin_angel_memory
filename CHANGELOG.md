@@ -2,6 +2,21 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.2.5] - 2026-02-22
+
+### Highlights
+- 检索策略进一步收敛为“能力分档”：重排能力与嵌入能力解耦，支持 BM25-only + 重排。
+- 记忆反思提示词精简为强规则版本，并移除 task 记忆生成要求。
+- 新增验收白名单，阻止 task 类型新记忆进入入库链路。
+
+### Core Changes
+- `refactor(retrieval)`: `HybridRetrievalEngine` 调整为先 BM25 候选，再按向量/重排能力组合策略。
+- `fix(retrieval)`: 重排失败自动降级到无重排策略（有向量降级融合，无向量降级 BM25）。
+- `feat(test)`: 增加混合检索模拟测试覆盖重排失败降级路径。
+- `refactor(prompt)`: `memory_system_guide_async.md` 改为精简强规则版，并删除 task 记忆要求。
+- `fix(validation)`: `MemoryIDResolver.normalize_new_memories_format` 增加类型白名单，仅允许 `knowledge/skill/emotional/event`。
+- `refactor(config)`: 调整向量化检索配置文案与顺序，强调“向量非必须、重排推荐”。
+
 ## [1.2.4] - 2026-02-22
 
 ### Highlights
