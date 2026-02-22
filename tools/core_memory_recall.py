@@ -5,6 +5,8 @@ from astrbot.api.event import AstrMessageEvent
 from dataclasses import dataclass, field
 
 from ..llm_memory.models.data_models import BaseMemory
+from ..core.session_memory import MemoryItem
+from ..core.utils.memory_formatter import MemoryFormatter
 
 # 导入日志记录器
 try:
@@ -135,14 +137,23 @@ class CoreMemoryRecallTool(FunctionTool):
                         del remaining_population[selected_idx]
                         del remaining_weights[selected_idx]
 
-            formatted_results = []
-            for i, mem in enumerate(sampled_memories, 1):
-                formatted_results.append(
-                    f"#{i}. [重要性: {mem.strength}]\n- 论断 (judgment): {mem.judgment}\n- 论证 (reasoning): {mem.reasoning}\n- 标签 (tags): {', '.join(mem.tags)}"
-                )
-
             self.logger.info(f"{self.name}: 成功抽取 {len(sampled_memories)} 条核心记忆。")
-            return "这是根据记忆强度加权抽取的核心记忆列表：\n\n" + "\n\n".join(formatted_results)
+            display_memories = [
+                MemoryItem(
+                    id=str(getattr(mem, "id", "") or ""),
+                    memory_type=(
+                        mem.memory_type.value
+                        if hasattr(mem.memory_type, "value")
+                        else str(mem.memory_type)
+                    ),
+                    judgment=str(getattr(mem, "judgment", "") or ""),
+                    reasoning=str(getattr(mem, "reasoning", "") or ""),
+                    tags=list(getattr(mem, "tags", []) or []),
+                    strength=int(getattr(mem, "strength", 0) or 0),
+                )
+                for mem in sampled_memories
+            ]
+            return MemoryFormatter.format_session_memories(display_memories)
 
         except Exception as e:
             self.logger.error(f"{self.name}: 执行主动回忆失败: {e}", exc_info=True)
