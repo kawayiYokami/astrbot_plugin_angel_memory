@@ -5,7 +5,7 @@
 让下游服务只需要依赖PluginContext即可获得所有必要资源。
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
 import re
 import json
@@ -187,8 +187,8 @@ class PluginContext:
             return
 
         validated: Dict[str, str] = {}
-        for raw_conversation_id, raw_scope in raw_map.items():
-            conversation_id = str(raw_conversation_id).strip()
+        for raw_key, raw_scope in raw_map.items():
+            conversation_id = str(raw_key).strip()
             scope_name = str(raw_scope).strip()
 
             if not conversation_id:
@@ -217,12 +217,45 @@ class PluginContext:
         """获取已校验的会话映射。"""
         return self._conversation_scope_map.copy()
 
-    def resolve_memory_scope(self, conversation_id: str) -> str:
-        """按会话ID解析当前记忆域，未命中时返回 public。"""
+    def resolve_memory_scope(self, conversation_id: str, persona_name: str = "") -> str:
+        """解析当前记忆域：优先人格名键，其次会话ID键，未命中返回 public。"""
+        scope, _, _ = self.resolve_memory_scope_with_source(
+            conversation_id, persona_name=persona_name
+        )
+        return scope
+
+    def resolve_memory_scope_with_source(
+        self, conversation_id: str, persona_name: str = ""
+    ) -> Tuple[str, str, str]:
+        """解析记忆域并返回命中来源：scope, matched_by, matched_key。"""
         normalized_id = str(conversation_id or "").strip()
         if not normalized_id:
             raise ValueError("conversation_id 为空，无法解析 memory_scope")
-        return self._conversation_scope_map.get(normalized_id, "public")
+        normalized_persona = str(persona_name or "").strip()
+        if normalized_persona:
+            scope_by_persona = self._conversation_scope_map.get(normalized_persona, "")
+            if scope_by_persona:
+                return scope_by_persona, "persona", normalized_persona
+        scope_by_conversation = self._conversation_scope_map.get(normalized_id, "")
+        if scope_by_conversation:
+            return scope_by_conversation, "conversation", normalized_id
+        return "public", "default", "public"
+
+    def get_event_persona_name(self, event) -> str:
+        """从事件中提取人格名（secretary_decision.persona_name）。"""
+        try:
+            raw_context = getattr(event, "angelheart_context", None)
+            if not raw_context:
+                return ""
+            context_data = json.loads(raw_context)
+            if not isinstance(context_data, dict):
+                return ""
+            secretary_decision = context_data.get("secretary_decision", {}) or {}
+            if not isinstance(secretary_decision, dict):
+                return ""
+            return str(secretary_decision.get("persona_name", "") or "").strip()
+        except Exception:
+            return ""
 
     def get_event_conversation_id(self, event) -> str:
         """从事件中提取统一会话ID。"""
@@ -238,7 +271,10 @@ class PluginContext:
 
     def resolve_memory_scope_from_event(self, event) -> str:
         """从事件直接解析 memory_scope。"""
-        return self.resolve_memory_scope(self.get_event_conversation_id(event))
+        return self.resolve_memory_scope(
+            self.get_event_conversation_id(event),
+            persona_name=self.get_event_persona_name(event),
+        )
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """获取配置值"""

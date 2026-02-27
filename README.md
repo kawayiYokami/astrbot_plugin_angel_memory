@@ -87,12 +87,24 @@
 |--------|--------|------|
 | `provider_id` | "" | 记忆整理LLM提供商ID |
 | `astrbot_embedding_provider_id` | "local" | 嵌入模型提供商ID |
+| `conversation_scope_map` | "{}" | 记忆分类映射（先按人格名匹配，再按会话ID匹配，未命中为public） |
 | `enable_local_embedding` | false | 是否启用本地嵌入模型 |
 | `enable_simple_memory` | false | 启用简化记忆模式（SQL+tags，无需向量） |
 | `min_message_length` | 5 | 触发记忆处理的最小消息长度 |
 | `sleep_interval` | 3600 | 记忆巩固间隔（秒） |
 | `short_term_memory_capacity` | 1.0 | 短期记忆容量倍数（0.1-10.0） |
 | `soul_*_mid` | - | 灵魂系统各维度的默认值 |
+
+`conversation_scope_map` 示例：
+
+```json
+{
+  "女友": "恋爱",
+  "aiocqhttp:group:12345": "家人"
+}
+```
+
+匹配顺序：先人格名（`secretary_decision.persona_name`），后会话ID（`unified_msg_origin`）。
 
 ## 🧰 Debug Tool（查看记忆 + 导入导出）
 

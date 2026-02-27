@@ -52,7 +52,7 @@ def configure_logging_behavior():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "1.2.6",
+    "1.2.8",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -246,8 +246,22 @@ class AngelMemoryPlugin(Star):
                 return
 
             self._conversation_id_logged_once.add(conversation_id)
+            persona_name = self.plugin_context.get_event_persona_name(event)
+            resolved_scope, matched_by, matched_key = (
+                self.plugin_context.resolve_memory_scope_with_source(
+                    conversation_id, persona_name=persona_name
+                )
+            )
+            match_desc = {
+                "persona": "人格键",
+                "conversation": "会话ID键",
+                "default": "默认规则",
+            }.get(matched_by, matched_by)
             self.logger.info(
-                f"[会话分类提示] 当前会话ID键: {conversation_id}。可在配置中设置 conversation_scope_map: {{\"{conversation_id}\": \"家人\"}}"
+                f"[会话分类提示] 当前人格={persona_name or '(空)'} 当前会话ID={conversation_id} "
+                f"命中来源={match_desc} 命中键={matched_key} 目标scope={resolved_scope}。"
+                f"注意：以下仅为配置示例，不会自动写入。"
+                f"conversation_scope_map 示例：{{\"{conversation_id}\": \"家人\", \"{persona_name or '女友'}\": \"恋爱\"}}"
             )
         except Exception as e:
             self.logger.debug(f"会话ID日志记录失败（已忽略）: {e}")
