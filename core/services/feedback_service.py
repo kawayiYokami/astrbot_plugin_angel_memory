@@ -11,10 +11,16 @@ class DeepMindFeedbackService:
         self.deepmind = deepmind
 
     async def update_memory_system(
-        self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
+        self,
+        feedback_data: Dict[str, Any],
+        long_term_memories: List,
+        session_id: str,
+        persona_name: str = "",
     ) -> None:
         deepmind = self.deepmind
-        memory_scope = deepmind.plugin_context.resolve_memory_scope(session_id)
+        memory_scope = deepmind.plugin_context.resolve_memory_scope(
+            session_id, persona_name=persona_name
+        )
 
         useful_memory_ids = feedback_data.get("useful_memory_ids", [])
         recalled_memory_ids = [memory.id for memory in (long_term_memories or []) if getattr(memory, "id", None)]

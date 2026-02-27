@@ -33,12 +33,12 @@
   },
   "conversation_scope_map": {
     "type": "text",
-    "description": "[记忆分类] 会话ID到记忆分类域的映射",
+    "description": "[记忆分类] 文本键到记忆分类域的映射（人格名优先，其次会话ID）",
     "default": "{}",
     "editor_mode": true,
     "editor_language": "json",
     "editor_theme": "vs-dark",
-    "hint": "JSON格式配置，键为会话ID，值为记忆分类域。示例：{\"aiocqhttp:group:12345\":\"家人\",\"aiocqhttp:friend:67890\":\"公司\"}。未配置会话默认 public。scope 名仅允许字母/数字/中文/下划线/短横线。"
+    "hint": "JSON格式配置，键可为人格名或会话ID，值为记忆分类域。匹配顺序：先人格名（secretary_decision.persona_name），后会话ID（unified_msg_origin）。示例：{\"女友\":\"恋爱\",\"aiocqhttp:group:12345\":\"家人\"}。未命中默认 public。scope 名仅允许字母/数字/中文/下划线/短横线。"
   },
   "memory_behavior": {
     "type": "object",

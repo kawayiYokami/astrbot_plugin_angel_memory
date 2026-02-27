@@ -731,7 +731,7 @@ class DeepMind:
                 memory_context = {}
 
         try:
-            memory_scope = self.plugin_context.resolve_memory_scope(session_id)
+            memory_scope = self.plugin_context.resolve_memory_scope_from_event(event)
         except Exception:
             memory_scope = "public"
 
@@ -1073,7 +1073,14 @@ class DeepMind:
             #    (以及我们之前讨论过的，让 feedback 返回新创建的对象)
             newly_created_memories = []
             if self.memory_system:
-                memory_scope = self.plugin_context.resolve_memory_scope(session_id)
+                persona_name = ""
+                if hasattr(reflection_input, "secretary_decision"):
+                    sd = getattr(reflection_input, "secretary_decision", {}) or {}
+                    if isinstance(sd, dict):
+                        persona_name = str(sd.get("persona_name", "") or "").strip()
+                memory_scope = self.plugin_context.resolve_memory_scope(
+                    session_id, persona_name=persona_name
+                )
                 # 直接异步调用
                 newly_created_memories = await self.memory_system.feedback(
                     useful_memory_ids=feedback_data.get("useful_memory_ids", []),
