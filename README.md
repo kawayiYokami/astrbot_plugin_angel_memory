@@ -23,12 +23,26 @@
 3. **note_recall** - 展开笔记完整上下文（深度阅读能力）
 4. **research_topic** - 启动独立研究Agent（自主学习能力）
 
-### ⚡ 智能记忆系统
-- **双轨记忆架构**：主动记忆（永久保存）+ 被动记忆（自然衰减）
-- **双模式运行**：向量模式（语义检索）或 Simple模式（SQL+tags，无需向量依赖）
-- **链式召回机制**：混合检索（向量 + 可选 rerank_provider 重排）+ 实体优先 + 类型分组
+### ⚡ 智能检索系统
+
+**三层独立能力，按配置自动组合：**
+
+| 层级 | 能力 | 说明 |
+|------|------|------|
+| **BM25** | Tantivy + jieba 预分词 | 始终可用，强关键词检索 |
+| **嵌入向量** | 语义相似度 | 可选，有则与 BM25 融合增强 |
+| **重排** | rerank_provider | 可选，独立于嵌入，BM25 候选也能重排 |
+
+**检索策略自动选择：**
+
+- 无向量、无重排 → BM25 直出
+- 有向量、无重排 → 向量 + BM25 融合
+- 有重排 → 候选重排（无论是否有向量）
+
+**向量带来的额外提升通常较小，重排效果提升明显。推荐优先配置 rerank_provider。**
+
 - **睡眠巩固**：定期清理弱记忆，强化重要内容
-- **中央索引维护（已实现）**：睡眠维护管线自动执行“向量→中央迁移、记忆向量库同步、笔记向量库同步、每日JSON备份”
+- **中央索引维护**：睡眠维护管线自动执行"向量→中央迁移、记忆向量库同步、笔记向量库同步、每日JSON备份"
 
 ### 🎨 灵魂状态系统
 通过4维能量槽实现**情感化AI行为**：
@@ -85,15 +99,13 @@
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `provider_id` | "" | 记忆整理LLM提供商ID |
-| `astrbot_embedding_provider_id` | "local" | 嵌入模型提供商ID |
+| `provider_id` | "" | 记忆整理LLM提供商ID（建议有思考能力的模型） |
+| `retrieval.embedding_provider_id` | "" | 嵌入模型提供商ID（可选，实测提升有限） |
+| `retrieval.rerank_provider_id` | "" | 重排提供商ID（推荐，效果提升明显） |
 | `conversation_scope_map` | "{}" | 记忆分类映射（先按人格名匹配，再按会话ID匹配，未命中为public） |
-| `enable_local_embedding` | false | 是否启用本地嵌入模型 |
-| `enable_simple_memory` | false | 启用简化记忆模式（SQL+tags，无需向量） |
-| `min_message_length` | 5 | 触发记忆处理的最小消息长度 |
-| `sleep_interval` | 3600 | 记忆巩固间隔（秒） |
-| `short_term_memory_capacity` | 1.0 | 短期记忆容量倍数（0.1-10.0） |
-| `soul_*_mid` | - | 灵魂系统各维度的默认值 |
+| `memory_behavior.min_message_length` | 5 | 触发记忆处理的最小消息长度 |
+| `memory_behavior.sleep_interval` | 3600 | 记忆巩固间隔（秒） |
+| `enable_soul_system.*` | - | 灵魂系统各维度的默认值 |
 
 `conversation_scope_map` 示例：
 
@@ -124,20 +136,20 @@ streamlit run debug_tool/app.py
 - `🧾 浏览Simple记忆`：查看 `simple_memory.db` 中的记忆（支持 scope/关键词）
 - `🗂️ 中央笔记索引`：分页查看 `note_index_records + note_tag_rel`，含 `note_short_id/总行数`
 - `🔎 note_recall 调试`：按 `note_short_id + 行范围` 模拟读取正文
-- `🔄 导入导出`：对 Simple 记忆进行 JSON 导出/导入
+- `🔄 导入导出`：对记忆进行 JSON 导出/导入
 
 导出步骤：
 
 1. 进入 `🔄 导入导出`
 2. 可选填写 `scope`（留空导出全部）
-3. 点击“生成导出文件”
-4. 点击“下载 JSON”
+3. 点击"生成导出文件"
+4. 点击"下载 JSON"
 
 导入步骤：
 
 1. 进入 `🔄 导入导出`
 2. 上传 JSON 文件
-3. 点击“执行导入”
+3. 点击"执行导入"
 
 导入规则：
 
@@ -301,7 +313,7 @@ raw/
     ↓
 【潜意识层 - DeepMind】
     ├─ 观察：消息预处理 + 实体提取
-    ├─ 回忆：链式召回（向量检索+可选二阶段重排）
+    ├─ 回忆：三层检索（BM25 → 向量融合 → 重排）
     │   ├─ 记忆轨道：已内化的知识
     │   └─ 笔记轨道：知识库短条目
     ├─ 灵魂共鸣：旧记忆状态影响当前决策
@@ -343,67 +355,56 @@ raw/
 
 ## 🔧 高级配置
 
+### 检索能力配置
+
+```yaml
+retrieval:
+  # 嵌入向量（可选，实测提升有限）
+  embedding_provider_id: ""
+  enable_local_embedding: false
+
+  # 重排（推荐，效果提升明显，独立于嵌入）
+  rerank_provider_id: ""  # 留空则自动尝试复用 provider_id
+```
+
+**推荐配置优先级：**
+
+1. **最小配置**：只需 `provider_id`，BM25 检索已足够好用
+2. **推荐升级**：添加 `rerank_provider_id`，效果提升明显
+3. **可选增强**：添加 `embedding_provider_id`，语义检索补充
+
 ### 睡眠维护同步（中央索引）
 
-当前状态：`已实现`（无需额外功能开关，随睡眠维护管线自动执行）。
+睡眠维护管线自动执行，无需额外配置：
 
-触发与模式：
-- `向量 -> 中央迁移`：在向量模式（`enable_simple_memory=false`）下，按 provider 变化触发（同 provider 已迁移则跳过）。
-- `记忆向量库同步`：在向量模式下，睡眠前维护阶段按 provider 变化触发；同步中央记忆索引到 `memory_index`。
-- `笔记向量库同步`：在向量模式下，睡眠后维护阶段执行；provider 变化时全量重建 `notes_index`，否则按名单增量同步（新增补写、失效删除）。
-- `Simple 模式`（`enable_simple_memory=true`）：跳过记忆/笔记向量库同步。
-- `每日JSON备份`：中央库每天 1 次，最多保留 3 份。
+- **向量→中央迁移**：按 provider 变化触发
+- **记忆向量库同步**：睡眠前维护阶段执行
+- **笔记向量库同步**：睡眠后维护阶段执行
+- **每日JSON备份**：每天1次，最多保留3份
 
-是否需要用户配置：
-- 常规使用无需额外配置同步开关。
-- 频率由 `sleep_interval` 决定；当睡眠周期触发时，维护任务随之触发。
-- 若需要记忆/笔记向量库同步，必须可用嵌入提供商（向量化写入需要 embedding）。
-
-频率与性能影响：
-- 默认频率：随 `sleep_interval`（默认 `3600` 秒）周期执行。
-- 吞吐/延迟：迁移与同步会增加一次睡眠周期内的 I/O 与向量化耗时；规模越大，单次维护耗时越高。
-- 失败与重试：单次失败会记录错误日志；后续睡眠周期会再次尝试，不阻塞主对话流程。
+频率由 `sleep_interval` 控制（默认3600秒）。
 
 ### 灵魂系统调优
 
 ```yaml
-# 调整AI的行为倾向（通过配置mid值）
-soul_recall_depth_mid: 7        # 回忆深度（1-20）
-soul_impression_depth_mid: 3    # 记住倾向（1-10）
-soul_expression_desire_mid: 0.5 # 表达欲望（0.0-1.0）
-soul_creativity_mid: 0.7        # 创造力（0.0-1.0）
+enable_soul_system:
+  enabled: true
+  recall_depth_mid: 7        # 回忆深度（1-20）
+  impression_depth_mid: 3    # 记住倾向（1-10）
+  expression_desire_mid: 0.5 # 表达欲望（0.0-1.0）
+  creativity_mid: 0.7        # 创造力（0.0-1.0）
 ```
 
 ### 性能优化
 
 ```yaml
-# Token预算控制
 note_topk:
   top_k: 8                      # 注入笔记数量上限（候选固定为7倍）
 
-# 记忆系统
-short_term_memory_capacity: 1.0 # 短期记忆容量
-sleep_interval: 3600            # 巩固间隔（秒）
-
+memory_behavior:
+  short_term_memory_capacity: 1 # 短期记忆容量倍数
+  sleep_interval: 3600          # 巩固间隔（秒）
 ```
-
-### 嵌入模型选择
-
-**推荐新手直接用 Simple 模式：**
-
-- `enable_simple_memory: true`
-- 不需要配置嵌入模型
-- 可直接使用记忆查看、导入导出、睡眠维护
-
-**进阶再用向量模式：**
-
-- `enable_simple_memory: false`
-- 需要配置可用的嵌入 provider（本地或 API）
-- 适合追求语义检索效果的场景
-
-补充：
-- 只用 Simple 模式时，不需要关心向量回灌。
-- 只有启用向量模式时，`SQL → 向量` 回灌才会执行（回灌时会重新向量化）。
 
 ## 🐛 故障排查
 
@@ -413,9 +414,9 @@ sleep_interval: 3600            # 巩固间隔（秒）
 - 检查是否已安装`astrbot_plugin_angel_heart`
 - 查看日志确认具体错误信息
 
-**Q: 向量化速度慢？**
-- 考虑使用API提供商而非本地模型
-- 调整Token预算减少处理量
+**Q: 检索效果不好？**
+- 推荐配置 `rerank_provider_id`
+- 检查知识库条目是否过长（建议100字以内）
 
 **Q: 记忆系统不工作？**
 - 确认`provider_id`已正确配置
@@ -423,7 +424,7 @@ sleep_interval: 3600            # 巩固间隔（秒）
 
 **Q: 灵魂系统参数异常？**
 - 检查能量值是否超出软限制（-20到+20）
-- 验证配置中的min/mid/max值设置
+- 验证配置中的mid值设置
 
 ### 日志调试
 
@@ -464,8 +465,8 @@ ruff format .
 感谢所有贡献者和用户的支持！
 
 - [AstrBot](https://github.com/Soulter/AstrBot) - 优秀的QQ机器人框架
-- [ChromaDB](https://www.trychroma.com/) - 强大的向量数据库
-- [sentence-transformers](https://www.sbert.net/) - 高质量的嵌入模型
+- [Tantivy](https://github.com/quickwit-oss/tantivy) - 高性能全文搜索引擎
+- [jieba](https://github.com/fxsjy/jieba) - 中文分词组件
 
 ---
 
