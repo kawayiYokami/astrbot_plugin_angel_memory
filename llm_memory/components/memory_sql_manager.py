@@ -1488,7 +1488,7 @@ class MemorySqlManager:
         return records
 
     @staticmethod
-    def _build_vector_text(judgment: str, tags: List[str]) -> str:
+    def build_vector_text(judgment: str, tags: List[str]) -> str:
         """构建轻量向量索引文本。"""
         safe_judgment = str(judgment or "").strip()
         safe_tags = [str(tag).strip() for tag in (tags or []) if str(tag).strip()]
@@ -1526,7 +1526,7 @@ class MemorySqlManager:
             memory_id = str(row["id"])
             judgment = str(row["judgment"] or "")
             tag_tokens = [t for t in str(row["tags"] or "").split(" ") if t]
-            vector_text = self._build_vector_text(judgment, tag_tokens)
+            vector_text = self.build_vector_text(judgment, tag_tokens)
             if not vector_text:
                 continue
             result.append({"id": memory_id, "vector_text": vector_text})

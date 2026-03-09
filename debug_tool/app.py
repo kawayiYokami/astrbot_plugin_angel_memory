@@ -221,7 +221,33 @@ elif mode == "🧾 中央记忆浏览":
     st.caption(f"总记录 {total}，当前页 {len(items)} 条")
     for item in items:
         with st.container(border=True):
-            render_item(item)
+            memory_id = item.get("id", "")
+            col_content, col_delete = st.columns([5, 1])
+            with col_content:
+                render_item(item)
+            with col_delete:
+                # 删除按钮
+                delete_key = f"delete_btn_{memory_id}"
+                confirm_key = f"delete_confirm_{memory_id}"
+                if st.button("🗑️", key=delete_key, help="删除此记忆"):
+                    st.session_state[confirm_key] = True
+
+            # 删除确认对话框
+            if st.session_state.get(confirm_key, False):
+                st.warning(f"确认删除记忆 `{memory_id[:8]}...`？此操作不可撤销！")
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    if st.button("✅ 确认删除", key=f"confirm_yes_{memory_id}"):
+                        result = db_mgr.delete_memory_by_id(memory_id)
+                        st.session_state[confirm_key] = False
+                        if result.get("success"):
+                            st.toast(f"删除成功：{result.get('deleted_from')}", icon="✅")
+                        else:
+                            st.toast(f"删除失败：{result.get('error')}", icon="❌")
+                with col_c2:
+                    if st.button("❌ 取消", key=f"confirm_no_{memory_id}"):
+                        st.session_state[confirm_key] = False
+
             with st.expander("元数据"):
                 st.json(item.get("metadata", {}))
 

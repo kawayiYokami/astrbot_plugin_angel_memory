@@ -2,6 +2,19 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.2.9] - 2026-03-09
+
+### Highlights
+- 修复记忆合并后向量索引丢失的问题，合并记忆现在可被向量检索正确命中。
+- 公开 `build_vector_text` 方法，消除跨层调用私有方法的代码异味。
+
+### Bug Fixes
+- `fix(vector)`: 合并记忆后新增向量 upsert，修复合并记忆无法被向量检索命中的问题。
+- `fix(style)`: `memory_vector_sync_service.py` 末尾补充缺失的换行符。
+
+### Refactor
+- `refactor(api)`: `_build_vector_text` → `build_vector_text`，公开为正式 API，更新所有调用点。
+
 ## [1.2.6] - 2026-02-22
 
 ### Highlights
