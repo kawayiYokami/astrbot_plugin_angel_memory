@@ -508,13 +508,63 @@ class MemoryManager:
         3. 合并重复记忆
         """
         if self.memory_sql_manager is not None:
-            return await self.memory_sql_manager.process_feedback(
+            result = await self.memory_sql_manager.process_feedback(
                 useful_memory_ids=useful_memory_ids,
                 recalled_memory_ids=recalled_memory_ids,
                 new_memories=new_memories,
                 merge_groups=merge_groups,
                 memory_scope=memory_scope,
             )
+            # 修复：中央库模式合并记忆时，同步删除向量索引并为合并记忆写入新向量
+            if merge_groups and self.memory_index_collection is not None:
+                ids_to_delete = []
+                for group in merge_groups:
+                    if isinstance(group, list):
+                        ids_to_delete.extend([str(mid) for mid in group if mid])
+
+                if ids_to_delete:
+                    try:
+                        import asyncio
+                        await asyncio.to_thread(
+                            self.memory_index_collection.delete,
+                            ids=ids_to_delete,
+                        )
+                        self.logger.debug(
+                            f"已从 memory_index 删除 {len(ids_to_delete)} 条合并前的记忆向量"
+                        )
+                    except Exception as e:
+                        self.logger.warning(
+                            f"从 memory_index 删除合并记忆向量失败: {e}"
+                        )
+
+                # 为新合并记忆写入向量索引（不嵌套在 ids_to_delete 内，upsert 是幂等的）
+                if result:
+                    rows_to_index = []
+                    for merged_memory in result:
+                        if merged_memory and hasattr(merged_memory, 'id'):
+                            vector_text = self.memory_sql_manager.build_vector_text(
+                                judgment=getattr(merged_memory, 'judgment', ''),
+                                tags=getattr(merged_memory, 'tags', []),
+                            )
+                            if vector_text:
+                                rows_to_index.append({
+                                    'id': merged_memory.id,
+                                    'vector_text': vector_text,
+                                })
+                    if rows_to_index:
+                        try:
+                            await self.store.upsert_memory_index_rows(
+                                collection=self.memory_index_collection,
+                                rows=rows_to_index,
+                            )
+                            self.logger.debug(
+                                f"已为 {len(rows_to_index)} 个合并记忆添加向量索引"
+                            )
+                        except Exception as e:
+                            self.logger.warning(
+                                f"为合并记忆添加向量索引失败（不影响主流程）: {e}"
+                            )
+            return result
 
         useful_memory_ids = useful_memory_ids or []
         recalled_memory_ids = recalled_memory_ids or []

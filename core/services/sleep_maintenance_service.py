@@ -262,7 +262,8 @@ class SleepMaintenanceService:
             to_delete = vector_id_set - sql_ids
 
             if to_delete:
-                await self._delete_collection_ids(notes_index, list(to_delete))
+                deleted = await self._delete_collection_ids(notes_index, list(to_delete))
+                deepmind.logger.debug(f"[睡眠维护] 笔记向量库同步：成功删除 {deleted} 个失效记录")
 
             if to_add:
                 add_rows = [row for row in rows if str(row.get("id") or "").strip() in to_add]
@@ -304,12 +305,21 @@ class SleepMaintenanceService:
         return ids
 
     @staticmethod
-    async def _delete_collection_ids(collection, ids: list[str], batch_size: int = 5000) -> None:
+    async def _delete_collection_ids(collection, ids: list[str], batch_size: int = 5000) -> int:
+        """分批删除向量库中的记录，返回实际删除的记录数"""
         if not ids:
-            return
+            return 0
+
+        deleted_count = 0
         for i in range(0, len(ids), batch_size):
             chunk = ids[i : i + batch_size]
-            collection.delete(ids=chunk)
+            try:
+                await asyncio.to_thread(collection.delete, ids=chunk)
+                deleted_count += len(chunk)
+            except Exception as e:
+                raise RuntimeError(f"删除批次失败（已删除 {deleted_count} 条）: {e}") from e
+
+        return deleted_count
 
     async def _task_memory_scope_migration(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind

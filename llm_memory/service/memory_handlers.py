@@ -87,7 +87,7 @@ class MemoryHandler:
             )
             if self.memory_index_collection is not None:
                 try:
-                    vector_text = self.memory_sql_manager._build_vector_text(
+                    vector_text = self.memory_sql_manager.build_vector_text(
                         judgment=memory.judgment,
                         tags=memory.tags,
                     )

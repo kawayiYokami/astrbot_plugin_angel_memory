@@ -805,3 +805,60 @@ class DBManager:
             }
         except Exception as e:
             return {"error": str(e)}
+
+    # ===== delete =====
+
+    def delete_memory_by_id(self, memory_id: str) -> Dict[str, Any]:
+        """
+        安全删除单条记忆（向量 + SQL 关联 + 主记录）
+
+        Args:
+            memory_id: 记忆 ID
+
+        Returns:
+            {"success": bool, "deleted_from": [...], "error": str|None}
+        """
+        memory_id = str(memory_id or "").strip()
+        if not memory_id:
+            return {"success": False, "deleted_from": [], "error": "memory_id 为空"}
+
+        deleted_from = []
+        errors = []
+
+        # 1. 删除向量库中的记忆
+        if self.has_vector_db():
+            try:
+                memory_index = self.client.get_collection("memory_index")
+                # 先检查记忆是否存在
+                existing = memory_index.get(ids=[memory_id])
+                if existing and existing.get("ids") and len(existing["ids"]) > 0:
+                    memory_index.delete(ids=[memory_id])
+                    deleted_from.append("memory_index")
+                # 如果不存在，视为无操作（无错误）
+            except Exception as e:
+                errors.append(f"向量库删除失败: {e}")
+
+        # 2. 删除 SQL 记录（事务内删除关联 + 主记录）
+        if self.has_central_db():
+            try:
+                with self.central_conn:
+                    # 删除标签关联
+                    self.central_conn.execute(
+                        "DELETE FROM memory_tag_rel WHERE memory_id = ?", (memory_id,)
+                    )
+                    # 删除主记录
+                    cursor = self.central_conn.execute(
+                        "DELETE FROM memory_records WHERE id = ?", (memory_id,)
+                    )
+                    if cursor.rowcount > 0:
+                        deleted_from.append("memory_records")
+                        deleted_from.append("memory_tag_rel")
+            except Exception as e:
+                errors.append(f"SQL 删除失败: {e}")
+
+        success = len(deleted_from) > 0
+        return {
+            "success": success,
+            "deleted_from": list(set(deleted_from)),
+            "error": "; ".join(errors) if errors else None,
+        }
