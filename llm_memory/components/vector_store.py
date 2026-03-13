@@ -1181,7 +1181,6 @@ class VectorStore:
             rerank_resp = rerank_method(
                 query=safe_query,
                 documents=documents,
-                top_n=limit,
             )
 
             if inspect.isawaitable(rerank_resp):

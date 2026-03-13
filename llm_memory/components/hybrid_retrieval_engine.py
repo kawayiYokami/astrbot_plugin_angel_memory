@@ -60,7 +60,6 @@ class HybridRetrievalEngine:
         query: str,
         ordered_ids: List[str],
         doc_text_map: Dict[str, str],
-        top_n: int,
     ) -> List[Dict[str, float]]:
         if not ordered_ids or not self.has_rerank():
             return []
@@ -76,7 +75,7 @@ class HybridRetrievalEngine:
                 documents.append(text)
 
             rerank_method = self.rerank_provider.rerank
-            rerank_resp = rerank_method(query=str(query or ""), documents=documents, top_n=int(top_n))
+            rerank_resp = rerank_method(query=str(query or ""), documents=documents)
             if inspect.isawaitable(rerank_resp):
                 rerank_resp = await rerank_resp
             items = self._extract_rerank_results(rerank_resp)
@@ -187,7 +186,6 @@ class HybridRetrievalEngine:
             query=safe_query,
             ordered_ids=merged_ids,
             doc_text_map=doc_text_map,
-            top_n=max(1, int(limit)),
         )
         if reranked:
             return [{"id": x["id"], "final_score": float(x.get("final_score", 0.0))} for x in reranked]
