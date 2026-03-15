@@ -116,7 +116,7 @@
 }
 ```
 
-匹配顺序：先人格名（`secretary_decision.persona_name`），后会话ID（`unified_msg_origin`）。
+匹配顺序：先当前人格名（Persona名），后会话ID（`unified_msg_origin`）。
 
 ## 🧰 Debug Tool（查看记忆 + 导入导出）
 
