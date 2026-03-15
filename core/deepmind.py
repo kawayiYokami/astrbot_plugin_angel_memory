@@ -1092,7 +1092,6 @@ class DeepMind:
                     new_memories=new_memories_normalized,  # <--- 使用转换后的数据
                     merge_groups=feedback_data.get("merge_groups", []),
                     memory_scope=memory_scope,
-            persona_name=persona_name,
                 )
 
             # 2. 更新短期记忆

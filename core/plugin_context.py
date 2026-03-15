@@ -241,21 +241,58 @@ class PluginContext:
             return scope_by_conversation, "conversation", normalized_id
         return "public", "default", "public"
 
+    @staticmethod
+    def _normalize_persona_identifier(raw_value: Any) -> str:
+        """将 persona 返回值规整为可用于 scope_map 匹配的人格名。"""
+        if isinstance(raw_value, dict):
+            value = str(raw_value.get("name", "") or "").strip()
+        else:
+            value = str(raw_value or "").strip()
+        if value == "[%None]":
+            return ""
+        return value
+
     async def get_event_persona_name(self, event) -> str:
         """
-        从会话系统获取人格名（persona_id），实现与 mnemosyne 的 get_persona 同源思路：
-        - 优先：context.persona_mgr.get_default_persona_v3(unified_msg_origin)
-        - 兜底：context.persona_manager.selected_default_persona_v3.name
+        获取“当前事件最终生效的人格名”。
+        解析顺序与 AstrBot 主链路一致：session override > conversation persona > provider 默认人格。
         """
+        umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        if not umo:
+            return ""
+
+        conversation_persona_id = None
         try:
-            umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
-            if umo:
-                persona_mgr = getattr(self.astrbot_context, "persona_mgr", None)
-                if persona_mgr is not None and hasattr(persona_mgr, "get_default_persona_v3"):
-                    persona_id = await persona_mgr.get_default_persona_v3(umo)
-                    persona_id = str(persona_id or "").strip()
-                    if persona_id and persona_id != "[%None]":
-                        return persona_id
+            conversation_manager = getattr(self.astrbot_context, "conversation_manager", None)
+            if conversation_manager is not None:
+                curr_cid = await conversation_manager.get_curr_conversation_id(umo)
+                if curr_cid:
+                    conversation = await conversation_manager.get_conversation(umo, curr_cid)
+                    if conversation is not None:
+                        conversation_persona_id = self._normalize_persona_identifier(
+                            getattr(conversation, "persona_id", None)
+                        ) or None
+        except Exception:
+            pass
+
+        try:
+            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
+            if persona_manager is not None and hasattr(persona_manager, "resolve_selected_persona"):
+                platform_name = ""
+                if hasattr(event, "get_platform_name"):
+                    platform_name = str(event.get_platform_name() or "").strip()
+                persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
+                    umo=umo,
+                    conversation_persona_id=conversation_persona_id,
+                    platform_name=platform_name,
+                    provider_settings=None,
+                )
+                normalized_id = self._normalize_persona_identifier(persona_id)
+                if normalized_id:
+                    return normalized_id
+                normalized_name = self._normalize_persona_identifier(persona)
+                if normalized_name:
+                    return normalized_name
         except Exception:
             pass
 
@@ -266,10 +303,9 @@ class PluginContext:
                 if persona_manager is not None
                 else None
             )
-            if isinstance(default_persona, dict):
-                name = str(default_persona.get("name", "") or "").strip()
-                if name and name != "[%None]":
-                    return name
+            normalized_default = self._normalize_persona_identifier(default_persona)
+            if normalized_default:
+                return normalized_default
         except Exception:
             pass
 
