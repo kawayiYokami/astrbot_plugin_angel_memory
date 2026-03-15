@@ -242,20 +242,45 @@ class PluginContext:
         return "public", "default", "public"
 
     def get_event_persona_name(self, event) -> str:
-        """从事件中提取人格名（secretary_decision.persona_name）。"""
+        """
+        从事件中提取人格名。
+
+        兼容来源（按优先级）：
+        1) secretary_decision.persona_id（与旧字段 persona_name 同义）
+        2) secretary_decision.persona_name（旧兼容）
+        3) 全局默认人格（参考 mnemosyne 的 get_persona 思路）
+        """
+        # 1) 优先从 angelheart_context 的 secretary_decision 中读取 persona_id/persona_name
         try:
             raw_context = getattr(event, "angelheart_context", None)
-            if not raw_context:
-                return ""
-            context_data = json.loads(raw_context)
-            if not isinstance(context_data, dict):
-                return ""
-            secretary_decision = context_data.get("secretary_decision", {}) or {}
-            if not isinstance(secretary_decision, dict):
-                return ""
-            return str(secretary_decision.get("persona_name", "") or "").strip()
+            if raw_context:
+                context_data = json.loads(raw_context)
+                if isinstance(context_data, dict):
+                    secretary_decision = context_data.get("secretary_decision", {}) or {}
+                    if isinstance(secretary_decision, dict):
+                        persona_id = str(secretary_decision.get("persona_id", "") or "").strip()
+                        if persona_id:
+                            return persona_id
+                        persona_name = str(secretary_decision.get("persona_name", "") or "").strip()
+                        if persona_name:
+                            return persona_name
         except Exception:
-            return ""
+            pass
+
+        # 2) 兜底：尝试读取 AstrBot 默认人格
+        try:
+            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
+            default_persona = (
+                getattr(persona_manager, "selected_default_persona_v3", None)
+                if persona_manager is not None
+                else None
+            )
+            if isinstance(default_persona, dict):
+                return str(default_persona.get("name", "") or "").strip()
+        except Exception:
+            pass
+
+        return ""
 
     def get_event_conversation_id(self, event) -> str:
         """从事件中提取统一会话ID。"""

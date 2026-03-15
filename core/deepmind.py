@@ -1077,7 +1077,7 @@ class DeepMind:
                 if hasattr(reflection_input, "secretary_decision"):
                     sd = getattr(reflection_input, "secretary_decision", {}) or {}
                     if isinstance(sd, dict):
-                        persona_name = str(sd.get("persona_name", "") or "").strip()
+                        persona_name = str(sd.get("persona_id", "") or sd.get("persona_name", "") or "").strip()
                 memory_scope = self.plugin_context.resolve_memory_scope(
                     session_id, persona_name=persona_name
                 )
