@@ -64,7 +64,9 @@ class CoreMemoryRecallTool(FunctionTool):
             memory_runtime = plugin_context.get_component("memory_runtime")
             if not memory_runtime:
                 raise ValueError("memory_runtime 未在 PluginContext 中注册。")
-            memory_scope = plugin_context.resolve_memory_scope_from_event(event)
+            memory_scope = await plugin_context.resolve_memory_scope_from_event(event)
+            if not isinstance(memory_scope, str):
+                memory_scope = str(memory_scope)
         except Exception as e:
             self.logger.error(f"{self.name}: 无法获取上下文信息或 memory_runtime 实例: {e}")
             return "错误：无法确定当前会话ID，主动回忆已拒绝（严格隔离模式）。"

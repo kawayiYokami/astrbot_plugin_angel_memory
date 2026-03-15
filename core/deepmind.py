@@ -42,6 +42,7 @@ class ReflectionInput:
 
     session_id: str
     memory_scope: str
+    persona_name: str
     latest_user_text: str
     latest_assistant_text: str
     secretary_decision: Dict[str, Any] = field(default_factory=dict)
@@ -735,9 +736,15 @@ class DeepMind:
         except Exception:
             memory_scope = "public"
 
+        try:
+            persona_name = await self.plugin_context.get_event_persona_name(event)
+        except Exception:
+            persona_name = ""
+
         return ReflectionInput(
             session_id=session_id,
             memory_scope=memory_scope,
+            persona_name=persona_name,
             latest_user_text=latest_user_text,
             latest_assistant_text=latest_assistant_text,
             secretary_decision=secretary_decision,
@@ -1073,12 +1080,8 @@ class DeepMind:
             #    (以及我们之前讨论过的，让 feedback 返回新创建的对象)
             newly_created_memories = []
             if self.memory_system:
-                # 完全基于会话人格系统获取 persona_id（不依赖 secretary_decision）
-                persona_name = ""
-                try:
-                    persona_name = await self.plugin_context.get_event_persona_name(event)
-                except Exception:
-                    persona_name = ""
+                # 从反思输入载体获取 persona_name
+                persona_name = getattr(reflection_input, "persona_name", "")
                 memory_scope = self.plugin_context.resolve_memory_scope(
                     session_id, persona_name=persona_name
                 )
@@ -1089,6 +1092,7 @@ class DeepMind:
                     new_memories=new_memories_normalized,  # <--- 使用转换后的数据
                     merge_groups=feedback_data.get("merge_groups", []),
                     memory_scope=memory_scope,
+            persona_name=persona_name,
                 )
 
             # 2. 更新短期记忆
