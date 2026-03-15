@@ -678,7 +678,7 @@ class DeepMind:
         self.logger.debug(f"[反思调度] 使用原生分支构建本轮记录: count={len(records)}")
         return records
 
-    def _build_reflection_input(
+    async def _build_reflection_input(
         self,
         event: AstrMessageEvent,
         response,
@@ -731,7 +731,7 @@ class DeepMind:
                 memory_context = {}
 
         try:
-            memory_scope = self.plugin_context.resolve_memory_scope_from_event(event)
+            memory_scope = await self.plugin_context.resolve_memory_scope_from_event(event)
         except Exception:
             memory_scope = "public"
 
@@ -780,7 +780,7 @@ class DeepMind:
         return normalized
 
     async def _buffer_reflection_turn(self, event: AstrMessageEvent, response, session_id: str) -> None:
-        reflection_input = self._build_reflection_input(event, response, session_id)
+        reflection_input = await self._build_reflection_input(event, response, session_id)
         turn_records = list(reflection_input.chat_records)
         now = time.time()
 
@@ -1073,11 +1073,12 @@ class DeepMind:
             #    (以及我们之前讨论过的，让 feedback 返回新创建的对象)
             newly_created_memories = []
             if self.memory_system:
+                # 完全基于会话人格系统获取 persona_id（不依赖 secretary_decision）
                 persona_name = ""
-                if hasattr(reflection_input, "secretary_decision"):
-                    sd = getattr(reflection_input, "secretary_decision", {}) or {}
-                    if isinstance(sd, dict):
-                        persona_name = str(sd.get("persona_id", "") or sd.get("persona_name", "") or "").strip()
+                try:
+                    persona_name = await self.plugin_context.get_event_persona_name(event)
+                except Exception:
+                    persona_name = ""
                 memory_scope = self.plugin_context.resolve_memory_scope(
                     session_id, persona_name=persona_name
                 )

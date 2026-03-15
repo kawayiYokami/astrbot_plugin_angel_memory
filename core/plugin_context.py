@@ -241,33 +241,24 @@ class PluginContext:
             return scope_by_conversation, "conversation", normalized_id
         return "public", "default", "public"
 
-    def get_event_persona_name(self, event) -> str:
+    async def get_event_persona_name(self, event) -> str:
         """
-        从事件中提取人格名。
-
-        兼容来源（按优先级）：
-        1) secretary_decision.persona_id（与旧字段 persona_name 同义）
-        2) secretary_decision.persona_name（旧兼容）
-        3) 全局默认人格（参考 mnemosyne 的 get_persona 思路）
+        从会话系统获取人格名（persona_id），实现与 mnemosyne 的 get_persona 同源思路：
+        - 优先：context.persona_mgr.get_default_persona_v3(unified_msg_origin)
+        - 兜底：context.persona_manager.selected_default_persona_v3.name
         """
-        # 1) 优先从 angelheart_context 的 secretary_decision 中读取 persona_id/persona_name
         try:
-            raw_context = getattr(event, "angelheart_context", None)
-            if raw_context:
-                context_data = json.loads(raw_context)
-                if isinstance(context_data, dict):
-                    secretary_decision = context_data.get("secretary_decision", {}) or {}
-                    if isinstance(secretary_decision, dict):
-                        persona_id = str(secretary_decision.get("persona_id", "") or "").strip()
-                        if persona_id:
-                            return persona_id
-                        persona_name = str(secretary_decision.get("persona_name", "") or "").strip()
-                        if persona_name:
-                            return persona_name
+            umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+            if umo:
+                persona_mgr = getattr(self.astrbot_context, "persona_mgr", None)
+                if persona_mgr is not None and hasattr(persona_mgr, "get_default_persona_v3"):
+                    persona_id = await persona_mgr.get_default_persona_v3(umo)
+                    persona_id = str(persona_id or "").strip()
+                    if persona_id and persona_id != "[%None]":
+                        return persona_id
         except Exception:
             pass
 
-        # 2) 兜底：尝试读取 AstrBot 默认人格
         try:
             persona_manager = getattr(self.astrbot_context, "persona_manager", None)
             default_persona = (
@@ -276,7 +267,9 @@ class PluginContext:
                 else None
             )
             if isinstance(default_persona, dict):
-                return str(default_persona.get("name", "") or "").strip()
+                name = str(default_persona.get("name", "") or "").strip()
+                if name and name != "[%None]":
+                    return name
         except Exception:
             pass
 
@@ -294,11 +287,11 @@ class PluginContext:
             raise ValueError("事件 unified_msg_origin 为空，无法确定会话ID")
         return conversation_id
 
-    def resolve_memory_scope_from_event(self, event) -> str:
+    async def resolve_memory_scope_from_event(self, event) -> str:
         """从事件直接解析 memory_scope。"""
         return self.resolve_memory_scope(
             self.get_event_conversation_id(event),
-            persona_name=self.get_event_persona_name(event),
+            persona_name=await self.get_event_persona_name(event),
         )
 
     def get_config(self, key: str, default: Any = None) -> Any:

@@ -206,7 +206,7 @@ class AngelMemoryPlugin(Star):
             request: LLM请求对象
         """
         self.logger.debug("开始执行 on_llm_request")
-        self._log_group_id_once(event)
+        await self._log_group_id_once(event)
         try:
             # 检查LLM工具是否可用
             if not self.are_llm_tools_enabled():
@@ -236,7 +236,7 @@ class AngelMemoryPlugin(Star):
         except (AttributeError, ValueError, RuntimeError) as e:
             self.logger.error(f"LLM_REQUEST failed: {e}")
 
-    def _log_group_id_once(self, event: AstrMessageEvent) -> None:
+    async def _log_group_id_once(self, event: AstrMessageEvent) -> None:
         """插件启动后每个会话仅记录一次会话ID，便于用户确认配置键。"""
         try:
             conversation_id = str(getattr(event, "unified_msg_origin", "") or "").strip()
@@ -246,7 +246,7 @@ class AngelMemoryPlugin(Star):
                 return
 
             self._conversation_id_logged_once.add(conversation_id)
-            persona_name = self.plugin_context.get_event_persona_name(event)
+            persona_name = await self.plugin_context.get_event_persona_name(event)
             resolved_scope, matched_by, matched_key = (
                 self.plugin_context.resolve_memory_scope_with_source(
                     conversation_id, persona_name=persona_name
