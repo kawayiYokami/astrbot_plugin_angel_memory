@@ -2,6 +2,15 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.2] - 2026-03-16
+
+### Highlights
+- 修复人格名称来源，改为基于当前消息事件解析生效人格，不再依赖 `angel_heart` 的 `secretary_decision` 字段。
+- 记忆域解析与反思链路同步使用事件人格，降低多人格会话下误落入 `public` 的概率。
+
+### Bug Fixes
+- `fix(scope)`: 人格获取逻辑从外部决策字段迁移到事件侧解析，修复 `conversation_scope_map` 人格键命中不稳定问题。
+
 ## [1.2.9] - 2026-03-09
 
 ### Highlights
