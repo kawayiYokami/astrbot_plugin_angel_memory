@@ -241,21 +241,75 @@ class PluginContext:
             return scope_by_conversation, "conversation", normalized_id
         return "public", "default", "public"
 
-    def get_event_persona_name(self, event) -> str:
-        """从事件中提取人格名（secretary_decision.persona_name）。"""
-        try:
-            raw_context = getattr(event, "angelheart_context", None)
-            if not raw_context:
-                return ""
-            context_data = json.loads(raw_context)
-            if not isinstance(context_data, dict):
-                return ""
-            secretary_decision = context_data.get("secretary_decision", {}) or {}
-            if not isinstance(secretary_decision, dict):
-                return ""
-            return str(secretary_decision.get("persona_name", "") or "").strip()
-        except Exception:
+    @staticmethod
+    def _normalize_persona_identifier(raw_value: Any) -> str:
+        """将 persona 返回值规整为可用于 scope_map 匹配的人格名。"""
+        if isinstance(raw_value, dict):
+            value = str(raw_value.get("name", "") or "").strip()
+        else:
+            value = str(raw_value or "").strip()
+        if value == "[%None]":
             return ""
+        return value
+
+    async def get_event_persona_name(self, event) -> str:
+        """
+        获取“当前事件最终生效的人格名”。
+        解析顺序与 AstrBot 主链路一致：session override > conversation persona > provider 默认人格。
+        """
+        umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        if not umo:
+            return ""
+
+        conversation_persona_id = None
+        try:
+            conversation_manager = getattr(self.astrbot_context, "conversation_manager", None)
+            if conversation_manager is not None:
+                curr_cid = await conversation_manager.get_curr_conversation_id(umo)
+                if curr_cid:
+                    conversation = await conversation_manager.get_conversation(umo, curr_cid)
+                    if conversation is not None:
+                        conversation_persona_id = self._normalize_persona_identifier(
+                            getattr(conversation, "persona_id", None)
+                        ) or None
+        except Exception:
+            pass
+
+        try:
+            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
+            if persona_manager is not None and hasattr(persona_manager, "resolve_selected_persona"):
+                platform_name = ""
+                if hasattr(event, "get_platform_name"):
+                    platform_name = str(event.get_platform_name() or "").strip()
+                persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
+                    umo=umo,
+                    conversation_persona_id=conversation_persona_id,
+                    platform_name=platform_name,
+                    provider_settings=None,
+                )
+                normalized_id = self._normalize_persona_identifier(persona_id)
+                if normalized_id:
+                    return normalized_id
+                normalized_name = self._normalize_persona_identifier(persona)
+                if normalized_name:
+                    return normalized_name
+        except Exception:
+            pass
+
+        try:
+            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
+            default_persona = (
+                getattr(persona_manager, "selected_default_persona_v3", None)
+                if persona_manager is not None
+                else None
+            )
+            normalized_default = self._normalize_persona_identifier(default_persona)
+            if normalized_default:
+                return normalized_default
+        except Exception:
+            pass
+
+        return ""
 
     def get_event_conversation_id(self, event) -> str:
         """从事件中提取统一会话ID。"""
@@ -269,11 +323,11 @@ class PluginContext:
             raise ValueError("事件 unified_msg_origin 为空，无法确定会话ID")
         return conversation_id
 
-    def resolve_memory_scope_from_event(self, event) -> str:
+    async def resolve_memory_scope_from_event(self, event) -> str:
         """从事件直接解析 memory_scope。"""
         return self.resolve_memory_scope(
             self.get_event_conversation_id(event),
-            persona_name=self.get_event_persona_name(event),
+            persona_name=await self.get_event_persona_name(event),
         )
 
     def get_config(self, key: str, default: Any = None) -> Any:

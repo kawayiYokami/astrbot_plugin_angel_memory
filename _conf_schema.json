@@ -38,7 +38,7 @@
     "editor_mode": true,
     "editor_language": "json",
     "editor_theme": "vs-dark",
-    "hint": "JSON格式配置，键可为人格名或会话ID，值为记忆分类域。匹配顺序：先人格名（secretary_decision.persona_name），后会话ID（unified_msg_origin）。示例：{\"女友\":\"恋爱\",\"aiocqhttp:group:12345\":\"家人\"}。未命中默认 public。scope 名仅允许字母/数字/中文/下划线/短横线。"
+    "hint": "JSON格式配置，键可为人格名或会话ID，值为记忆分类域。匹配顺序：先人格名（Persona名），后会话ID（unified_msg_origin）。示例：{\"女友\":\"恋爱\",\"aiocqhttp:group:12345\":\"家人\"}。未命中默认 public。scope 名仅允许字母/数字/中文/下划线/短横线。"
   },
   "memory_behavior": {
     "type": "object",
@@ -189,10 +189,10 @@
         "hint": "指定用于执行研究任务的 LLM 提供商 ID。留空则使用当前会话的提供商。推荐使用 DeepSeek V3.2 或 Gemini pro 等推理能力强的模型。"
       },
       "start_messages": {
-         "type": "string",
-         "description": "研究任务启动时发送的可爱提示",
-         "hint": "用 | 分隔多条消息，启动时会随机选择一条发送。留空则不发送。",
-         "default": "请稍等，我这就去把知识都抓回来！(ง •̀_•́)ง|好嘞！研究任务启动，我开始工作啦！|收到，正在开启深度研究模式... ✨"
+        "type": "string",
+        "description": "研究任务启动时发送的可爱提示",
+        "hint": "用 | 分隔多条消息，启动时会随机选择一条发送。留空则不发送。",
+        "default": "请稍等，我这就去把知识都抓回来！(ง •̀_•́)ง|好嘞！研究任务启动，我开始工作啦！|收到，正在开启深度研究模式... ✨"
       }
     }
   }
