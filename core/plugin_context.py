@@ -256,12 +256,17 @@ class PluginContext:
         """
         获取“当前事件最终生效的人格名”。
         解析顺序与 AstrBot 主链路一致：session override > conversation persona > provider 默认人格。
+        并将三种来源的读取结果写入日志，便于排查人格命中链路。
         """
         umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if not umo:
             return ""
 
-        conversation_persona_id = None
+        session_override_persona = ""
+        conversation_persona = ""
+        provider_default_persona = ""
+
+        # 1) conversation persona（会话绑定人格）
         try:
             conversation_manager = getattr(self.astrbot_context, "conversation_manager", None)
             if conversation_manager is not None:
@@ -269,47 +274,77 @@ class PluginContext:
                 if curr_cid:
                     conversation = await conversation_manager.get_conversation(umo, curr_cid)
                     if conversation is not None:
-                        conversation_persona_id = self._normalize_persona_identifier(
+                        conversation_persona = self._normalize_persona_identifier(
                             getattr(conversation, "persona_id", None)
-                        ) or None
+                        )
         except Exception:
             pass
 
+        # 2) session override（会话覆盖人格）
         try:
-            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-            if persona_manager is not None and hasattr(persona_manager, "resolve_selected_persona"):
-                platform_name = ""
-                if hasattr(event, "get_platform_name"):
-                    platform_name = str(event.get_platform_name() or "").strip()
-                persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
-                    umo=umo,
-                    conversation_persona_id=conversation_persona_id,
-                    platform_name=platform_name,
-                    provider_settings=None,
+            persona_mgr = getattr(self.astrbot_context, "persona_mgr", None)
+            if persona_mgr is not None and hasattr(persona_mgr, "get_default_persona_v3"):
+                session_override_persona = self._normalize_persona_identifier(
+                    await persona_mgr.get_default_persona_v3(umo)
                 )
-                normalized_id = self._normalize_persona_identifier(persona_id)
-                if normalized_id:
-                    return normalized_id
-                normalized_name = self._normalize_persona_identifier(persona)
-                if normalized_name:
-                    return normalized_name
         except Exception:
             pass
 
+        # 3) provider 默认人格
         try:
             persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-            default_persona = (
-                getattr(persona_manager, "selected_default_persona_v3", None)
-                if persona_manager is not None
-                else None
-            )
-            normalized_default = self._normalize_persona_identifier(default_persona)
-            if normalized_default:
-                return normalized_default
+            if persona_manager is not None:
+                provider_default_persona = self._normalize_persona_identifier(
+                    getattr(persona_manager, "selected_default_persona_v3", None)
+                )
         except Exception:
             pass
 
-        return ""
+        self.logger.info(
+            "[persona_resolve] session_override=%s, conversation_persona=%s, provider_default=%s",
+            session_override_persona or "",
+            conversation_persona or "",
+            provider_default_persona or "",
+        )
+
+        if session_override_persona:
+            chosen = session_override_persona
+            chosen_by = "session_override"
+        elif conversation_persona:
+            chosen = conversation_persona
+            chosen_by = "conversation_persona"
+        elif provider_default_persona:
+            chosen = provider_default_persona
+            chosen_by = "provider_default"
+        else:
+            # 兼容兜底：若上面三段都取不到，尝试旧解析接口。
+            chosen = ""
+            chosen_by = "none"
+            try:
+                persona_manager = getattr(self.astrbot_context, "persona_manager", None)
+                if persona_manager is not None and hasattr(persona_manager, "resolve_selected_persona"):
+                    platform_name = ""
+                    if hasattr(event, "get_platform_name"):
+                        platform_name = str(event.get_platform_name() or "").strip()
+                    persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
+                        umo=umo,
+                        conversation_persona_id=conversation_persona or None,
+                        platform_name=platform_name,
+                        provider_settings=None,
+                    )
+                    chosen = self._normalize_persona_identifier(persona_id) or self._normalize_persona_identifier(persona)
+                    if chosen:
+                        chosen_by = "fallback_resolve_selected_persona"
+            except Exception:
+                pass
+
+        self.logger.info(
+            "[persona_resolve] selected=%s by=%s umo=%s",
+            chosen or "",
+            chosen_by,
+            umo,
+        )
+        return chosen
 
     def get_event_conversation_id(self, event) -> str:
         """从事件中提取统一会话ID。"""
