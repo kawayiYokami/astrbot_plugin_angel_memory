@@ -286,7 +286,18 @@ class PluginContext:
         if not isinstance(cfg, dict):
             cfg = {}
         provider_settings = cfg.get("provider_settings")
-        if not isinstance(provider_settings, dict):
+        if provider_settings is None:
+            self.logger.warning(
+                "[睡眠] 人格解析配置缺失：provider_settings为空，将使用空配置 umo=%r",
+                umo,
+            )
+            provider_settings = {}
+        elif not isinstance(provider_settings, dict):
+            self.logger.warning(
+                "[睡眠] 人格解析配置非法：provider_settings类型=%s，将使用空配置 umo=%r",
+                type(provider_settings).__name__,
+                umo,
+            )
             provider_settings = {}
 
         platform_name = ""
