@@ -304,17 +304,13 @@ class PluginContext:
             provider_settings=provider_settings,
         )
 
-        # 输出三种来源读取结果
-        session_override_persona = self._normalize_persona_identifier(force_applied_persona_id)
-        conversation_persona = self._normalize_persona_identifier(conversation_persona_id)
-        provider_default_persona = self._normalize_persona_identifier(
-            (provider_settings or {}).get("default_personality")
-        )
+        # 新链路观测：仅记录 resolve_selected_persona 的输出结果
+        selected_persona = self._normalize_persona_identifier(persona_id)
         self.logger.info(
-            "[persona_resolve] session_override=%s, conversation_persona=%s, provider_default=%s",
-            session_override_persona or "",
-            conversation_persona or "",
-            provider_default_persona or "",
+            "[persona_resolve_v2] selected=%s force_applied=%s webchat_special=%s",
+            selected_persona or "",
+            self._normalize_persona_identifier(force_applied_persona_id) or "",
+            bool(use_webchat_special_default),
         )
 
         # 最终人格由 resolve_selected_persona 决定
