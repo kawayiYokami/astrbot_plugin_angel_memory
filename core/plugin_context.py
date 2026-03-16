@@ -256,14 +256,13 @@ class PluginContext:
         """
         获取“当前事件最终生效的人格名”。
         解析顺序与 AstrBot 主链路一致：session override > conversation persona > provider 默认人格。
-        仅输出三种来源读取结果日志，不改变既有读取与返回逻辑。
+        参考 resolve_selected_persona 语义进行对齐，并输出三种来源读取结果日志。
         """
         umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if not umo:
             return ""
 
         conversation_persona_id = None
-        session_override_persona = ""
         provider_default_persona = ""
 
         try:
@@ -279,17 +278,6 @@ class PluginContext:
         except Exception:
             pass
 
-        # 仅用于日志观测：读取 session override（不参与本函数返回决策）
-        try:
-            persona_mgr = getattr(self.astrbot_context, "persona_mgr", None)
-            if persona_mgr is not None and hasattr(persona_mgr, "get_default_persona_v3"):
-                session_override_persona = self._normalize_persona_identifier(
-                    await persona_mgr.get_default_persona_v3(umo)
-                )
-        except Exception:
-            pass
-
-        # 仅用于日志观测：读取 provider 默认人格（不改变原有 fallback 行为）
         try:
             persona_manager = getattr(self.astrbot_context, "persona_manager", None)
             default_persona = (
@@ -301,46 +289,62 @@ class PluginContext:
         except Exception:
             pass
 
-        self.logger.info(
-            "[persona_resolve] session_override=%s, conversation_persona=%s, provider_default=%s",
-            session_override_persona or "",
-            conversation_persona_id or "",
-            provider_default_persona or "",
-        )
-
+        # 优先对齐 AstrBot resolve_selected_persona 的语义与返回结构
         try:
             persona_manager = getattr(self.astrbot_context, "persona_manager", None)
             if persona_manager is not None and hasattr(persona_manager, "resolve_selected_persona"):
                 platform_name = ""
                 if hasattr(event, "get_platform_name"):
                     platform_name = str(event.get_platform_name() or "").strip()
-                persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
+
+                persona_id, persona, force_applied_persona_id, use_webchat_special_default = await persona_manager.resolve_selected_persona(
                     umo=umo,
                     conversation_persona_id=conversation_persona_id,
                     platform_name=platform_name,
                     provider_settings=None,
                 )
+
+                session_override_persona = self._normalize_persona_identifier(force_applied_persona_id)
+
+                self.logger.info(
+                    "[persona_resolve] session_override=%s, conversation_persona=%s, provider_default=%s",
+                    session_override_persona or "",
+                    conversation_persona_id or "",
+                    provider_default_persona or "",
+                )
+
                 normalized_id = self._normalize_persona_identifier(persona_id)
                 if normalized_id:
+                    self.logger.info(
+                        "[persona_resolve] selected=%s by=resolve_selected_persona webchat_special=%s umo=%s",
+                        normalized_id,
+                        bool(use_webchat_special_default),
+                        umo,
+                    )
                     return normalized_id
+
                 normalized_name = self._normalize_persona_identifier(persona)
                 if normalized_name:
+                    self.logger.info(
+                        "[persona_resolve] selected=%s by=resolve_selected_persona(persona_obj) webchat_special=%s umo=%s",
+                        normalized_name,
+                        bool(use_webchat_special_default),
+                        umo,
+                    )
                     return normalized_name
         except Exception:
             pass
 
-        try:
-            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-            default_persona = (
-                getattr(persona_manager, "selected_default_persona_v3", None)
-                if persona_manager is not None
-                else None
-            )
-            normalized_default = self._normalize_persona_identifier(default_persona)
-            if normalized_default:
-                return normalized_default
-        except Exception:
-            pass
+        # 兼容兜底：若上游接口不可用，沿用 provider 默认人格回退
+        self.logger.info(
+            "[persona_resolve] session_override=%s, conversation_persona=%s, provider_default=%s",
+            "",
+            conversation_persona_id or "",
+            provider_default_persona or "",
+        )
+
+        if provider_default_persona:
+            return provider_default_persona
 
         return ""
 
