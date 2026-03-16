@@ -283,16 +283,19 @@ class PluginContext:
         if hasattr(event, "get_platform_name"):
             platform_name = str(event.get_platform_name() or "").strip()
 
-        persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
-            umo=umo,
-            conversation_persona_id=conversation_persona_id,
-            platform_name=platform_name,
-            provider_settings=provider_settings,
-        )
+        try:
+            persona_id, _persona, _, _ = await persona_manager.resolve_selected_persona(
+                umo=umo,
+                conversation_persona_id=conversation_persona_id,
+                platform_name=platform_name,
+                provider_settings=provider_settings,
+            )
+        except Exception:
+            return ""
 
         selected = self._normalize_persona_identifier(persona_id)
         if not selected:
-            raise ValueError("resolve_selected_persona 返回空 persona_id，无法确定事件人格")
+            return ""
         return selected
 
     def get_event_conversation_id(self, event) -> str:
@@ -338,7 +341,12 @@ class PluginContext:
                     if isinstance(runtime_cfg, dict):
                         merged.update(runtime_cfg)
             except Exception:
-                pass
+                self.logger.debug(
+                    "get_config getter(umo=%r) failed, getter=%r",
+                    umo,
+                    getattr(getter, "__name__", repr(getter)),
+                    exc_info=True,
+                )
 
             if key is None:
                 return merged
