@@ -255,98 +255,74 @@ class PluginContext:
     async def get_event_persona_name(self, event) -> str:
         """
         获取“当前事件最终生效的人格名”。
-        解析顺序与 AstrBot 主链路一致：session override > conversation persona > provider 默认人格。
-        参考 resolve_selected_persona 语义进行对齐，并输出三种来源读取结果日志。
+        完全基于 persona_manager.resolve_selected_persona 解析，不保留历史解析分支。
         """
         umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if not umo:
             return ""
 
+        persona_manager = getattr(self.astrbot_context, "persona_manager", None)
+        if persona_manager is None or not hasattr(persona_manager, "resolve_selected_persona"):
+            return ""
+
+        # 读取会话绑定人格（仅作为 resolve_selected_persona 输入）
         conversation_persona_id = None
-        provider_default_persona = ""
-
         try:
-            conversation_manager = getattr(self.astrbot_context, "conversation_manager", None)
-            if conversation_manager is not None:
-                curr_cid = await conversation_manager.get_curr_conversation_id(umo)
-                if curr_cid:
-                    conversation = await conversation_manager.get_conversation(umo, curr_cid)
-                    if conversation is not None:
-                        conversation_persona_id = self._normalize_persona_identifier(
-                            getattr(conversation, "persona_id", None)
-                        ) or None
+            # 优先尝试从事件对象直接读取
+            conversation = getattr(event, "conversation", None)
+            if conversation is not None:
+                conversation_persona_id = self._normalize_persona_identifier(
+                    getattr(conversation, "persona_id", None)
+                ) or None
+
+            # 若事件无会话人格信息，再从 conversation_manager 获取
+            if conversation_persona_id is None:
+                conversation_manager = getattr(self.astrbot_context, "conversation_manager", None)
+                if conversation_manager is not None:
+                    curr_cid = await conversation_manager.get_curr_conversation_id(umo)
+                    if curr_cid:
+                        conv_obj = await conversation_manager.get_conversation(umo, curr_cid)
+                        if conv_obj is not None:
+                            conversation_persona_id = self._normalize_persona_identifier(
+                                getattr(conv_obj, "persona_id", None)
+                            ) or None
         except Exception:
-            pass
+            conversation_persona_id = None
 
-        try:
-            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-            default_persona = (
-                getattr(persona_manager, "selected_default_persona_v3", None)
-                if persona_manager is not None
-                else None
-            )
-            provider_default_persona = self._normalize_persona_identifier(default_persona)
-        except Exception:
-            pass
+        # 按主链路口径获取 provider_settings
+        cfg = self.get_config(umo=umo)
+        provider_settings = (cfg or {}).get("provider_settings", {}) or {}
 
-        # 优先对齐 AstrBot resolve_selected_persona 的语义与返回结构
-        try:
-            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-            if persona_manager is not None and hasattr(persona_manager, "resolve_selected_persona"):
-                platform_name = ""
-                if hasattr(event, "get_platform_name"):
-                    platform_name = str(event.get_platform_name() or "").strip()
+        platform_name = ""
+        if hasattr(event, "get_platform_name"):
+            platform_name = str(event.get_platform_name() or "").strip()
 
-                persona_id, persona, force_applied_persona_id, use_webchat_special_default = await persona_manager.resolve_selected_persona(
-                    umo=umo,
-                    conversation_persona_id=conversation_persona_id,
-                    platform_name=platform_name,
-                    provider_settings=None,
-                )
+        persona_id, persona, force_applied_persona_id, use_webchat_special_default = await persona_manager.resolve_selected_persona(
+            umo=umo,
+            conversation_persona_id=conversation_persona_id,
+            platform_name=platform_name,
+            provider_settings=provider_settings,
+        )
 
-                session_override_persona = self._normalize_persona_identifier(force_applied_persona_id)
-
-                self.logger.info(
-                    "[persona_resolve] session_override=%s, conversation_persona=%s, provider_default=%s",
-                    session_override_persona or "",
-                    conversation_persona_id or "",
-                    provider_default_persona or "",
-                )
-
-                normalized_id = self._normalize_persona_identifier(persona_id)
-                if normalized_id:
-                    self.logger.info(
-                        "[persona_resolve] selected=%s by=resolve_selected_persona webchat_special=%s umo=%s",
-                        normalized_id,
-                        bool(use_webchat_special_default),
-                        umo,
-                    )
-                    return normalized_id
-
-                normalized_name = self._normalize_persona_identifier(persona)
-                if normalized_name:
-                    self.logger.info(
-                        "[persona_resolve] selected=%s by=resolve_selected_persona(persona_obj) webchat_special=%s umo=%s",
-                        normalized_name,
-                        bool(use_webchat_special_default),
-                        umo,
-                    )
-                    return normalized_name
-        except Exception:
-            pass
-
-        # 兼容兜底：若上游接口不可用，沿用 provider 默认人格回退
+        # 输出三种来源读取结果
+        session_override_persona = self._normalize_persona_identifier(force_applied_persona_id)
+        conversation_persona = self._normalize_persona_identifier(conversation_persona_id)
+        provider_default_persona = self._normalize_persona_identifier(
+            (provider_settings or {}).get("default_personality")
+        )
         self.logger.info(
             "[persona_resolve] session_override=%s, conversation_persona=%s, provider_default=%s",
-            "",
-            conversation_persona_id or "",
+            session_override_persona or "",
+            conversation_persona or "",
             provider_default_persona or "",
         )
 
-        if provider_default_persona:
-            return provider_default_persona
+        # 最终人格由 resolve_selected_persona 决定
+        selected_persona = self._normalize_persona_identifier(persona_id)
+        if selected_persona:
+            return selected_persona
 
-        return ""
+        return self._normalize_persona_identifier(persona)
 
     def get_event_conversation_id(self, event) -> str:
         """从事件中提取统一会话ID。"""
@@ -367,8 +343,39 @@ class PluginContext:
             persona_name=await self.get_event_persona_name(event),
         )
 
-    def get_config(self, key: str, default: Any = None) -> Any:
-        """获取配置值"""
+    def get_config(
+        self,
+        key: Optional[str] = None,
+        default: Any = None,
+        *,
+        umo: Optional[str] = None,
+    ) -> Any:
+        """
+        获取配置值。
+
+        支持两种用法：
+        - get_config("provider_id", "")
+        - get_config(umo="...") -> dict（优先返回会话配置，缺失时回退插件配置）
+        """
+        # 会话配置路径（用于与主链路保持一致）
+        if umo is not None:
+            merged = self.config.copy()
+            try:
+                getter = getattr(self.astrbot_context, "get_config", None)
+                if callable(getter):
+                    runtime_cfg = getter(umo=umo)
+                    if isinstance(runtime_cfg, dict):
+                        merged.update(runtime_cfg)
+            except Exception:
+                pass
+
+            if key is None:
+                return merged
+            return merged.get(key, default)
+
+        # 兼容旧调用
+        if key is None:
+            return self.config.copy()
         return self.config.get(key, default)
 
     def get_all_config(self) -> Dict[str, Any]:
