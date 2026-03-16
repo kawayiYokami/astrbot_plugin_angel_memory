@@ -259,10 +259,18 @@ class PluginContext:
         """
         umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if not umo:
+            self.logger.info("[睡眠] 跳过人格解析：umo为空 umo=%r", umo)
             return ""
 
         persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-        if persona_manager is None or not hasattr(persona_manager, "resolve_selected_persona"):
+        has_resolve_method = hasattr(persona_manager, "resolve_selected_persona")
+        if persona_manager is None or not has_resolve_method:
+            self.logger.info(
+                "[睡眠] 跳过人格解析：persona_manager不可用 umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
+                umo,
+                persona_manager is None,
+                has_resolve_method,
+            )
             return ""
 
         # 仅从事件读取会话人格ID（不再使用旧的 conversation_manager 回读逻辑）
@@ -277,7 +285,9 @@ class PluginContext:
         cfg = self.get_config(umo=umo)
         if not isinstance(cfg, dict):
             cfg = {}
-        provider_settings = cfg.get("provider_settings", {}) or {}
+        provider_settings = cfg.get("provider_settings")
+        if not isinstance(provider_settings, dict):
+            provider_settings = {}
 
         platform_name = ""
         if hasattr(event, "get_platform_name"):
@@ -291,6 +301,13 @@ class PluginContext:
                 provider_settings=provider_settings,
             )
         except Exception:
+            self.logger.error(
+                "[睡眠] 人格解析异常：resolve_selected_persona失败 umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
+                umo,
+                persona_manager is None,
+                hasattr(persona_manager, "resolve_selected_persona"),
+                exc_info=True,
+            )
             return ""
 
         selected = self._normalize_persona_identifier(persona_id)
@@ -342,7 +359,7 @@ class PluginContext:
                         merged.update(runtime_cfg)
             except Exception:
                 self.logger.debug(
-                    "get_config getter(umo=%r) failed, getter=%r",
+                    "[睡眠] 获取会话配置失败 getter(umo=%r), getter=%r",
                     umo,
                     getattr(getter, "__name__", repr(getter)),
                     exc_info=True,
