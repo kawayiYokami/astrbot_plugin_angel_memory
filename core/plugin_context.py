@@ -291,10 +291,9 @@ class PluginContext:
         )
 
         selected = self._normalize_persona_identifier(persona_id)
-        if selected:
-            return selected
-
-        return self._normalize_persona_identifier(persona)
+        if not selected:
+            raise ValueError("resolve_selected_persona 返回空 persona_id，无法确定事件人格")
+        return selected
 
     def get_event_conversation_id(self, event) -> str:
         """从事件中提取统一会话ID。"""
