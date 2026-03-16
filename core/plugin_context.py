@@ -255,7 +255,7 @@ class PluginContext:
     async def get_event_persona_name(self, event) -> str:
         """
         获取“当前事件最终生效的人格名”。
-        完全基于 persona_manager.resolve_selected_persona 解析，不保留历史解析分支。
+        完全委托给 persona_manager.resolve_selected_persona，覆盖旧逻辑。
         """
         umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if not umo:
@@ -265,58 +265,34 @@ class PluginContext:
         if persona_manager is None or not hasattr(persona_manager, "resolve_selected_persona"):
             return ""
 
-        # 读取会话绑定人格（仅作为 resolve_selected_persona 输入）
+        # 仅从事件读取会话人格ID（不再使用旧的 conversation_manager 回读逻辑）
         conversation_persona_id = None
-        try:
-            # 优先尝试从事件对象直接读取
-            conversation = getattr(event, "conversation", None)
-            if conversation is not None:
-                conversation_persona_id = self._normalize_persona_identifier(
-                    getattr(conversation, "persona_id", None)
-                ) or None
+        conversation = getattr(event, "conversation", None)
+        if conversation is not None:
+            raw_persona_id = getattr(conversation, "persona_id", None)
+            if raw_persona_id is not None:
+                text = str(raw_persona_id).strip()
+                conversation_persona_id = text if text else None
 
-            # 若事件无会话人格信息，再从 conversation_manager 获取
-            if conversation_persona_id is None:
-                conversation_manager = getattr(self.astrbot_context, "conversation_manager", None)
-                if conversation_manager is not None:
-                    curr_cid = await conversation_manager.get_curr_conversation_id(umo)
-                    if curr_cid:
-                        conv_obj = await conversation_manager.get_conversation(umo, curr_cid)
-                        if conv_obj is not None:
-                            conversation_persona_id = self._normalize_persona_identifier(
-                                getattr(conv_obj, "persona_id", None)
-                            ) or None
-        except Exception:
-            conversation_persona_id = None
-
-        # 按主链路口径获取 provider_settings
         cfg = self.get_config(umo=umo)
-        provider_settings = (cfg or {}).get("provider_settings", {}) or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        provider_settings = cfg.get("provider_settings", {}) or {}
 
         platform_name = ""
         if hasattr(event, "get_platform_name"):
             platform_name = str(event.get_platform_name() or "").strip()
 
-        persona_id, persona, force_applied_persona_id, use_webchat_special_default = await persona_manager.resolve_selected_persona(
+        persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
             umo=umo,
             conversation_persona_id=conversation_persona_id,
             platform_name=platform_name,
             provider_settings=provider_settings,
         )
 
-        # 新链路观测：仅记录 resolve_selected_persona 的输出结果
-        selected_persona = self._normalize_persona_identifier(persona_id)
-        self.logger.info(
-            "[persona_resolve_v2] selected=%s force_applied=%s webchat_special=%s",
-            selected_persona or "",
-            self._normalize_persona_identifier(force_applied_persona_id) or "",
-            bool(use_webchat_special_default),
-        )
-
-        # 最终人格由 resolve_selected_persona 决定
-        selected_persona = self._normalize_persona_identifier(persona_id)
-        if selected_persona:
-            return selected_persona
+        selected = self._normalize_persona_identifier(persona_id)
+        if selected:
+            return selected
 
         return self._normalize_persona_identifier(persona)
 
