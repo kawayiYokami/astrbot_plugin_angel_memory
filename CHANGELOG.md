@@ -2,6 +2,21 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.3] - 2026-03-17
+
+### Highlights
+- 优化人格解析逻辑，完全委托给 `persona_manager.resolve_selected_persona`，与 AstrBot 主链路保持一致。
+- 简化人格解析路径，移除旧的 `conversation_manager` 回读逻辑，直接从事件读取 `conversation.persona_id`。
+- 增强 `provider_settings` 类型检查，缺失或非法时记录警告日志并使用空配置兜底。
+
+### Core Changes
+- `refactor(persona)`: `get_event_persona_name` 方法完全重构，统一使用 `resolve_selected_persona` 解析人格。
+- `feat(config)`: `get_config` 方法新增 `umo` 参数支持，可获取会话级别的运行时配置。
+- `fix(safety)`: 修复 `get_config` 中 `getter` 变量可能未定义的问题。
+
+### Thanks
+- 感谢 @lubuoren 提交的 PR #27，优化了 persona 解析逻辑。
+
 ## [1.3.2] - 2026-03-16
 
 ### Highlights
