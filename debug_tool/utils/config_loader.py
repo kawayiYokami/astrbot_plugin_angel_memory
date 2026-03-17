@@ -26,12 +26,32 @@ class ConfigLoader:
             return json.load(f)
 
     def get_embedding_provider(self) -> Optional[Dict[str, Any]]:
+        """获取插件配置的 embedding provider"""
+        # 1. 先读取插件配置，获取 embedding_provider_id
+        plugin_config_path = os.path.abspath(os.path.join(self.base_path, "../../../config/astrbot_plugin_angel_memory_config.json"))
+        plugin_config = {}
+        if os.path.exists(plugin_config_path):
+            try:
+                with open(plugin_config_path, 'r', encoding='utf-8-sig') as f:
+                    plugin_config = json.load(f)
+            except Exception:
+                pass
+
+        retrieval = plugin_config.get("retrieval", {}) or {}
+        configured_provider_id = retrieval.get("embedding_provider_id", "")
+
+        # 2. 如果配置了 provider_id，在 cmd_config.json 中查找对应的 provider
+        if configured_provider_id:
+            config = self.load_config()
+            providers = config.get("provider", [])
+            for p in providers:
+                if p.get("id") == configured_provider_id and p.get("enable"):
+                    return p
+
+        # 3. 回退：查找第一个启用的 embedding provider
         config = self.load_config()
         providers = config.get("provider", [])
-
-        # 1. Find the enabled embedding provider
         for p in providers:
-            # Logic: type is openai_embedding OR provider_type is embedding
             if p.get("enable") and (p.get("type") == "openai_embedding" or p.get("provider_type") == "embedding"):
                 return p
 
