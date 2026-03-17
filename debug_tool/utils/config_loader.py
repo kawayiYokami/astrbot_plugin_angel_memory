@@ -1,6 +1,9 @@
 import json
+import logging
 import os
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 class ConfigLoader:
     def __init__(self, base_path: str = None):
@@ -47,13 +50,27 @@ class ConfigLoader:
             for p in providers:
                 if p.get("id") == configured_provider_id and p.get("enable"):
                     return p
+            # 配置了 provider_id 但找不到或未启用，给出警告
+            logger.warning(
+                f"⚠️ 插件配置了 embedding_provider_id='{configured_provider_id}'，"
+                f"但在 cmd_config.json 中未找到或未启用！回退到第一个可用的 embedding provider。"
+            )
 
         # 3. 回退：查找第一个启用的 embedding provider
         config = self.load_config()
         providers = config.get("provider", [])
+        fallback_provider = None
         for p in providers:
             if p.get("enable") and (p.get("type") == "openai_embedding" or p.get("provider_type") == "embedding"):
-                return p
+                fallback_provider = p
+                break
+
+        if fallback_provider:
+            logger.warning(
+                f"⚠️ 回退使用 embedding provider: {fallback_provider.get('id')} "
+                f"(配置期望: {configured_provider_id or '未配置'})"
+            )
+            return fallback_provider
 
         return None
 
