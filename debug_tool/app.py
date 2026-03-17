@@ -147,6 +147,12 @@ with st.sidebar:
     )
     st.divider()
     overview = db_mgr.get_overview()
+
+    # 显示 provider 警告（如果发生了回退）
+    provider_status = overview.get("provider_status", {})
+    if provider_status.get("is_fallback"):
+        st.warning(f"⚠️ Embedding Provider 回退警告: {provider_status.get('warning')}")
+
     st.caption(f"Provider: {overview.get('provider_id')}")
     st.caption(f"中央记忆: {overview.get('memory_count', 0)}")
     st.caption(f"全局Tags: {overview.get('global_tag_count', 0)}")

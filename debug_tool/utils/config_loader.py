@@ -74,6 +74,63 @@ class ConfigLoader:
 
         return None
 
+    def get_embedding_provider_status(self) -> Dict[str, Any]:
+        """获取 embedding provider 状态信息，用于判断是否回退"""
+        # 1. 先读取插件配置，获取 embedding_provider_id
+        plugin_config_path = os.path.abspath(os.path.join(self.base_path, "../../../config/astrbot_plugin_angel_memory_config.json"))
+        plugin_config = {}
+        if os.path.exists(plugin_config_path):
+            try:
+                with open(plugin_config_path, 'r', encoding='utf-8-sig') as f:
+                    plugin_config = json.load(f)
+            except Exception:
+                pass
+
+        retrieval = plugin_config.get("retrieval", {}) or {}
+        configured_provider_id = retrieval.get("embedding_provider_id", "")
+
+        # 2. 如果配置了 provider_id，在 cmd_config.json 中查找对应的 provider
+        if configured_provider_id:
+            config = self.load_config()
+            providers = config.get("provider", [])
+            for p in providers:
+                if p.get("id") == configured_provider_id and p.get("enable"):
+                    return {
+                        "is_fallback": False,
+                        "configured": configured_provider_id,
+                        "actual": configured_provider_id
+                    }
+            # 配置了但找不到或未启用
+            return {
+                "is_fallback": True,
+                "configured": configured_provider_id,
+                "actual": None,
+                "warning": f"插件配置了 '{configured_provider_id}'，但未找到或未启用"
+            }
+
+        # 3. 回退：查找第一个启用的 embedding provider
+        config = self.load_config()
+        providers = config.get("provider", [])
+        fallback_provider = None
+        for p in providers:
+            if p.get("enable") and (p.get("type") == "openai_embedding" or p.get("provider_type") == "embedding"):
+                fallback_provider = p
+                break
+
+        if fallback_provider:
+            return {
+                "is_fallback": True,
+                "configured": None,
+                "actual": fallback_provider.get("id"),
+                "warning": "未配置 embedding_provider_id，回退使用第一个可用的 provider"
+            }
+
+        return {
+            "is_fallback": False,
+            "configured": None,
+            "actual": None
+        }
+
     def get_data_dir(self, provider_id: str) -> str:
         # data/plugins/astrbot_plugin_angel_memory/debug_tool -> data/plugin_data/astrbot_plugin_angel_memory
         # ../../../plugin_data/astrbot_plugin_angel_memory
