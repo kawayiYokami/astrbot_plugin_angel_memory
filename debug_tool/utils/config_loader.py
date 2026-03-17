@@ -43,10 +43,12 @@ class ConfigLoader:
         retrieval = plugin_config.get("retrieval", {}) or {}
         configured_provider_id = retrieval.get("embedding_provider_id", "")
 
+        # 一次性读取 cmd_config.json，复用
+        config = self.load_config()
+        providers = config.get("provider", [])
+
         # 2. 如果配置了 provider_id，在 cmd_config.json 中查找对应的 provider
         if configured_provider_id:
-            config = self.load_config()
-            providers = config.get("provider", [])
             for p in providers:
                 if p.get("id") == configured_provider_id and p.get("enable"):
                     return p
@@ -57,8 +59,6 @@ class ConfigLoader:
             )
 
         # 3. 回退：查找第一个启用的 embedding provider
-        config = self.load_config()
-        providers = config.get("provider", [])
         fallback_provider = None
         for p in providers:
             if p.get("enable") and (p.get("type") == "openai_embedding" or p.get("provider_type") == "embedding"):
@@ -89,10 +89,12 @@ class ConfigLoader:
         retrieval = plugin_config.get("retrieval", {}) or {}
         configured_provider_id = retrieval.get("embedding_provider_id", "")
 
+        # 一次性读取 cmd_config.json，复用
+        config = self.load_config()
+        providers = config.get("provider", [])
+
         # 2. 如果配置了 provider_id，在 cmd_config.json 中查找对应的 provider
         if configured_provider_id:
-            config = self.load_config()
-            providers = config.get("provider", [])
             for p in providers:
                 if p.get("id") == configured_provider_id and p.get("enable"):
                     return {
@@ -109,8 +111,6 @@ class ConfigLoader:
             }
 
         # 3. 回退：查找第一个启用的 embedding provider
-        config = self.load_config()
-        providers = config.get("provider", [])
         fallback_provider = None
         for p in providers:
             if p.get("enable") and (p.get("type") == "openai_embedding" or p.get("provider_type") == "embedding"):
