@@ -255,61 +255,76 @@ class PluginContext:
     async def get_event_persona_name(self, event) -> str:
         """
         获取“当前事件最终生效的人格名”。
-        解析顺序与 AstrBot 主链路一致：session override > conversation persona > provider 默认人格。
+        完全委托给 persona_manager.resolve_selected_persona，覆盖旧逻辑。
         """
         umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if not umo:
+            self.logger.info("[睡眠] 跳过人格解析：umo为空 umo=%r", umo)
             return ""
 
-        conversation_persona_id = None
-        try:
-            conversation_manager = getattr(self.astrbot_context, "conversation_manager", None)
-            if conversation_manager is not None:
-                curr_cid = await conversation_manager.get_curr_conversation_id(umo)
-                if curr_cid:
-                    conversation = await conversation_manager.get_conversation(umo, curr_cid)
-                    if conversation is not None:
-                        conversation_persona_id = self._normalize_persona_identifier(
-                            getattr(conversation, "persona_id", None)
-                        ) or None
-        except Exception:
-            pass
-
-        try:
-            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-            if persona_manager is not None and hasattr(persona_manager, "resolve_selected_persona"):
-                platform_name = ""
-                if hasattr(event, "get_platform_name"):
-                    platform_name = str(event.get_platform_name() or "").strip()
-                persona_id, persona, _, _ = await persona_manager.resolve_selected_persona(
-                    umo=umo,
-                    conversation_persona_id=conversation_persona_id,
-                    platform_name=platform_name,
-                    provider_settings=None,
-                )
-                normalized_id = self._normalize_persona_identifier(persona_id)
-                if normalized_id:
-                    return normalized_id
-                normalized_name = self._normalize_persona_identifier(persona)
-                if normalized_name:
-                    return normalized_name
-        except Exception:
-            pass
-
-        try:
-            persona_manager = getattr(self.astrbot_context, "persona_manager", None)
-            default_persona = (
-                getattr(persona_manager, "selected_default_persona_v3", None)
-                if persona_manager is not None
-                else None
+        persona_manager = getattr(self.astrbot_context, "persona_manager", None)
+        has_resolve_method = hasattr(persona_manager, "resolve_selected_persona")
+        if persona_manager is None or not has_resolve_method:
+            self.logger.info(
+                "[睡眠] 跳过人格解析：persona_manager不可用 umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
+                umo,
+                persona_manager is None,
+                has_resolve_method,
             )
-            normalized_default = self._normalize_persona_identifier(default_persona)
-            if normalized_default:
-                return normalized_default
-        except Exception:
-            pass
+            return ""
 
-        return ""
+        # 仅从事件读取会话人格ID（不再使用旧的 conversation_manager 回读逻辑）
+        conversation_persona_id = None
+        conversation = getattr(event, "conversation", None)
+        if conversation is not None:
+            raw_persona_id = getattr(conversation, "persona_id", None)
+            if raw_persona_id is not None:
+                text = str(raw_persona_id).strip()
+                conversation_persona_id = text if text else None
+
+        cfg = self.get_config(umo=umo)
+        if not isinstance(cfg, dict):
+            cfg = {}
+        provider_settings = cfg.get("provider_settings")
+        if provider_settings is None:
+            self.logger.warning(
+                "[睡眠] 人格解析配置缺失：provider_settings为空，将使用空配置 umo=%r",
+                umo,
+            )
+            provider_settings = {}
+        elif not isinstance(provider_settings, dict):
+            self.logger.warning(
+                "[睡眠] 人格解析配置非法：provider_settings类型=%s，将使用空配置 umo=%r",
+                type(provider_settings).__name__,
+                umo,
+            )
+            provider_settings = {}
+
+        platform_name = ""
+        if hasattr(event, "get_platform_name"):
+            platform_name = str(event.get_platform_name() or "").strip()
+
+        try:
+            persona_id, _persona, _, _ = await persona_manager.resolve_selected_persona(
+                umo=umo,
+                conversation_persona_id=conversation_persona_id,
+                platform_name=platform_name,
+                provider_settings=provider_settings,
+            )
+        except Exception:
+            self.logger.error(
+                "[睡眠] 人格解析异常：resolve_selected_persona失败 umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
+                umo,
+                persona_manager is None,
+                hasattr(persona_manager, "resolve_selected_persona"),
+                exc_info=True,
+            )
+            return ""
+
+        selected = self._normalize_persona_identifier(persona_id)
+        if not selected:
+            return ""
+        return selected
 
     def get_event_conversation_id(self, event) -> str:
         """从事件中提取统一会话ID。"""
@@ -330,8 +345,45 @@ class PluginContext:
             persona_name=await self.get_event_persona_name(event),
         )
 
-    def get_config(self, key: str, default: Any = None) -> Any:
-        """获取配置值"""
+    def get_config(
+        self,
+        key: Optional[str] = None,
+        default: Any = None,
+        *,
+        umo: Optional[str] = None,
+    ) -> Any:
+        """
+        获取配置值。
+
+        支持两种用法：
+        - get_config("provider_id", "")
+        - get_config(umo="...") -> dict（优先返回会话配置，缺失时回退插件配置）
+        """
+        # 会话配置路径（用于与主链路保持一致）
+        if umo is not None:
+            merged = self.config.copy()
+            getter = None
+            try:
+                getter = getattr(self.astrbot_context, "get_config", None)
+                if callable(getter):
+                    runtime_cfg = getter(umo=umo)
+                    if isinstance(runtime_cfg, dict):
+                        merged.update(runtime_cfg)
+            except Exception:
+                self.logger.debug(
+                    "[睡眠] 获取会话配置失败 getter(umo=%r), getter=%r",
+                    umo,
+                    getattr(getter, "__name__", repr(getter)),
+                    exc_info=True,
+                )
+
+            if key is None:
+                return merged
+            return merged.get(key, default)
+
+        # 兼容旧调用
+        if key is None:
+            return self.config.copy()
         return self.config.get(key, default)
 
     def get_all_config(self) -> Dict[str, Any]:
