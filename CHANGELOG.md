@@ -2,6 +2,23 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.8] - 2026-03-21
+
+### Highlights
+- 优化新记忆 `tags` 规则，要求按知识图谱节点拆分为简短实体词、关系词、属性词，并明确用户昵称与 `uid` 需分别入 tag。
+
+### Core Changes
+- `refactor(prompt)`: `memory_system_guide_async.md` 收紧 `tags` 生成规则，明确使用简短图谱节点，并以 `["小明", "123456", "喜好", "咖啡"]` 作为正确示例。
+
+## [1.3.7] - 2026-03-21
+
+### Highlights
+- 优化反思整理提示词中的用户身份表达，聊天记录与论断生成统一强调“昵称（ID）”格式，降低同名用户混淆。
+
+### Core Changes
+- `refactor(prompt)`: 反思上下文中的用户展示格式由 `昵称/uid` 调整为 `昵称（uid）`，与记忆论断规范保持一致。
+- `refactor(prompt)`: `memory_system_guide_async.md` 新增用户身份书写规则，要求 `judgment` 涉及具体用户时准确同时使用昵称和 ID，例如 `小明（123456）`。
+
 ## [1.3.4] - 2026-03-20
 
 ### Highlights

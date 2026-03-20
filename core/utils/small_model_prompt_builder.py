@@ -99,7 +99,7 @@ class SmallModelPromptBuilder:
                 # 格式化对话文本
                 timestamp = msg.get("timestamp", 0)
                 time_str = SmallModelPromptBuilder.format_relative_time(timestamp)
-                header = f"[群友: {sender_name}/{sender_id}]（{time_str}）: "
+                header = f"[群友: {sender_name}（{sender_id}）]（{time_str}）: "
                 content = msg.get("content", [])
                 text = SmallModelPromptBuilder.extract_text_from_content(content)
                 formatted_lines.append(f"{header}{text}")
