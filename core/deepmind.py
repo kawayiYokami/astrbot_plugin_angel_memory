@@ -987,7 +987,8 @@ class DeepMind:
                 llm_response = await provider.text_chat(prompt=prompt)
             except Exception as e:
                 self.logger.error(
-                    f"会话 {session_id} 的LLM调用失败，跳过记忆整理: {e}"
+                    f"会话 {session_id} 的LLM调用失败，跳过记忆整理: {e}",
+                    exc_info=True,
                 )
                 return
 
