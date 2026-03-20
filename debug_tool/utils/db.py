@@ -24,6 +24,7 @@ class DBManager:
         self.embedding_fn = None
         self.client = None
         self.central_conn = None
+        self.provider_status = self.loader.get_embedding_provider_status()
 
         self.chromadb_path = ""
         self.simple_db_path = self.loader.get_simple_memory_db_path()
@@ -76,6 +77,7 @@ class DBManager:
     def get_overview(self) -> Dict[str, Any]:
         out = {
             "provider_id": self.provider_id or "(未检测到可用 embedding provider)",
+            "provider_status": self.provider_status,
             "chromadb_path": self.chromadb_path or "(未连接)",
             "simple_db_path": self.simple_db_path,
             "maintenance_state_path": self.maintenance_state_path,
