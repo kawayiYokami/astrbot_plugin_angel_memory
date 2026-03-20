@@ -2,6 +2,16 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.4] - 2026-03-20
+
+### Highlights
+- 修复调试工具读取 embedding provider 与运行时配置不一致的问题，减少配置排查时的误导。
+- 调试侧栏新增 provider 回退告警，便于直接识别“配置值”和“实际使用值”是否偏离。
+
+### Bug Fixes
+- `fix(debug-tool)`: `debug_tool` 现在优先读取插件配置 `retrieval.embedding_provider_id`，再回退到首个可用 embedding provider。
+- `feat(observability)`: 新增 provider 状态信息与回退警告展示，帮助定位 provider 未启用或配置缺失问题。
+
 ## [1.3.3] - 2026-03-17
 
 ### Highlights
