@@ -1,7 +1,6 @@
 from typing import Any, Dict, Optional
 
 from astrbot.api.provider import ProviderRequest
-from astrbot.core.agent.message import TextPart
 
 
 class DeepMindInjectionService:
@@ -96,5 +95,12 @@ class DeepMindInjectionService:
                 + "\n\n".join(system_context_parts)
                 + "\n</system_context>"
             )
-            text_part = TextPart(text=full_system_context)
-            request.extra_user_content_parts.append(text_part)
+
+            #作为独立的用户角色上下文条目注入，并设置 _no_save=True，
+            #这样 AstrBot 的 _save_to_history() 将跳过它，并且它不会在对话数据库中跨轮次累积
+            #这里只考虑私聊的情况
+            request.contexts.append({
+                "role": "user",
+                "content": full_system_context,
+                "_no_save": True,
+            })
