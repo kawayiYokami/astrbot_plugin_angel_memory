@@ -2,6 +2,16 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.9] - 2026-03-22
+
+### Highlights
+- 修复 `system_context` 注入策略：仅在拿不到天使之心 `secretary_decision` 时，才使用 `_no_save` 注入，避免历史污染与行为回归。
+
+### Bug Fixes
+- `fix(injection)`: `DeepMind` 新增 `has_secretary_decision` 标志并传递到注入服务。
+- `fix(injection)`: `DeepMindInjectionService` 按标志分流注入路径。
+- `fix(injection)`: 有决策时走 `extra_user_content_parts(TextPart)`；无决策时走 `request.contexts` 且 `_no_save=True`。
+
 ## [1.3.8] - 2026-03-21
 
 ### Highlights
