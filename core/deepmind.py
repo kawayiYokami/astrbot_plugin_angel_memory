@@ -265,13 +265,22 @@ class DeepMind:
         return self.injection_service.create_tendency_bar(normalized_value)
 
     def _inject_memories_to_request(
-        self, request: ProviderRequest, session_id: str, note_context: str, soul_state_values: Optional[Dict[str, Any]] = None
+        self,
+        request: ProviderRequest,
+        session_id: str,
+        note_context: str,
+        soul_state_values: Optional[Dict[str, Any]] = None,
+        has_secretary_decision: bool = False,
     ) -> None:
         """
         将记忆、笔记和灵魂状态统一注入到LLM请求中（使用 extra_user_content_parts）
         """
         self.injection_service.inject_memories_to_request(
-            request, session_id, note_context, soul_state_values
+            request,
+            session_id,
+            note_context,
+            soul_state_values,
+            has_secretary_decision,
         )
 
     async def _update_memory_system(
@@ -430,7 +439,14 @@ class DeepMind:
                 self.logger.warning(f"获取灵魂状态值失败: {e}")
 
         # 8. 注入记忆、笔记和灵魂状态到请求
-        self._inject_memories_to_request(request, session_id, note_context, soul_state_values)
+        has_secretary_decision = bool(secretary_decision)
+        self._inject_memories_to_request(
+            request,
+            session_id,
+            note_context,
+            soul_state_values,
+            has_secretary_decision=has_secretary_decision,
+        )
 
         # 9. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
         try:
