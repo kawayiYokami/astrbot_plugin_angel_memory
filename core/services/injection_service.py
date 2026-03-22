@@ -36,6 +36,7 @@ class DeepMindInjectionService:
         session_id: str,
         note_context: str,
         soul_state_values: Optional[Dict[str, Any]] = None,
+        has_secretary_decision: bool = False,
     ) -> None:
         deepmind = self.deepmind
         system_context_parts = []
@@ -96,5 +97,16 @@ class DeepMindInjectionService:
                 + "\n\n".join(system_context_parts)
                 + "\n</system_context>"
             )
-            text_part = TextPart(text=full_system_context)
-            request.extra_user_content_parts.append(text_part)
+
+            # 只有拿不到天使之心决策时，才使用 _no_save 的上下文注入方式，避免污染历史。
+            if not has_secretary_decision:
+                request.contexts.append(
+                    {
+                        "role": "user",
+                        "content": full_system_context,
+                        "_no_save": True,
+                    }
+                )
+            else:
+                text_part = TextPart(text=full_system_context)
+                request.extra_user_content_parts.append(text_part)
