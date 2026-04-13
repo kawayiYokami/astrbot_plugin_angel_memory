@@ -37,7 +37,7 @@ class ParserManager:
         for extension in MarkdownParser.SUPPORTED_EXTENSIONS:
             self.register_parser(extension, MarkdownParser)
 
-        # 默认启用MarkItDown功能，注册通用解析器支持的扩展名（除了MarkdownParser已支持的）
+        # 注册通用解析器支持的扩展名（除了MarkdownParser已支持的）
         universal_extensions = (
             UniversalParser.SUPPORTED_EXTENSIONS - MarkdownParser.SUPPORTED_EXTENSIONS
         )

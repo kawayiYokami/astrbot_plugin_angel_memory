@@ -195,7 +195,7 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 
 ### 7. 文件监控与笔记系统
 - 自动监控文档变化，实时更新索引
-- 支持Markdown、文本等多种格式
+ 仅支持 Markdown 和 TXT 格式（v1.3.10 起移除了 markitdown 依赖以避免 onnxruntime 冲突）。
 - 与记忆系统协同，提供结构化知识库
 
 ## 性能优化策略
