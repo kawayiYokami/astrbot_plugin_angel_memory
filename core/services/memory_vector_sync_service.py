@@ -105,10 +105,18 @@ class MemoryVectorSyncService:
                 deleted = await self._delete_collection_ids(index_collection, orphan_ids)
                 self.logger.debug(f"[记忆向量库同步] 成功删除 {deleted} 个孤儿向量")
             except Exception as e:
-                self.logger.warning(
-                    f"[记忆向量库同步] 删除孤儿向量失败: {e}"
-                )
-                deleted = 0
+                # 尝试从异常消息中提取已删除的计数
+                import re
+                match = re.search(r"已删除\s+(\d+)\s*条", str(e))
+                deleted = int(match.group(1)) if match else 0
+                if deleted > 0:
+                    self.logger.warning(
+                        f"[记忆向量库同步] 删除孤儿向量部分成功: 已删除 {deleted} 个，失败原因: {e}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"[记忆向量库同步] 删除孤儿向量失败: {e}"
+                    )
 
         cost_ms = int((time.time() - start_time) * 1000)
         self.logger.info(

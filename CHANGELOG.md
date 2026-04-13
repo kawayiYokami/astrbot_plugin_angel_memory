@@ -2,6 +2,20 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.10] - 2026-04-13
+
+### Highlights
+- 移除 `markitdown[all]` 依赖，修复 onnxruntime 版本冲突导致的用户安装失败问题。
+- 插件现仅支持 Markdown 和 TXT 格式文件解析，其他格式（PDF/DOCX/PPTX 等）不再支持。
+
+### Core Changes
+- `chore(deps)`: 从 `requirements.txt` 和 `debug_tool/requirements.txt` 中移除 `markitdown[all]>=0.1.0`。
+- `refactor(parser)`: `universal_parser.py` 注释掉所有 markitdown 导入、初始化与文件转换代码，`SUPPORTED_EXTENSIONS` 仅保留 `.md`、`.txt`。
+- `refactor(parser)`: `parser_manager.py` 更新相关注释。
+
+### Notes
+- 如需启用文档转换功能，请自行安装 `markitdown[all]`，并参考 `universal_parser.py` 中注释的代码手动恢复。
+
 ## [1.3.9] - 2026-03-22
 
 ### Highlights

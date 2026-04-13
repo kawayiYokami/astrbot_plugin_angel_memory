@@ -246,6 +246,7 @@ elif mode == "🧾 中央记忆浏览":
                         st.session_state[confirm_key] = False
                         if result.get("success"):
                             st.toast(f"删除成功：{result.get('deleted_from')}", icon="✅")
+                            st.rerun()
                         else:
                             st.toast(f"删除失败：{result.get('error')}", icon="❌")
                 with col_c2:
