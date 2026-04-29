@@ -98,14 +98,51 @@ class DBManager:
 
     # ===== vector =====
 
+    def _get_collections_via_sqlite(self) -> List[str]:
+        """绕过 chromadb API，直读 sqlite3 获取集合名（版本兼容回退）"""
+        try:
+            db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
+            if not os.path.exists(db_path):
+                return []
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT name FROM collections").fetchall()
+            conn.close()
+            return [r["name"] for r in rows]
+        except Exception as e:
+            logger.error("_get_collections_via_sqlite failed: %s", e)
+            return []
+
+    def _get_collection_stats_via_sqlite(self, collection_name: str) -> Dict[str, Any]:
+        """绕过 chromadb API，直读 sqlite3 + segments 表获取近似计数"""
+        try:
+            db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
+            if not os.path.exists(db_path):
+                return {"count": 0}
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            col = conn.execute("SELECT id FROM collections WHERE name = ?", (collection_name,)).fetchone()
+            if not col:
+                conn.close()
+                return {"count": 0}
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM segments WHERE collection = ?",
+                (col["id"],),
+            ).fetchone()
+            conn.close()
+            return {"count": int(row["cnt"]) if row else 0}
+        except Exception as e:
+            logger.error("_get_collection_stats_via_sqlite failed: %s", e)
+            return {"count": 0}
+
     def get_collections(self) -> List[str]:
         if not self.client:
             return []
         try:
             return [c.name for c in self.client.list_collections()]
         except Exception as e:
-            logger.error("list_collections failed: %s", e)
-            return []
+            logger.warning("list_collections via chromadb failed: %s, falling back to sqlite", e)
+            return self._get_collections_via_sqlite()
 
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
         if not self.client:
@@ -113,8 +150,71 @@ class DBManager:
         try:
             collection = self.client.get_collection(collection_name)
             return {"count": int(collection.count())}
-        except Exception:
-            return {"count": 0}
+        except Exception as e:
+            logger.warning("get_collection_stats via chromadb failed for '%s': %s, falling back to sqlite", collection_name, e)
+            return self._get_collection_stats_via_sqlite(collection_name)
+
+    def _browse_collection_via_sqlite(self, collection_name: str, limit: int = 20, offset: int = 0):
+        """绕过 chromadb API，直读 sqlite3 浏览集合内容（版本兼容回退）"""
+        try:
+            db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
+            if not os.path.exists(db_path):
+                return []
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+
+            col = conn.execute("SELECT id FROM collections WHERE name=?", (collection_name,)).fetchone()
+            if not col:
+                conn.close()
+                return []
+
+            segments = conn.execute("SELECT id FROM segments WHERE collection=?", (col["id"],)).fetchall()
+            if not segments:
+                conn.close()
+                return []
+
+            seg_ids = [s["id"] for s in segments]
+            placeholders = ",".join(["?" for _ in seg_ids])
+            sql = f"""
+                SELECT e.embedding_id, e.seq_id, e.id AS db_id
+                FROM embeddings e
+                WHERE e.segment_id IN ({placeholders})
+                ORDER BY e.seq_id
+                LIMIT ? OFFSET ?
+            """
+            rows = conn.execute(sql, seg_ids + [int(limit), int(offset)]).fetchall()
+
+            out = []
+            for row in rows:
+                meta_rows = conn.execute(
+                    "SELECT key, string_value, int_value, float_value, bool_value FROM embedding_metadata WHERE id=?",
+                    (row["db_id"],),
+                ).fetchall()
+                document = ""
+                metadata = {}
+                for m in meta_rows:
+                    if m["key"] == "chroma:document":
+                        document = m["string_value"] or ""
+                    elif m["string_value"] is not None:
+                        metadata[m["key"]] = m["string_value"]
+                    elif m["int_value"] is not None:
+                        metadata[m["key"]] = m["int_value"]
+                    elif m["float_value"] is not None:
+                        metadata[m["key"]] = m["float_value"]
+                    elif m["bool_value"] is not None:
+                        metadata[m["key"]] = bool(m["bool_value"])
+
+                out.append({
+                    "id": row["embedding_id"],
+                    "document": document,
+                    "metadata": metadata,
+                })
+
+            conn.close()
+            return out
+        except Exception as e:
+            logger.error("_browse_collection_via_sqlite failed: %s", e)
+            return []
 
     def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
         if not self.client:
@@ -141,8 +241,8 @@ class DBManager:
                 )
             return out
         except Exception as e:
-            logger.error("browse_collection failed: %s", e)
-            return []
+            logger.warning("browse_collection via chromadb failed for '%s': %s, falling back to sqlite", collection_name, e)
+            return self._browse_collection_via_sqlite(collection_name, limit, offset)
 
     def query_collection(
         self,
