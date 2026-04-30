@@ -18,12 +18,6 @@ logger = logging.getLogger(__name__)
 
 class DBManager:
     def __init__(self, loader: ConfigLoader, provider_config: Optional[dict]):
-        """初始化数据库管理器，连接中央 SQLite 与向量数据库。
-
-        Args:
-            loader: 配置加载器实例
-            provider_config: embedding provider 配置字典
-        """
         self.loader = loader
         self.provider_config = provider_config or {}
         self.provider_id = self.provider_config.get("id", "")
@@ -49,11 +43,11 @@ class DBManager:
                     self.simple_db_path, check_same_thread=False
                 )
                 self.central_conn.row_factory = sqlite3.Row
-                logger.info("Connected to central memory DB: %s", self.simple_db_path)
+                logger.info("[调试工具] 中央记忆数据库连接完成: %s", self.simple_db_path)
             else:
-                logger.warning("Central memory DB not found: %s", self.simple_db_path)
+                logger.warning("[调试工具] 中央记忆数据库未找到: %s", self.simple_db_path)
         except Exception as e:
-            logger.error("Failed to connect central memory DB: %s", e)
+            logger.error("[调试工具] 中央记忆数据库连接失败: %s", e, exc_info=True)
 
     def _connect_vector_db(self):
         if not self.provider_id:
@@ -61,16 +55,16 @@ class DBManager:
         try:
             self.chromadb_path = self.loader.get_data_dir(self.provider_id)
             if not os.path.exists(self.chromadb_path):
-                logger.warning("ChromaDB path not found: %s", self.chromadb_path)
+                logger.warning("[调试工具] ChromaDB路径未找到: %s", self.chromadb_path)
                 return
             self.client = chromadb.PersistentClient(path=self.chromadb_path)
             try:
                 self.embedding_fn = create_embedding_function(self.provider_config)
             except Exception as e:
-                logger.warning("Embedding function init failed, query mode disabled: %s", e)
-            logger.info("Connected to ChromaDB: %s", self.chromadb_path)
+                logger.warning("[调试工具] 嵌入函数初始化失败，查询模式已禁用: %s", e)
+            logger.info("[调试工具] ChromaDB连接完成: %s", self.chromadb_path)
         except Exception as e:
-            logger.error("Failed to connect ChromaDB: %s", e)
+            logger.error("[调试工具] ChromaDB连接失败: %s", e, exc_info=True)
 
     # ===== status =====
 
@@ -81,11 +75,6 @@ class DBManager:
         return self.central_conn is not None
 
     def get_overview(self) -> Dict[str, Any]:
-        """获取数据库概览信息（路径、集合统计、记忆数量等）。
-
-        Returns:
-            包含 provider/chromadb/sqlite 状态的概览字典
-        """
         out = {
             "provider_id": self.provider_id or "(未检测到可用 embedding provider)",
             "provider_status": self.provider_status,
@@ -115,12 +104,13 @@ class DBManager:
             db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
             if not os.path.exists(db_path):
                 return []
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                rows = conn.execute("SELECT name FROM collections").fetchall()
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT name FROM collections").fetchall()
+            conn.close()
             return [r["name"] for r in rows]
         except Exception as e:
-            logger.error("_get_collections_via_sqlite failed: %s", e)
+            logger.error("[调试工具] SQLite集合列表查询失败: %s", e, exc_info=True)
             return []
 
     def _get_collection_stats_via_sqlite(self, collection_name: str) -> Dict[str, Any]:
@@ -129,50 +119,39 @@ class DBManager:
             db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
             if not os.path.exists(db_path):
                 return {"count": 0}
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                col = conn.execute("SELECT id FROM collections WHERE name = ?", (collection_name,)).fetchone()
-                if not col:
-                    return {"count": 0}
-                row = conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM segments WHERE collection = ?",
-                    (col["id"],),
-                ).fetchone()
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            col = conn.execute("SELECT id FROM collections WHERE name = ?", (collection_name,)).fetchone()
+            if not col:
+                conn.close()
+                return {"count": 0}
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM segments WHERE collection = ?",
+                (col["id"],),
+            ).fetchone()
+            conn.close()
             return {"count": int(row["cnt"]) if row else 0}
         except Exception as e:
-            logger.error("_get_collection_stats_via_sqlite failed: %s", e)
+            logger.error("[调试工具] SQLite集合统计查询失败: %s", e, exc_info=True)
             return {"count": 0}
 
     def get_collections(self) -> List[str]:
-        """获取 ChromaDB 中所有集合的名称列表，API 失败时回退 SQLite 直读。
-
-        Returns:
-            集合名称列表
-        """
         if not self.client:
             return []
         try:
             return [c.name for c in self.client.list_collections()]
         except Exception as e:
-            logger.warning("list_collections via chromadb failed: %s, falling back to sqlite", e)
+            logger.warning("[调试工具] ChromaDB集合列表查询失败，降级到SQLite: %s", e)
             return self._get_collections_via_sqlite()
 
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
-        """获取指定集合的统计信息。
-
-        Args:
-            collection_name: 集合名称
-
-        Returns:
-            含 count 字段的字典
-        """
         if not self.client:
             return {"count": 0}
         try:
             collection = self.client.get_collection(collection_name)
             return {"count": int(collection.count())}
         except Exception as e:
-            logger.warning("get_collection_stats via chromadb failed for '%s': %s, falling back to sqlite", collection_name, e)
+            logger.warning("[调试工具] ChromaDB集合统计查询失败(%s)，降级到SQLite: %s", collection_name, e)
             return self._get_collection_stats_via_sqlite(collection_name)
 
     def _browse_collection_via_sqlite(self, collection_name: str, limit: int = 20, offset: int = 0):
@@ -181,70 +160,63 @@ class DBManager:
             db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
             if not os.path.exists(db_path):
                 return []
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
 
-                col = conn.execute("SELECT id FROM collections WHERE name=?", (collection_name,)).fetchone()
-                if not col:
-                    return []
+            col = conn.execute("SELECT id FROM collections WHERE name=?", (collection_name,)).fetchone()
+            if not col:
+                conn.close()
+                return []
 
-                segments = conn.execute("SELECT id FROM segments WHERE collection=?", (col["id"],)).fetchall()
-                if not segments:
-                    return []
+            segments = conn.execute("SELECT id FROM segments WHERE collection=?", (col["id"],)).fetchall()
+            if not segments:
+                conn.close()
+                return []
 
-                seg_ids = [s["id"] for s in segments]
-                placeholders = ",".join(["?" for _ in seg_ids])
-                sql = f"""
-                    SELECT e.embedding_id, e.seq_id, e.id AS db_id
-                    FROM embeddings e
-                    WHERE e.segment_id IN ({placeholders})
-                    ORDER BY e.seq_id
-                    LIMIT ? OFFSET ?
-                """
-                rows = conn.execute(sql, seg_ids + [int(limit), int(offset)]).fetchall()
+            seg_ids = [s["id"] for s in segments]
+            placeholders = ",".join(["?" for _ in seg_ids])
+            sql = f"""
+                SELECT e.embedding_id, e.seq_id, e.id AS db_id
+                FROM embeddings e
+                WHERE e.segment_id IN ({placeholders})
+                ORDER BY e.seq_id
+                LIMIT ? OFFSET ?
+            """
+            rows = conn.execute(sql, seg_ids + [int(limit), int(offset)]).fetchall()
 
-                out = []
-                for row in rows:
-                    meta_rows = conn.execute(
-                        "SELECT key, string_value, int_value, float_value, bool_value FROM embedding_metadata WHERE id=?",
-                        (row["db_id"],),
-                    ).fetchall()
-                    document = ""
-                    metadata = {}
-                    for m in meta_rows:
-                        if m["key"] == "chroma:document":
-                            document = m["string_value"] or ""
-                        elif m["string_value"] is not None:
-                            metadata[m["key"]] = m["string_value"]
-                        elif m["int_value"] is not None:
-                            metadata[m["key"]] = m["int_value"]
-                        elif m["float_value"] is not None:
-                            metadata[m["key"]] = m["float_value"]
-                        elif m["bool_value"] is not None:
-                            metadata[m["key"]] = bool(m["bool_value"])
+            out = []
+            for row in rows:
+                meta_rows = conn.execute(
+                    "SELECT key, string_value, int_value, float_value, bool_value FROM embedding_metadata WHERE id=?",
+                    (row["db_id"],),
+                ).fetchall()
+                document = ""
+                metadata = {}
+                for m in meta_rows:
+                    if m["key"] == "chroma:document":
+                        document = m["string_value"] or ""
+                    elif m["string_value"] is not None:
+                        metadata[m["key"]] = m["string_value"]
+                    elif m["int_value"] is not None:
+                        metadata[m["key"]] = m["int_value"]
+                    elif m["float_value"] is not None:
+                        metadata[m["key"]] = m["float_value"]
+                    elif m["bool_value"] is not None:
+                        metadata[m["key"]] = bool(m["bool_value"])
 
-                    out.append({
-                        "id": row["embedding_id"],
-                        "document": document,
-                        "metadata": metadata,
-                    })
+                out.append({
+                    "id": row["embedding_id"],
+                    "document": document,
+                    "metadata": metadata,
+                })
 
+            conn.close()
             return out
         except Exception as e:
-            logger.error("_browse_collection_via_sqlite failed: %s", e)
+            logger.error("[调试工具] SQLite集合浏览查询失败: %s", e, exc_info=True)
             return []
 
     def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
-        """浏览集合中的记忆条目。
-
-        Args:
-            collection_name: 集合名称
-            limit: 返回条数上限
-            offset: 分页偏移
-
-        Returns:
-            记忆条目列表，每项含 id/document/metadata
-        """
         if not self.client:
             return []
         try:
@@ -269,7 +241,7 @@ class DBManager:
                 )
             return out
         except Exception as e:
-            logger.warning("browse_collection via chromadb failed for '%s': %s, falling back to sqlite", collection_name, e)
+            logger.warning("[调试工具] ChromaDB集合浏览查询失败(%s)，降级到SQLite: %s", collection_name, e)
             return self._browse_collection_via_sqlite(collection_name, limit, offset)
 
     def query_collection(
@@ -279,17 +251,6 @@ class DBManager:
         n_results: int = 10,
         where_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """向量语义查询。
-
-        Args:
-            collection_name: 集合名称
-            query_text: 查询文本
-            n_results: 返回结果数量
-            where_filter: 可选元数据过滤条件
-
-        Returns:
-            匹配结果列表，每项含 id/document/metadata/distance/score
-        """
         if not self.client:
             return []
         if not self.embedding_fn:
@@ -324,17 +285,12 @@ class DBManager:
                 )
             return out
         except Exception as e:
-            logger.error("query_collection failed: %s", e)
+            logger.error("[调试工具] 集合查询失败: %s", e, exc_info=True)
             return [{"error": str(e)}]
 
     # ===== central memory =====
 
     def get_central_stats(self) -> Dict[str, Any]:
-        """获取中央数据库统计（记忆数、标签数、作用域列表）。
-
-        Returns:
-            含 memory_count/global_tag_count/scopes 的字典
-        """
         if not self.central_conn:
             return {"memory_count": 0, "global_tag_count": 0, "scopes": []}
         try:
@@ -353,7 +309,7 @@ class DBManager:
                 "scopes": scopes,
             }
         except Exception as e:
-            logger.error("get_central_stats failed: %s", e)
+            logger.error("[调试工具] 中央统计查询失败: %s", e, exc_info=True)
             return {"memory_count": 0, "global_tag_count": 0, "scopes": []}
 
     def browse_central_memories(
@@ -364,18 +320,6 @@ class DBManager:
         keyword: str = "",
         return_total: bool = False,
     ):
-        """浏览中央记忆记录，支持按作用域和关键词筛选。
-
-        Args:
-            limit: 返回条数上限
-            offset: 分页偏移
-            scope: 按作用域过滤
-            keyword: 关键词搜索（LIKE 匹配）
-            return_total: 是否同时返回总数
-
-        Returns:
-            记忆列表，若 return_total 为 True 则返回 (list, total)
-        """
         if not self.central_conn:
             return ([], 0) if return_total else []
         try:
@@ -460,20 +404,10 @@ class DBManager:
                 )
             return (out, total) if return_total else out
         except Exception as e:
-            logger.error("browse_central_memories failed: %s", e)
+            logger.error("[调试工具] 中央记忆浏览失败: %s", e, exc_info=True)
             return ([], 0) if return_total else []
 
     def get_global_tags(self, limit: int = 200, offset: int = 0, keyword: str = ""):
-        """获取全局标签列表。
-
-        Args:
-            limit: 返回条数上限
-            offset: 分页偏移
-            keyword: 标签名关键词过滤
-
-        Returns:
-            标签字典列表，含 id/name/memory_refs/note_refs
-        """
         if not self.central_conn:
             return []
         try:
@@ -504,22 +438,12 @@ class DBManager:
             cur.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
         except Exception as e:
-            logger.error("get_global_tags failed: %s", e)
+            logger.error("[调试工具] 全局标签查询失败: %s", e, exc_info=True)
             return []
 
     def unified_tag_hit_search(
         self, query_text: str, limit: int = 50, scope: str = ""
     ) -> Dict[str, Any]:
-        """标签命中搜索：识别查询文本中的标签名并返回匹配记忆。
-
-        Args:
-            query_text: 查询文本
-            limit: 返回结果数量
-            scope: 作用域过滤
-
-        Returns:
-            含 matched_tags/matched_tag_ids/memory_hits 的字典
-        """
         if not self.central_conn:
             return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": []}
         query = str(query_text or "")
@@ -601,17 +525,12 @@ class DBManager:
                 "memory_hits": memory_hits,
             }
         except Exception as e:
-            logger.error("unified_tag_hit_search failed: %s", e)
+            logger.error("[调试工具] 统一标签命中搜索失败: %s", e, exc_info=True)
             return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": [], "error": str(e)}
 
     # ===== notes index =====
 
     def get_note_index_stats(self) -> Dict[str, int]:
-        """获取笔记索引统计信息。
-
-        Returns:
-            含 note_index_count/note_tag_rel_count 的字典
-        """
         if not self.central_conn:
             return {"note_index_count": 0, "note_tag_rel_count": 0}
         try:
@@ -625,7 +544,7 @@ class DBManager:
                 "note_tag_rel_count": note_tag_rel_count,
             }
         except Exception as e:
-            logger.error("get_note_index_stats failed: %s", e)
+            logger.error("[调试工具] 笔记索引统计查询失败: %s", e, exc_info=True)
             return {"note_index_count": 0, "note_tag_rel_count": 0}
 
     def browse_note_index_records(
@@ -635,17 +554,6 @@ class DBManager:
         keyword: str = "",
         return_total: bool = False,
     ):
-        """浏览笔记索引记录，支持关键词搜索。
-
-        Args:
-            limit: 返回条数上限
-            offset: 分页偏移
-            keyword: 搜索关键词（匹配文件路径和标题）
-            return_total: 是否同时返回总数
-
-        Returns:
-            笔记索引列表，若 return_total 为 True 则返回 (list, total)
-        """
         if not self.central_conn:
             return ([], 0) if return_total else []
         try:
@@ -717,7 +625,7 @@ class DBManager:
             rows = [dict(row) for row in cur.fetchall()]
             return (rows, total) if return_total else rows
         except Exception as e:
-            logger.error("browse_note_index_records failed: %s", e)
+            logger.error("[调试工具] 笔记索引记录浏览失败: %s", e, exc_info=True)
             return ([], 0) if return_total else []
 
     def get_note_index_by_short_id(self, note_short_id: int) -> Optional[Dict[str, Any]]:
@@ -749,23 +657,13 @@ class DBManager:
             row = cur.fetchone()
             return dict(row) if row else None
         except Exception as e:
-            logger.error("get_note_index_by_short_id failed: %s", e)
+            logger.error("[调试工具] 笔记索引短ID查询失败: %s", e, exc_info=True)
             return None
 
     # ===== import / export =====
 
     @staticmethod
     def _parse_tags(value: Any) -> List[str]:
-        """解析多种格式的标签值为字符串列表。
-
-        支持 list、逗号分隔字符串、JSON 数组字符串等格式。
-
-        Args:
-            value: 待解析的标签值
-
-        Returns:
-            去空格且过滤空值的标签字符串列表
-        """
         if isinstance(value, list):
             return [str(x).strip() for x in value if str(x).strip()]
         if isinstance(value, str):
@@ -783,15 +681,6 @@ class DBManager:
         return []
 
     def _replace_tags(self, conn: sqlite3.Connection, memory_id: str, tags: List[str]):
-        """替换指定记忆的全部标签关联。
-
-        先删除原有标签关联，再写入新标签并同步 global_tags 表。
-
-        Args:
-            conn: 数据库连接
-            memory_id: 记忆 ID
-            tags: 新标签列表
-        """
         conn.execute("DELETE FROM memory_tag_rel WHERE memory_id = ?", (memory_id,))
         if not tags:
             return
@@ -834,17 +723,6 @@ class DBManager:
         }
 
     def _upsert_by_judgment(self, conn: sqlite3.Connection, item: Dict[str, Any]) -> str:
-        """按 judgment 去重 upsert 记忆记录。
-
-        若 judgment 已存在则更新，否则插入新记录，同步处理标签关联。
-
-        Args:
-            conn: 数据库连接
-            item: 含 judgment/reasoning/tags/memory_type/created_at 的记忆字典
-
-        Returns:
-            "insert" / "update" / "skip"
-        """
         judgment = str(item.get("judgment") or "").strip()
         if not judgment:
             return "skip"
@@ -984,11 +862,6 @@ class DBManager:
     # ===== maintenance =====
 
     def get_maintenance_state(self) -> Dict[str, Any]:
-        """读取维护状态文件。
-
-        Returns:
-            维护状态字典，文件不存在则返回空字典，解析异常返回 {"error": ...}
-        """
         if not os.path.exists(self.maintenance_state_path):
             return {}
         try:
@@ -998,11 +871,6 @@ class DBManager:
             return {"error": str(e)}
 
     def list_backups(self) -> List[Dict[str, Any]]:
-        """列出备份目录中的所有备份文件信息。
-
-        Returns:
-            按文件名倒序排列的备份信息列表，含 name/size/mtime 字段
-        """
         if not os.path.exists(self.backup_dir):
             return []
         rows = []
@@ -1027,14 +895,6 @@ class DBManager:
         return rows
 
     def load_backup_preview(self, path: str) -> Dict[str, Any]:
-        """加载备份文件预览信息（不读取完整数据）。
-
-        Args:
-            path: 备份文件路径
-
-        Returns:
-            含 schema_version/exported_at/records/global_tags/memory_tag_rel 计数的字典
-        """
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
