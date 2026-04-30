@@ -74,6 +74,12 @@ class DBManager:
     def has_central_db(self) -> bool:
         return self.central_conn is not None
 
+    def _has_chromadb_sqlite(self) -> bool:
+        """检查本地 chroma.sqlite3 是否存在，用于 self.client 初始化失败时的回退判断"""
+        return bool(self.chromadb_path) and os.path.exists(
+            os.path.join(self.chromadb_path, "chroma.sqlite3")
+        )
+
     def get_overview(self) -> Dict[str, Any]:
         out = {
             "provider_id": self.provider_id or "(未检测到可用 embedding provider)",
@@ -83,7 +89,7 @@ class DBManager:
             "maintenance_state_path": self.maintenance_state_path,
             "backup_dir": self.backup_dir,
         }
-        if self.has_vector_db():
+        if self.has_vector_db() or self._has_chromadb_sqlite():
             cols = self.get_collections()
             out["vector_collections"] = cols
             out["memory_index_count"] = self.get_collection_stats("memory_index").get("count", 0)
@@ -139,7 +145,7 @@ class DBManager:
 
     def get_collections(self) -> List[str]:
         if not self.client:
-            return self._get_collections_via_sqlite()
+            return self._get_collections_via_sqlite() if self._has_chromadb_sqlite() else []
         try:
             return [c.name for c in self.client.list_collections()]
         except Exception as e:
@@ -148,7 +154,11 @@ class DBManager:
 
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
         if not self.client:
-            return self._get_collection_stats_via_sqlite(collection_name)
+            return (
+                self._get_collection_stats_via_sqlite(collection_name)
+                if self._has_chromadb_sqlite()
+                else {"count": 0}
+            )
         try:
             collection = self.client.get_collection(collection_name)
             return {"count": int(collection.count())}
@@ -220,7 +230,11 @@ class DBManager:
 
     def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
         if not self.client:
-            return self._browse_collection_via_sqlite(collection_name, limit, offset)
+            return (
+                self._browse_collection_via_sqlite(collection_name, limit, offset)
+                if self._has_chromadb_sqlite()
+                else []
+            )
         try:
             collection = self.client.get_collection(collection_name)
             res = collection.get(
