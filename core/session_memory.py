@@ -261,7 +261,7 @@ class SessionMemory:
             tags=getattr(memory, "tags", []),
             strength=getattr(memory, "strength", 0),
             life_points=3,  # 新记忆默认3点生命值
-            created_at=time.time(),  # 记录创建时间
+            created_at=getattr(memory, "created_at", None) or time.time(),  # 保留原始创建时间，无则用当前时间
         )
 
     def _add_memory_item(self, memory_item: MemoryItem) -> None:
@@ -458,7 +458,7 @@ class SessionMemory:
                     tags=getattr(memory, "tags", []),
                     strength=getattr(memory, "strength", 0),
                     life_points=3,  # 新记忆默认3点生命值
-                    created_at=time.time(),  # 记录创建时间
+                    created_at=getattr(memory, "created_at", None) or time.time(),  # 保留原始创建时间，无则用当前时间
                 )
 
                 # 如果记忆已存在，先移除旧的
