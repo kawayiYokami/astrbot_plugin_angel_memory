@@ -162,6 +162,29 @@ class MemoryManager:
             return scope == "public"
         return scope in {target, "public"}
 
+    @staticmethod
+    def _safe_parse_timestamp(value, default: float) -> float:
+        """安全解析时间戳，兼容脏数据（空字符串、非数字字符串等）"""
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return default
+            try:
+                return float(stripped)
+            except ValueError:
+                pass
+            try:
+                from datetime import datetime
+
+                return datetime.fromisoformat(stripped).timestamp()
+            except (ValueError, AttributeError):
+                pass
+        return default
+
     def _apply_time_decay(self, memories: List[BaseMemory], decay_rate: float = 0.05) -> List[BaseMemory]:
         """
         对被动记忆应用时间衰减，并重新排序。
@@ -184,10 +207,8 @@ class MemoryManager:
         for mem in memories:
             if getattr(mem, 'is_active', False):
                 continue
-            created_at = getattr(mem, 'created_at', None)
-            if created_at is None:
-                created_at = now
-            age_days = max(0.0, (now - float(created_at)) / 86400.0)
+            created_at = self._safe_parse_timestamp(getattr(mem, 'created_at', None), now)
+            age_days = max(0.0, (now - created_at) / 86400.0)
             decay_factor = 1.0 / (1.0 + decay_rate * age_days)
             mem.similarity = getattr(mem, 'similarity', 0.0) * decay_factor
 
@@ -731,9 +752,19 @@ class MemoryManager:
         改用 strength>0 和 memory_type 过滤，确保查到所有活跃任务记忆。
         """
         try:
+            # 先获取当前任务的 memory_scope，防止跨范围误更新
+            current_scope = "public"
+            current_task_data = self.collection.get(ids=[current_task_id])
+            if current_task_data and current_task_data.get("metadatas"):
+                current_scope = current_task_data["metadatas"][0].get("memory_scope", "public")
+
             # 查找除了当前记忆之外的所有任务记忆（strength>0 表示未过期）
             where_filter = {
-                "$and": [{"memory_type": "任务记忆"}, {"strength": {"$gt": 0}}]
+                "$and": [
+                    {"memory_type": "任务记忆"},
+                    {"strength": {"$gt": 0}},
+                    {"memory_scope": current_scope},
+                ]
             }
 
             fresh_task_results = self.collection.get(where=where_filter)

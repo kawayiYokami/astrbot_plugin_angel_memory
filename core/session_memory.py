@@ -242,6 +242,32 @@ class SessionMemory:
         # 清理容量
         self._cleanup_by_capacity(memory_type)
 
+    @staticmethod
+    def _safe_parse_created_at(value) -> float:
+        """安全解析created_at为float时间戳，兼容脏数据"""
+        import time
+
+        now = time.time()
+        if value is None:
+            return now
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return now
+            try:
+                return float(stripped)
+            except ValueError:
+                pass
+            try:
+                from datetime import datetime
+
+                return datetime.fromisoformat(stripped).timestamp()
+            except (ValueError, AttributeError):
+                pass
+        return now
+
     def _create_memory_item(self, memory: BaseMemory, memory_type: str) -> MemoryItem:
         """
         创建记忆项对象
@@ -261,7 +287,7 @@ class SessionMemory:
             tags=getattr(memory, "tags", []),
             strength=getattr(memory, "strength", 0),
             life_points=3,  # 新记忆默认3点生命值
-            created_at=getattr(memory, "created_at", None) or time.time(),  # 保留原始创建时间，无则用当前时间
+            created_at=self._safe_parse_created_at(getattr(memory, "created_at", None)),  # 安全解析创建时间
         )
 
     def _add_memory_item(self, memory_item: MemoryItem) -> None:
