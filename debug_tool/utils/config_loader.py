@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,8 @@ class ConfigLoader:
         # data/plugins/astrbot_plugin_angel_memory/debug_tool -> data/plugin_data/astrbot_plugin_angel_memory
         # ../../../plugin_data/astrbot_plugin_angel_memory
         base_data_dir = os.path.abspath(os.path.join(self.base_path, "../../../plugin_data/astrbot_plugin_angel_memory"))
+        # 主插件 path_manager 用正则替换所有 Windows 非法字符，debug_tool 须完全对齐
+        provider_id = re.sub(r'[<>:"/\\|?*]', "_", provider_id.strip())
         return os.path.join(base_data_dir, f"memory_{provider_id}", "chromadb")
 
     def get_plugin_data_dir(self) -> str:

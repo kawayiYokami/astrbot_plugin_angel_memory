@@ -5,6 +5,8 @@
 """
 
 from typing import List, Dict, Any, Optional
+import time
+
 from ..session_memory import MemoryItem
 from ..config import MemoryConstants
 
@@ -36,7 +38,23 @@ class MemoryFormatter:
         if memory.reasoning and memory.reasoning.strip():
             reasoning = f"\n——因为{memory.reasoning.strip()}"
 
-        return f"{judgment}{reasoning}"
+        # 格式化时间（相对时间）
+        time_suffix = ""
+        created_at = getattr(memory, "created_at", 0.0)
+        if created_at and created_at > 0:
+            elapsed = time.time() - created_at
+            if elapsed < 60:
+                time_suffix = "（刚刚）"
+            elif elapsed < 3600:
+                time_suffix = f"（{int(elapsed // 60)}分钟前）"
+            elif elapsed < 86400:
+                time_suffix = f"（{int(elapsed // 3600)}小时前）"
+            elif elapsed < 2592000:
+                time_suffix = f"（{int(elapsed // 86400)}天前）"
+            else:
+                time_suffix = f"（{int(elapsed // 2592000)}个月前）"
+
+        return f"{judgment}{reasoning}{time_suffix}"
 
     @staticmethod
     def format_memories_by_type(memories: List[MemoryItem]) -> Dict[str, List[str]]:
