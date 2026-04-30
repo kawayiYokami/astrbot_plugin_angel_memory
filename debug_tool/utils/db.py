@@ -37,6 +37,7 @@ class DBManager:
     # ===== connect =====
 
     def _connect_central_db(self):
+        """连接中央记忆数据库（SQLite），若文件存在则建连并设置 row_factory"""
         try:
             if os.path.exists(self.simple_db_path):
                 self.central_conn = sqlite3.connect(
@@ -50,6 +51,7 @@ class DBManager:
             logger.error("[调试工具] 中央记忆数据库连接失败: %s", e, exc_info=True)
 
     def _connect_vector_db(self):
+        """连接 ChromaDB 向量数据库并初始化嵌入函数；无 provider_id 则跳过"""
         if not self.provider_id:
             return
         try:
@@ -69,9 +71,11 @@ class DBManager:
     # ===== status =====
 
     def has_vector_db(self) -> bool:
+        """检查 ChromaDB 客户端是否已成功初始化"""
         return self.client is not None
 
     def has_central_db(self) -> bool:
+        """检查中央记忆数据库连接是否可用"""
         return self.central_conn is not None
 
     def _has_chromadb_sqlite(self) -> bool:
@@ -81,6 +85,7 @@ class DBManager:
         )
 
     def get_overview(self) -> Dict[str, Any]:
+        """返回调试工具整体状态概览，包含向量库、中央库、备份等统计信息"""
         out = {
             "provider_id": self.provider_id or "(未检测到可用 embedding provider)",
             "provider_status": self.provider_status,
@@ -144,6 +149,7 @@ class DBManager:
             return {"count": 0}
 
     def get_collections(self) -> List[str]:
+        """获取所有 ChromaDB 集合名列表，API 失败时回退到 SQLite 直读"""
         if not self.client:
             return self._get_collections_via_sqlite() if self._has_chromadb_sqlite() else []
         try:
@@ -153,6 +159,7 @@ class DBManager:
             return self._get_collections_via_sqlite()
 
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
+        """获取指定集合的记录计数，API 失败时回退到 SQLite 统计"""
         if not self.client:
             return (
                 self._get_collection_stats_via_sqlite(collection_name)
@@ -229,6 +236,7 @@ class DBManager:
             return []
 
     def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
+        """浏览集合内容（支持分页），API 失败时回退到 SQLite 直读"""
         if not self.client:
             return (
                 self._browse_collection_via_sqlite(collection_name, limit, offset)
@@ -267,6 +275,7 @@ class DBManager:
         n_results: int = 10,
         where_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
+        """向量相似度查询集合，返回排序后的匹配记录及距离/评分"""
         if not self.client:
             return []
         if not self.embedding_fn:
@@ -307,6 +316,7 @@ class DBManager:
     # ===== central memory =====
 
     def get_central_stats(self) -> Dict[str, Any]:
+        """获取中央记忆统计：记忆总数、标签总数、作用域列表"""
         if not self.central_conn:
             return {"memory_count": 0, "global_tag_count": 0, "scopes": []}
         try:
@@ -336,6 +346,7 @@ class DBManager:
         keyword: str = "",
         return_total: bool = False,
     ):
+        """分页浏览中央记忆记录，支持按作用域和关键词过滤，可返回总数"""
         if not self.central_conn:
             return ([], 0) if return_total else []
         try:
@@ -424,6 +435,7 @@ class DBManager:
             return ([], 0) if return_total else []
 
     def get_global_tags(self, limit: int = 200, offset: int = 0, keyword: str = ""):
+        """分页查询全局标签列表（含记忆/笔记引用计数），支持关键词搜索"""
         if not self.central_conn:
             return []
         try:
@@ -460,6 +472,7 @@ class DBManager:
     def unified_tag_hit_search(
         self, query_text: str, limit: int = 50, scope: str = ""
     ) -> Dict[str, Any]:
+        """统一标签命中搜索：从查询文本中匹配标签名，返回命中的记忆记录"""
         if not self.central_conn:
             return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": []}
         query = str(query_text or "")
@@ -547,6 +560,7 @@ class DBManager:
     # ===== notes index =====
 
     def get_note_index_stats(self) -> Dict[str, int]:
+        """获取笔记索引统计：笔记记录总数、笔记标签关联总数"""
         if not self.central_conn:
             return {"note_index_count": 0, "note_tag_rel_count": 0}
         try:
@@ -570,6 +584,7 @@ class DBManager:
         keyword: str = "",
         return_total: bool = False,
     ):
+        """分页浏览笔记索引记录，支持关键词搜索，可返回总数"""
         if not self.central_conn:
             return ([], 0) if return_total else []
         try:
@@ -645,6 +660,7 @@ class DBManager:
             return ([], 0) if return_total else []
 
     def get_note_index_by_short_id(self, note_short_id: int) -> Optional[Dict[str, Any]]:
+        """根据短ID查询单条笔记索引记录的完整信息"""
         if not self.central_conn:
             return None
         try:
@@ -680,6 +696,7 @@ class DBManager:
 
     @staticmethod
     def _parse_tags(value: Any) -> List[str]:
+        """将多种格式的标签值（列表/JSON字符串/逗号分隔）统一解析为字符串列表"""
         if isinstance(value, list):
             return [str(x).strip() for x in value if str(x).strip()]
         if isinstance(value, str):
@@ -697,6 +714,7 @@ class DBManager:
         return []
 
     def _replace_tags(self, conn: sqlite3.Connection, memory_id: str, tags: List[str]):
+        """替换指定记忆的标签关联：先清旧关联，再建新标签和关联"""
         conn.execute("DELETE FROM memory_tag_rel WHERE memory_id = ?", (memory_id,))
         if not tags:
             return
@@ -713,6 +731,7 @@ class DBManager:
             )
 
     def export_central_snapshot(self) -> Dict[str, Any]:
+        """导出中央记忆的完整快照（记录+标签+关联），用于备份和迁移"""
         if not self.central_conn:
             return {"schema_version": 1, "exported_at": int(time.time()), "records": [], "global_tags": [], "memory_tag_rel": []}
         cur = self.central_conn.cursor()
@@ -739,6 +758,7 @@ class DBManager:
         }
 
     def _upsert_by_judgment(self, conn: sqlite3.Connection, item: Dict[str, Any]) -> str:
+        """按 judgment 去重插入或更新记忆记录，返回 insert/upsert/skip"""
         judgment = str(item.get("judgment") or "").strip()
         if not judgment:
             return "skip"
@@ -823,6 +843,7 @@ class DBManager:
         return "insert"
 
     def import_central_payload(self, payload: Any) -> Dict[str, int]:
+        """导入记忆数据（支持 records/memories/数组三种格式），返回各操作计数"""
         if not self.central_conn:
             return {"inserted": 0, "upserted": 0, "skipped": 0, "failed": 1}
 
@@ -878,6 +899,7 @@ class DBManager:
     # ===== maintenance =====
 
     def get_maintenance_state(self) -> Dict[str, Any]:
+        """读取维护状态文件，返回上次维护的执行状态"""
         if not os.path.exists(self.maintenance_state_path):
             return {}
         try:
@@ -887,6 +909,7 @@ class DBManager:
             return {"error": str(e)}
 
     def list_backups(self) -> List[Dict[str, Any]]:
+        """列出备份目录下所有 JSON 备份文件及其元信息"""
         if not os.path.exists(self.backup_dir):
             return []
         rows = []
@@ -911,6 +934,7 @@ class DBManager:
         return rows
 
     def load_backup_preview(self, path: str) -> Dict[str, Any]:
+        """加载备份文件的预览信息（版本、记录数、标签数等）"""
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)

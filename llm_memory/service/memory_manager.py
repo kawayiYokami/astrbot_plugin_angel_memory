@@ -156,6 +156,7 @@ class MemoryManager:
 
     @staticmethod
     def _is_scope_allowed(memory_scope: str, target_scope: str) -> bool:
+        """检查给定的 memory_scope 是否在 target_scope 允许范围内（含 public 通配）"""
         scope = str(memory_scope or "").strip() or "public"
         target = str(target_scope or "").strip()
         if target == "public":
