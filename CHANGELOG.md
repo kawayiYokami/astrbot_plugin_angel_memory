@@ -2,6 +2,22 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.11] - 2026-04-30
+
+### Highlights
+- 修复调试工具向量库路径中的 provider ID 非法字符处理不一致问题。
+- 增强调试工具对 ChromaDB 版本差异的兼容性，API 读取失败时可回退到 SQLite 直读集合信息。
+- 优化记忆时间字段处理，保留并安全解析原始 `created_at`，记忆展示增加相对时间提示。
+
+### Bug Fixes
+- `fix(debug-tool)`: `debug_tool` 的向量库路径生成与主插件路径清洗规则对齐。
+- `fix(debug-tool)`: ChromaDB 集合列表、统计与浏览在 API 不兼容时回退读取 `chroma.sqlite3`。
+- `fix(memory)`: 会话短期记忆创建时不再无条件覆盖原始 `created_at`。
+
+### Core Changes
+- `refactor(recall)`: 检索结果补充时间衰减重排，主动记忆不参与时间衰减。
+- `refactor(memory)`: 合并记忆构建过程补全 `created_at`、`useful_count`、`useful_score`、`last_recalled_at` 等元数据。
+
 ## [1.3.10] - 2026-04-13
 
 ### Highlights
