@@ -126,7 +126,9 @@ class DBManager:
                 conn.close()
                 return {"count": 0}
             row = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM segments WHERE collection = ?",
+                "SELECT COUNT(*) AS cnt FROM embeddings e "
+                "JOIN segments s ON e.segment_id = s.id "
+                "WHERE s.collection = ?",
                 (col["id"],),
             ).fetchone()
             conn.close()
@@ -137,7 +139,7 @@ class DBManager:
 
     def get_collections(self) -> List[str]:
         if not self.client:
-            return []
+            return self._get_collections_via_sqlite()
         try:
             return [c.name for c in self.client.list_collections()]
         except Exception as e:
@@ -146,7 +148,7 @@ class DBManager:
 
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
         if not self.client:
-            return {"count": 0}
+            return self._get_collection_stats_via_sqlite(collection_name)
         try:
             collection = self.client.get_collection(collection_name)
             return {"count": int(collection.count())}
@@ -218,7 +220,7 @@ class DBManager:
 
     def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
         if not self.client:
-            return []
+            return self._browse_collection_via_sqlite(collection_name, limit, offset)
         try:
             collection = self.client.get_collection(collection_name)
             res = collection.get(
