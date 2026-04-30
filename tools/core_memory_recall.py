@@ -151,6 +151,7 @@ class CoreMemoryRecallTool(FunctionTool):
                     reasoning=str(getattr(mem, "reasoning", "") or ""),
                     tags=list(getattr(mem, "tags", []) or []),
                     strength=int(getattr(mem, "strength", 0) or 0),
+                    created_at=float(getattr(mem, "created_at", 0.0) or 0.0),
                 )
                 for mem in sampled_memories
             ]

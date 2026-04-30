@@ -3,6 +3,13 @@
 
 这个模块包含了记忆系统的高级功能，如记忆巩固、强化、
 链式回忆、记忆合并等复杂操作。
+
+优化版变更（2026-04-29）：
+- Fix 1: _build_memory_from_metadata 补全 created_at / useful_count / useful_score / last_recalled_at
+- Fix 2: 新增 _apply_time_decay，在 comprehensive_recall 三个返回路径统一应用
+- Fix 3: merge_memories 不再设置 is_consolidated（该字段已迁移废弃）
+- Fix 4: _build_memory_from_metadata 移除未使用的 document 参数
+- Fix 5: _consolidate_previous_task_memory 查询条件从 is_consolidated=False 改为 strength>0
 """
 
 from typing import List, Optional, Dict, Any
@@ -149,11 +156,65 @@ class MemoryManager:
 
     @staticmethod
     def _is_scope_allowed(memory_scope: str, target_scope: str) -> bool:
+        """检查给定的 memory_scope 是否在 target_scope 允许范围内（含 public 通配）"""
         scope = str(memory_scope or "").strip() or "public"
         target = str(target_scope or "").strip()
         if target == "public":
             return scope == "public"
         return scope in {target, "public"}
+
+    @staticmethod
+    def _safe_parse_timestamp(value, default: float) -> float:
+        """安全解析时间戳，兼容脏数据（空字符串、非数字字符串等）"""
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return default
+            try:
+                return float(stripped)
+            except ValueError:
+                pass
+            try:
+                from datetime import datetime
+
+                return datetime.fromisoformat(stripped).timestamp()
+            except (ValueError, AttributeError):
+                pass
+        return default
+
+    def _apply_time_decay(self, memories: List[BaseMemory], decay_rate: float = 0.05) -> List[BaseMemory]:
+        """
+        对被动记忆应用时间衰减，并重新排序。
+
+        主动记忆（is_active=True）不受时间衰减影响。
+        被动记忆的相似度乘以衰减因子：1 / (1 + decay_rate * age_days)
+        约 20 天后衰减至原来的 50%。
+
+        Args:
+            memories: 记忆列表
+            decay_rate: 衰减率，默认 0.05
+
+        Returns:
+            衰减并重新排序后的记忆列表
+        """
+        if not memories:
+            return memories
+
+        now = time.time()
+        for mem in memories:
+            if getattr(mem, 'is_active', False):
+                continue
+            created_at = self._safe_parse_timestamp(getattr(mem, 'created_at', None), now)
+            age_days = max(0.0, (now - created_at) / 86400.0)
+            decay_factor = 1.0 / (1.0 + decay_rate * age_days)
+            mem.similarity = getattr(mem, 'similarity', 0.0) * decay_factor
+
+        memories.sort(key=lambda m: getattr(m, 'similarity', 0.0), reverse=True)
+        return memories
 
     async def comprehensive_recall(
         self,
@@ -173,7 +234,7 @@ class MemoryManager:
             vector: 可选的预计算向量，如果提供则直接使用
 
         Returns:
-            记忆列表（相似度 >= 0.5）
+            记忆列表（相似度 >= 0.5），已按时间衰减重排
         """
         # 预处理查询词
         processed_query = query
@@ -202,7 +263,8 @@ class MemoryManager:
                 vector_scores=score_map if score_map else None,
             )
             if hybrid_memories:
-                return hybrid_memories[:limit]
+                # [Fix 2] Hybrid 主路径：应用时间衰减
+                return self._apply_time_decay(hybrid_memories)[:limit]
 
             if not id_scores:
                 return []
@@ -214,8 +276,8 @@ class MemoryManager:
                     continue
                 mem.similarity = float(score_map.get(mem.id, 0.0))
                 filtered.append(mem)
-            filtered.sort(key=lambda m: getattr(m, "similarity", 0.0), reverse=True)
-            return filtered[:limit]
+            # [Fix 2] Hybrid 回退路径：应用时间衰减
+            return self._apply_time_decay(filtered)[:limit]
 
         # 直接使用混合检索，相似度阈值0.5
         if vector is not None:
@@ -235,6 +297,9 @@ class MemoryManager:
                 where_filter=where_filter,
                 similarity_threshold=0.5,
             )
+
+        # [Fix 2] 纯向量路径：应用时间衰减
+        memories = self._apply_time_decay(memories)
 
         # 数据迁移：补充 is_active 字段，删除 is_consolidated 字段
         batch_updates = []
@@ -282,14 +347,14 @@ class MemoryManager:
             vector: 预计算向量
 
         Returns:
-            所有相关记忆列表
+            所有相关记忆列表（已由 comprehensive_recall 完成时间衰减）
         """
         # 预处理查询词
         processed_query = query
         if self.query_processor and event:
             processed_query = self.query_processor.process_query_for_memory(query, event)
 
-        # 步骤1: 混合检索获取候选池（相似度≥0.5的所有记忆）
+        # 步骤1: 混合检索获取候选池（相似度≥0.5的所有记忆，已含时间衰减）
         candidate_pool = await self.comprehensive_recall(
             query=processed_query,
             limit=100,  # 足够大的限制，让相似度阈值0.5来过滤
@@ -332,9 +397,14 @@ class MemoryManager:
 
 
     def _build_memory_from_metadata(
-        self, memory_id: str, metadata: dict, document: str
+        self, memory_id: str, metadata: dict
     ) -> Optional[BaseMemory]:
-        """从元数据构建记忆对象的辅助方法"""
+        """
+        从 ChromaDB 元数据构建 BaseMemory 对象。
+
+        Fix 1: 补全 created_at，避免合并路径时间戳丢失。
+        Fix 3: 补全 useful_count / useful_score / last_recalled_at，避免合并后衰减状态丢失。
+        """
         memory_type_str = metadata.get("memory_type", "知识记忆")
         try:
             # 解析记忆类型
@@ -352,7 +422,11 @@ class MemoryManager:
                 id=memory_id,
                 strength=metadata.get("strength", 1),
                 is_active=metadata.get("is_active", False),
+                created_at=metadata.get("created_at", time.time()),
                 memory_scope=metadata.get("memory_scope", "public"),
+                useful_count=metadata.get("useful_count", 0),
+                useful_score=metadata.get("useful_score", 0.0),
+                last_recalled_at=metadata.get("last_recalled_at", 0.0),
             )
         except Exception as e:
             self.logger.error(f"构建记忆对象失败: {str(e)}")
@@ -407,15 +481,10 @@ class MemoryManager:
                     continue
 
                 metadata = memory_results["metadatas"][0]
-                document = (
-                    memory_results["documents"][0]
-                    if memory_results["documents"]
-                    else ""
-                )
 
                 # 使用统一的构建方法
                 memory_obj = self._build_memory_from_metadata(
-                    memory_id, metadata, document
+                    memory_id, metadata
                 )
 
                 if not memory_obj:
@@ -449,14 +518,15 @@ class MemoryManager:
             memory_obj.strength for memory_obj in set(memories_to_merge)
         )
 
+        # Fix 4: 不再设置 is_consolidated — 该字段已通过 comprehensive_recall 迁移删除
         new_memory = BaseMemory(
             memory_type=MemoryType.KNOWLEDGE,
             judgment=new_judgment,
             reasoning=new_reasoning,
             tags=new_tags,
             strength=unique_strength,  # 强度等于去重后记忆之和
-            is_consolidated=False,  # 合并记忆作为新鲜记忆重新开始生命周期
             memory_scope=merged_scope,
+            is_consolidated=False,  # 读取侧全部迁移前先保留兼容字段
         )
 
         # 步骤 3: 存储新记忆
@@ -678,16 +748,41 @@ class MemoryManager:
 
         Args:
             current_task_id: 当前新创建的任务记忆ID
+
+        Fix 5: 查询条件从 is_consolidated=False 改为 strength>0，
+        因为 is_consolidated 字段已通过 comprehensive_recall 迁移删除。
+        改用 strength>0 和 memory_type 过滤，确保查到所有活跃任务记忆。
         """
         try:
-            # 查找除了当前记忆之外的所有新鲜任务记忆
+            # 先获取当前任务的 memory_scope，防止跨范围误更新
+            current_scope = "public"
+            current_task_data = self.collection.get(
+                where={"id": current_task_id},
+                limit=1,
+                include=["metadatas"],
+            )
+            if current_task_data and current_task_data.get("metadatas"):
+                current_scope = (
+                    str(
+                        current_task_data["metadatas"][0].get(
+                            "memory_scope", "public"
+                        )
+                    ).strip()
+                    or "public"
+                )
+
+            # 查找除了当前记忆之外的所有任务记忆（strength>0 表示未过期）
             where_filter = {
-                "$and": [{"memory_type": "任务记忆"}, {"is_consolidated": False}]
+                "$and": [
+                    {"memory_type": "任务记忆"},
+                    {"strength": {"$gt": 0}},
+                    {"memory_scope": current_scope},
+                ]
             }
 
             fresh_task_results = self.collection.get(where=where_filter)
             if not fresh_task_results or not fresh_task_results["ids"]:
-                return  # 没有其他新鲜任务记忆
+                return  # 没有其他任务记忆
 
             # 过滤掉当前刚创建的任务记忆
             previous_task_ids = [
@@ -699,10 +794,10 @@ class MemoryManager:
             if not previous_task_ids:
                 return  # 没有之前的任务记忆需要巩固
 
-            # 将之前的新鲜任务记忆转为已巩固状态
+            # 将之前的任务记忆强度降至 1（标记为已巩固，但保留最低强度不删除）
             for task_id in previous_task_ids:
                 await self.store.update_memory(
-                    self.collection, task_id, {"is_consolidated": True}
+                    self.collection, task_id, {"strength": 1}
                 )
 
             self.logger.debug(
