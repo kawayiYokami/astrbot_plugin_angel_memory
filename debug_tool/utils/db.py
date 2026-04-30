@@ -53,6 +53,7 @@ class DBManager:
     def _connect_vector_db(self):
         """连接 ChromaDB 向量数据库并初始化嵌入函数；无 provider_id 则跳过"""
         if not self.provider_id:
+            logger.info("[调试工具] ChromaDB连接跳过: 未检测到 provider_id")
             return
         try:
             self.chromadb_path = self.loader.get_data_dir(self.provider_id)
@@ -237,6 +238,8 @@ class DBManager:
 
     def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
         """浏览集合内容（支持分页），API 失败时回退到 SQLite 直读"""
+        limit = max(0, int(limit))
+        offset = max(0, int(offset))
         if not self.client:
             return (
                 self._browse_collection_via_sqlite(collection_name, limit, offset)

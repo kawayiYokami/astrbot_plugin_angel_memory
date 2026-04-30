@@ -484,7 +484,9 @@ class SessionMemory:
                     tags=getattr(memory, "tags", []),
                     strength=getattr(memory, "strength", 0),
                     life_points=3,  # 新记忆默认3点生命值
-                    created_at=getattr(memory, "created_at", None) or time.time(),  # 保留原始创建时间，无则用当前时间
+                    created_at=self._safe_parse_created_at(
+                        getattr(memory, "created_at", None)
+                    ),  # 保留原始创建时间，并统一解析为 float
                 )
 
                 # 如果记忆已存在，先移除旧的

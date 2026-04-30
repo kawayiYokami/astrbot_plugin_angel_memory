@@ -526,6 +526,7 @@ class MemoryManager:
             tags=new_tags,
             strength=unique_strength,  # 强度等于去重后记忆之和
             memory_scope=merged_scope,
+            is_consolidated=False,  # 读取侧全部迁移前先保留兼容字段
         )
 
         # 步骤 3: 存储新记忆
@@ -755,9 +756,20 @@ class MemoryManager:
         try:
             # 先获取当前任务的 memory_scope，防止跨范围误更新
             current_scope = "public"
-            current_task_data = self.collection.get(ids=[current_task_id])
+            current_task_data = self.collection.get(
+                where={"id": current_task_id},
+                limit=1,
+                include=["metadatas"],
+            )
             if current_task_data and current_task_data.get("metadatas"):
-                current_scope = current_task_data["metadatas"][0].get("memory_scope", "public")
+                current_scope = (
+                    str(
+                        current_task_data["metadatas"][0].get(
+                            "memory_scope", "public"
+                        )
+                    ).strip()
+                    or "public"
+                )
 
             # 查找除了当前记忆之外的所有任务记忆（strength>0 表示未过期）
             where_filter = {
