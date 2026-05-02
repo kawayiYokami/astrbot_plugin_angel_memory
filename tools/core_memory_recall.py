@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from ..llm_memory.models.data_models import BaseMemory
 from ..core.session_memory import MemoryItem
 from ..core.utils.memory_formatter import MemoryFormatter
+from ..core.profile.injector import ProfileInjector
 
 # 导入日志记录器
 try:
@@ -38,6 +39,7 @@ class CoreMemoryRecallTool(FunctionTool):
             "required": ["limit", "query"]
         }
     )
+    injector: ProfileInjector | None = field(default=None)
 
     def __post_init__(self):
         # 初始化日志记录器
@@ -77,7 +79,7 @@ class CoreMemoryRecallTool(FunctionTool):
 
             all_memories: List[BaseMemory] = await memory_runtime.comprehensive_recall(
                 query=str(query).strip(),
-                limit=candidate_limit,
+                fresh_limit=candidate_limit,
                 event=event,
                 memory_scope=memory_scope,
             )
@@ -155,6 +157,33 @@ class CoreMemoryRecallTool(FunctionTool):
                 )
                 for mem in sampled_memories
             ]
+
+            # 注入跨群聊画像（top-K 语义过滤 + 优先级标记）
+            if self.injector:
+                try:
+                    user_id = event.get_sender_id()
+                    profile_tags = self.injector.read_profile_tags(str(user_id))
+                    if profile_tags and query:
+                        # 按 query 关键词匹配排序，只注入相关画像
+                        query_words = set(str(query).strip().split())
+                        def relevance(tag):
+                            content = f"{tag.get('type','')} {tag.get('value','')}"
+                            return sum(1 for w in query_words if w in content)
+                        profile_tags.sort(key=relevance, reverse=True)
+                        profile_tags = [t for t in profile_tags if relevance(t) > 0]
+                    for tag in profile_tags[:5]:
+                        display_memories.append(MemoryItem(
+                            id=f"profile_{tag['type']}",
+                            memory_type="user_profile",
+                            judgment=tag["value"],
+                            reasoning=f"[画像] {tag['type']} | priority: self_reported",  # 标记优先级（行为数据覆盖）
+                            tags=[tag["type"], "profile"],
+                            strength=10,
+                            created_at=0.0,
+                        ))
+                except Exception:
+                    pass
+
             return MemoryFormatter.format_session_memories(display_memories)
 
         except Exception as e:

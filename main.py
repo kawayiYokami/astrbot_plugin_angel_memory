@@ -8,6 +8,7 @@ AstrBot Angel Memory Plugin
 """
 
 from astrbot.api.star import Context, Star, register
+import os
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.star.star_tools import StarTools
@@ -27,7 +28,10 @@ from .core.plugin_context import PluginContextFactory
 from .tools.core_memory_remember import CoreMemoryRememberTool
 from .tools.core_memory_recall import CoreMemoryRecallTool
 from .tools.note_recall import NoteRecallTool
-from .tools.research_subagent import build_research_handoff_tool
+from .tools.research_tool import ResearchTool
+from .core.profile.injector import ProfileInjector
+from .core.profile.extractor import ProfileExtractor
+from .core.profile.config import ProfileExtractionConfig
 
 
 def configure_logging_behavior():
@@ -52,7 +56,7 @@ def configure_logging_behavior():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "1.3.14",
+    "1.2.8",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -82,6 +86,12 @@ class AngelMemoryPlugin(Star):
         data_dir = StarTools.get_data_dir("astrbot_plugin_angel_memory")
         self.logger.info(f"获取到插件数据目录: {data_dir}")
 
+        # 1.5 创建画像注入器
+        raw_dir = os.path.join(data_dir, "raw")
+        self.profile_injector = ProfileInjector(raw_dir, allowed_tags=set(self.profile_config.green_tags))
+        self.profile_config = ProfileExtractionConfig()
+        self.profile_extractor = ProfileExtractor(self.profile_config)
+
         # 2. 创建统一的PluginContext，包含所有必要资源
         self.plugin_context = PluginContextFactory.create_from_initialization(
             context, config or {}, data_dir
@@ -107,20 +117,17 @@ class AngelMemoryPlugin(Star):
         # 5. 注册LLM工具
         self.llm_tools_enabled = True  # 标记LLM工具是否启用
         try:
-            llm_tools = [
-                CoreMemoryRememberTool(),
-                CoreMemoryRecallTool(),
-                NoteRecallTool(),
-            ]
-            research_handoff_tool = build_research_handoff_tool(
-                self.context, self.plugin_context
-            )
-            if research_handoff_tool is not None:
-                llm_tools.append(research_handoff_tool)
+            # 创建 ResearchTool 实例
+            research_tool = ResearchTool()
+            research_tool.set_context(self.context)
 
-            self.context.add_llm_tools(*llm_tools)
-            registered_names = "、".join(tool.name for tool in llm_tools)
-            self.logger.info(f"已注册 LLM 工具：{registered_names}")
+            self.context.add_llm_tools(
+                CoreMemoryRememberTool(),
+                CoreMemoryRecallTool(injector=self.profile_injector),
+                NoteRecallTool(),
+                research_tool
+            )
+            self.logger.info("✅ 已注册 core_memory_remember、core_memory_recall、note_recall 和 research_topic 工具。")
         except AttributeError as e:
             self.llm_tools_enabled = False
             self.logger.error(f"❌ 注册LLM工具失败，context可能不支持add_llm_tools方法: {e}", exc_info=True)
@@ -350,6 +357,18 @@ class AngelMemoryPlugin(Star):
             self._track_background_task(task)
             self.logger.debug("记忆整理任务已提交至后台，不等待完成。")
 
+            # 画像提取（异步不阻塞）
+            try:
+                msg_text = event.get_message_str() if hasattr(event, 'get_message_str') else ""
+                user_id = event.get_sender_id()
+                if msg_text and user_id:
+                    ptask = asyncio.create_task(
+                        self._extract_profile_async(str(user_id), msg_text)
+                    )
+                    self._track_background_task(ptask)
+            except Exception:
+                self.logger.debug("[画像提取] 提交提取任务失败", exc_info=True)
+
         except Exception as e:
             self.logger.error(f"after_message_sent failed: {e}")
 
@@ -369,6 +388,44 @@ class AngelMemoryPlugin(Star):
                 pass
 
         task.add_done_callback(_cleanup)
+
+    async def _extract_profile_async(self, user_id: str, message: str) -> None:
+        """后台异步提取用户画像标签，写入 raw/user_profile/{user_id}/"""
+        import time
+        try:
+            # 频率控制：同一用户 5 分钟内最多提取一次
+            now = time.time()
+            last = self.profile_extractor._last_extraction.get(user_id, 0)
+            if now - last < self.profile_extractor._extract_cooldown:
+                return
+            self.profile_extractor._last_extraction[user_id] = now
+
+            provider_id = self.plugin_context.get_llm_provider_id() if self.plugin_context else ""
+            if not provider_id:
+                return
+            tags = await self.profile_extractor.extract(
+                message, context=self.context, provider_id=provider_id
+            )
+            if not tags:
+                return
+
+            profile_dir = self.profile_injector.get_profile_dir(user_id)
+            os.makedirs(profile_dir, exist_ok=True)
+
+            for tag in tags:
+                fname = f"{tag['type']}.md"
+                filepath = os.path.join(profile_dir, fname)
+                # 内容相同则跳过写入，保持 mtime 有意义
+                try:
+                    if os.path.isfile(filepath):
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            if f.read().strip() == tag["value"]:
+                                continue
+                except OSError:
+                    pass
+                self.profile_injector.write_tag(filepath, tag["value"])
+        except Exception:
+            pass  # 画像提取失败不阻塞主流程
 
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""
