@@ -52,8 +52,6 @@ class CoreMemoryRecallTool(FunctionTool):
         query: str,
     ) -> str:
         self.logger.debug(f"{self.name} - LLM 调用: limit={limit}, query='{query}'")
-        if not isinstance(limit, int) or limit < 1:
-            return "参数错误：limit 必须是大于 0 的整数。"
         if query is None or not str(query).strip():
             return "参数错误：query 为必填且不能为空。请提供明确检索关键词后再调用 core_memory_recall。"
 
@@ -162,7 +160,6 @@ class CoreMemoryRecallTool(FunctionTool):
 
             # 注入跨群聊画像（top-K 语义过滤 + 优先级标记）
             if self.injector:
-                user_id = "<unknown>"
                 try:
                     user_id = event.get_sender_id()
                     profile_tags = self.injector.read_profile_tags(str(user_id))
