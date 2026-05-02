@@ -403,7 +403,6 @@ class AngelMemoryPlugin(Star):
             last = self.profile_extractor._last_extraction.get(user_id, 0)
             if now - last < self.profile_extractor._extract_cooldown:
                 return
-            self.profile_extractor._last_extraction[user_id] = now
 
             provider_id = self.plugin_context.get_llm_provider_id() if self.plugin_context else ""
             if not provider_id:
@@ -411,6 +410,7 @@ class AngelMemoryPlugin(Star):
             tags = await self.profile_extractor.extract(
                 message, context=self.context, provider_id=provider_id
             )
+            self.profile_extractor._last_extraction[user_id] = now  # 提取成功后才记录冷却
             if not tags:
                 return
 

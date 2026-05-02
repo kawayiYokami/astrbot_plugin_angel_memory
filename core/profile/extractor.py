@@ -46,6 +46,8 @@ def _validate_tag(tag: dict, allowed_types: set | None = None) -> bool:
         return False
     tag_type = tag.get("type", "")
     value = tag.get("value", "")
+    if not isinstance(tag_type, str) or not isinstance(value, str):
+        return False
     if not TAG_TYPE_RE.match(tag_type):
         return False
     if allowed_types and tag_type not in allowed_types:
