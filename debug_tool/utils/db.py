@@ -8,7 +8,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-import chromadb
+import faiss
+import numpy as np
 
 from .config_loader import ConfigLoader
 from .embedding import create_embedding_function
@@ -26,7 +27,7 @@ class DBManager:
         self.central_conn = None
         self.provider_status = self.loader.get_embedding_provider_status()
 
-        self.chromadb_path = ""
+        self.faiss_path = ""
         self.simple_db_path = self.loader.get_simple_memory_db_path()
         self.maintenance_state_path = self.loader.get_maintenance_state_path()
         self.backup_dir = self.loader.get_backup_dir()
@@ -51,38 +52,43 @@ class DBManager:
             logger.error("[调试工具] 中央记忆数据库连接失败: %s", e, exc_info=True)
 
     def _connect_vector_db(self):
-        """连接 ChromaDB 向量数据库并初始化嵌入函数；无 provider_id 则跳过"""
+        """连接 FAISS 向量索引目录并初始化查询嵌入函数。"""
         if not self.provider_id:
-            logger.info("[调试工具] ChromaDB连接跳过: 未检测到 provider_id")
+            logger.info("[调试工具] 向量索引连接跳过: 未检测到 provider_id")
             return
         try:
-            self.chromadb_path = self.loader.get_data_dir(self.provider_id)
-            if not os.path.exists(self.chromadb_path):
-                logger.warning("[调试工具] ChromaDB路径未找到: %s", self.chromadb_path)
+            self.faiss_path = self.loader.get_data_dir(self.provider_id)
+            if not os.path.exists(self.faiss_path):
+                logger.warning("[调试工具] FAISS索引路径未找到: %s", self.faiss_path)
                 return
-            self.client = chromadb.PersistentClient(path=self.chromadb_path)
+            self.client = self.faiss_path
             try:
                 self.embedding_fn = create_embedding_function(self.provider_config)
             except Exception as e:
                 logger.warning("[调试工具] 嵌入函数初始化失败，查询模式已禁用: %s", e)
-            logger.info("[调试工具] ChromaDB连接完成: %s", self.chromadb_path)
+            logger.info("[调试工具] FAISS索引连接完成: %s", self.faiss_path)
         except Exception as e:
-            logger.error("[调试工具] ChromaDB连接失败: %s", e, exc_info=True)
+            logger.error("[调试工具] FAISS索引连接失败: %s", e, exc_info=True)
 
     # ===== status =====
 
     def has_vector_db(self) -> bool:
-        """检查 ChromaDB 客户端是否已成功初始化"""
-        return self.client is not None
+        """检查 FAISS 索引目录是否可用。"""
+        return bool(self.faiss_path) and os.path.isdir(self.faiss_path)
 
     def has_central_db(self) -> bool:
         """检查中央记忆数据库连接是否可用"""
         return self.central_conn is not None
 
-    def _has_chromadb_sqlite(self) -> bool:
-        """检查本地 chroma.sqlite3 是否存在，用于 self.client 初始化失败时的回退判断"""
-        return bool(self.chromadb_path) and os.path.exists(
-            os.path.join(self.chromadb_path, "chroma.sqlite3")
+    def _sidecar_path(self, collection_name: str) -> str:
+        return os.path.join(self.faiss_path, f"{collection_name}.sqlite")
+
+    def _index_path(self, collection_name: str) -> str:
+        return os.path.join(self.faiss_path, f"{collection_name}.index")
+
+    def _has_faiss_collection(self, collection_name: str) -> bool:
+        return os.path.exists(self._sidecar_path(collection_name)) and os.path.exists(
+            self._index_path(collection_name)
         )
 
     def get_overview(self) -> Dict[str, Any]:
@@ -90,12 +96,12 @@ class DBManager:
         out = {
             "provider_id": self.provider_id or "(未检测到可用 embedding provider)",
             "provider_status": self.provider_status,
-            "chromadb_path": self.chromadb_path or "(未连接)",
+            "faiss_path": self.faiss_path or "(未连接)",
             "simple_db_path": self.simple_db_path,
             "maintenance_state_path": self.maintenance_state_path,
             "backup_dir": self.backup_dir,
         }
-        if self.has_vector_db() or self._has_chromadb_sqlite():
+        if self.has_vector_db():
             cols = self.get_collections()
             out["vector_collections"] = cols
             out["memory_index_count"] = self.get_collection_stats("memory_index").get("count", 0)
@@ -110,166 +116,118 @@ class DBManager:
 
     # ===== vector =====
 
-    def _get_collections_via_sqlite(self) -> List[str]:
-        """绕过 chromadb API，直读 sqlite3 获取集合名（版本兼容回退）"""
-        try:
-            db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
-            if not os.path.exists(db_path):
-                return []
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT name FROM collections").fetchall()
-            conn.close()
-            return [r["name"] for r in rows]
-        except Exception as e:
-            logger.error("[调试工具] SQLite集合列表查询失败: %s", e, exc_info=True)
-            return []
-
-    def _get_collection_stats_via_sqlite(self, collection_name: str) -> Dict[str, Any]:
-        """绕过 chromadb API，直读 sqlite3 + segments 表获取近似计数"""
-        try:
-            db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
-            if not os.path.exists(db_path):
-                return {"count": 0}
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            col = conn.execute("SELECT id FROM collections WHERE name = ?", (collection_name,)).fetchone()
-            if not col:
-                conn.close()
-                return {"count": 0}
-            row = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM embeddings e "
-                "JOIN segments s ON e.segment_id = s.id "
-                "WHERE s.collection = ?",
-                (col["id"],),
-            ).fetchone()
-            conn.close()
-            return {"count": int(row["cnt"]) if row else 0}
-        except Exception as e:
-            logger.error("[调试工具] SQLite集合统计查询失败: %s", e, exc_info=True)
-            return {"count": 0}
-
     def get_collections(self) -> List[str]:
-        """获取所有 ChromaDB 集合名列表，API 失败时回退到 SQLite 直读"""
-        if not self.client:
-            return self._get_collections_via_sqlite() if self._has_chromadb_sqlite() else []
+        """获取所有 FAISS 集合名列表。"""
+        if not self.has_vector_db():
+            return []
         try:
-            return [c.name for c in self.client.list_collections()]
+            names = []
+            for name in os.listdir(self.faiss_path):
+                if not name.endswith(".sqlite"):
+                    continue
+                collection = name[: -len(".sqlite")]
+                if os.path.exists(self._index_path(collection)):
+                    names.append(collection)
+            return sorted(names)
         except Exception as e:
-            logger.warning("[调试工具] ChromaDB集合列表查询失败，降级到SQLite: %s", e)
-            return self._get_collections_via_sqlite()
+            logger.warning("[调试工具] FAISS集合列表查询失败: %s", e)
+            return []
 
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
-        """获取指定集合的记录计数，API 失败时回退到 SQLite 统计"""
-        if not self.client:
-            return (
-                self._get_collection_stats_via_sqlite(collection_name)
-                if self._has_chromadb_sqlite()
-                else {"count": 0}
-            )
+        """获取指定 FAISS 集合的 sidecar 记录数与 index 记录数。"""
+        if not self._has_faiss_collection(collection_name):
+            return {"count": 0, "ntotal": 0}
         try:
-            collection = self.client.get_collection(collection_name)
-            return {"count": int(collection.count())}
-        except Exception as e:
-            logger.warning("[调试工具] ChromaDB集合统计查询失败(%s)，降级到SQLite: %s", collection_name, e)
-            return self._get_collection_stats_via_sqlite(collection_name)
-
-    def _browse_collection_via_sqlite(self, collection_name: str, limit: int = 20, offset: int = 0):
-        """绕过 chromadb API，直读 sqlite3 浏览集合内容（版本兼容回退）"""
-        try:
-            db_path = os.path.join(self.chromadb_path, "chroma.sqlite3")
-            if not os.path.exists(db_path):
-                return []
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-
-            col = conn.execute("SELECT id FROM collections WHERE name=?", (collection_name,)).fetchone()
-            if not col:
-                conn.close()
-                return []
-
-            segments = conn.execute("SELECT id FROM segments WHERE collection=?", (col["id"],)).fetchall()
-            if not segments:
-                conn.close()
-                return []
-
-            seg_ids = [s["id"] for s in segments]
-            placeholders = ",".join(["?" for _ in seg_ids])
-            sql = f"""
-                SELECT e.embedding_id, e.seq_id, e.id AS db_id
-                FROM embeddings e
-                WHERE e.segment_id IN ({placeholders})
-                ORDER BY e.seq_id
-                LIMIT ? OFFSET ?
-            """
-            rows = conn.execute(sql, seg_ids + [int(limit), int(offset)]).fetchall()
-
-            out = []
-            for row in rows:
-                meta_rows = conn.execute(
-                    "SELECT key, string_value, int_value, float_value, bool_value FROM embedding_metadata WHERE id=?",
-                    (row["db_id"],),
-                ).fetchall()
-                document = ""
-                metadata = {}
-                for m in meta_rows:
-                    if m["key"] == "chroma:document":
-                        document = m["string_value"] or ""
-                    elif m["string_value"] is not None:
-                        metadata[m["key"]] = m["string_value"]
-                    elif m["int_value"] is not None:
-                        metadata[m["key"]] = m["int_value"]
-                    elif m["float_value"] is not None:
-                        metadata[m["key"]] = m["float_value"]
-                    elif m["bool_value"] is not None:
-                        metadata[m["key"]] = bool(m["bool_value"])
-
-                out.append({
-                    "id": row["embedding_id"],
-                    "document": document,
-                    "metadata": metadata,
-                })
-
+            conn = sqlite3.connect(self._sidecar_path(collection_name))
+            row = conn.execute("SELECT COUNT(1) FROM index_rows").fetchone()
             conn.close()
-            return out
+            idx = faiss.read_index(self._index_path(collection_name))
+            return {
+                "count": int(row[0] if row else 0),
+                "ntotal": int(idx.ntotal),
+                "dimension": int(idx.d),
+            }
         except Exception as e:
-            logger.error("[调试工具] SQLite集合浏览查询失败: %s", e, exc_info=True)
-            return []
+            logger.warning("[调试工具] FAISS集合统计查询失败(%s): %s", collection_name, e)
+            return {"count": 0, "ntotal": 0}
 
     def browse_collection(self, collection_name: str, limit: int = 20, offset: int = 0):
-        """浏览集合内容（支持分页），API 失败时回退到 SQLite 直读"""
+        """浏览 FAISS sidecar 内容（支持分页）。"""
         limit = max(0, int(limit))
         offset = max(0, int(offset))
-        if not self.client:
-            return (
-                self._browse_collection_via_sqlite(collection_name, limit, offset)
-                if self._has_chromadb_sqlite()
-                else []
-            )
+        if not self._has_faiss_collection(collection_name):
+            return []
         try:
-            collection = self.client.get_collection(collection_name)
-            res = collection.get(
-                limit=int(limit),
-                offset=int(offset),
-                include=["documents", "metadatas"],
-            )
-            out = []
-            for i, _id in enumerate(res.get("ids", []) or []):
-                out.append(
-                    {
-                        "id": _id,
-                        "document": (res.get("documents", []) or [""])[i]
-                        if i < len(res.get("documents", []) or [])
-                        else "",
-                        "metadata": (res.get("metadatas", []) or [{}])[i]
-                        if i < len(res.get("metadatas", []) or [])
-                        else {},
-                    }
-                )
-            return out
+            conn = sqlite3.connect(self._sidecar_path(collection_name))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT item_id, vector_id, vector_text, dimension, updated_at
+                FROM index_rows
+                ORDER BY vector_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+            conn.close()
+            return [
+                {
+                    "id": str(row["item_id"]),
+                    "document": str(row["vector_text"] or ""),
+                    "metadata": {
+                        "vector_id": int(row["vector_id"]),
+                        "dimension": int(row["dimension"]),
+                        "updated_at": float(row["updated_at"] or 0),
+                    },
+                }
+                for row in rows
+            ]
         except Exception as e:
-            logger.warning("[调试工具] ChromaDB集合浏览查询失败(%s)，降级到SQLite: %s", collection_name, e)
-            return self._browse_collection_via_sqlite(collection_name, limit, offset)
+            logger.warning("[调试工具] FAISS集合浏览查询失败(%s): %s", collection_name, e)
+            return []
+
+    @staticmethod
+    def _normalize_vector(vector: List[float]) -> np.ndarray:
+        arr = np.asarray(vector, dtype="float32").reshape(1, -1)
+        norm = np.linalg.norm(arr, axis=1, keepdims=True)
+        norm[norm == 0] = 1.0
+        return arr / norm
+
+    def _load_faiss_id_map(self, collection_name: str, vector_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        if not vector_ids:
+            return {}
+        placeholders = ",".join(["?" for _ in vector_ids])
+        conn = sqlite3.connect(self._sidecar_path(collection_name))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT item_id, vector_id, vector_text, dimension, updated_at
+            FROM index_rows
+            WHERE vector_id IN ({placeholders})
+            """,
+            tuple(vector_ids),
+        ).fetchall()
+        conn.close()
+        return {
+            int(row["vector_id"]): {
+                "id": str(row["item_id"]),
+                "document": str(row["vector_text"] or ""),
+                "metadata": {
+                    "vector_id": int(row["vector_id"]),
+                    "dimension": int(row["dimension"]),
+                    "updated_at": float(row["updated_at"] or 0),
+                },
+            }
+            for row in rows
+        }
+
+    def _embed_query(self, query_text: str) -> Optional[List[float]]:
+        if not self.embedding_fn:
+            return None
+        result = self.embedding_fn([query_text])
+        if not result:
+            return None
+        return result[0]
 
     def query_collection(
         self,
@@ -278,42 +236,52 @@ class DBManager:
         n_results: int = 10,
         where_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """向量相似度查询集合，返回排序后的匹配记录及距离/评分"""
-        if not self.client:
+        """查询 FAISS 集合，返回排序后的匹配记录及 cosine score。"""
+        del where_filter
+        if not self._has_faiss_collection(collection_name):
             return []
         if not self.embedding_fn:
             return [{"error": "当前 provider 无法初始化 embedding，无法执行向量查询"}]
         try:
-            collection = self.client.get_collection(
-                name=collection_name, embedding_function=self.embedding_fn
-            )
-            query_params: Dict[str, Any] = {
-                "query_texts": [query_text],
-                "n_results": int(n_results),
-                "include": ["documents", "metadatas", "distances"],
-            }
-            if where_filter:
-                query_params["where"] = where_filter
-            res = collection.query(**query_params)
+            query_vector = self._embed_query(query_text)
+            if query_vector is None:
+                return [{"error": "查询向量化结果为空"}]
+            index = faiss.read_index(self._index_path(collection_name))
+            vector = self._normalize_vector(query_vector)
+            if int(vector.shape[1]) != int(index.d):
+                return [
+                    {
+                        "error": (
+                            f"查询向量维度不匹配：query_dim={vector.shape[1]} "
+                            f"index_dim={index.d}"
+                        )
+                    }
+                ]
+            top_k = min(max(1, int(n_results)), int(index.ntotal))
+            scores, ids = index.search(vector, top_k)
+            vector_ids = [int(x) for x in ids[0].tolist() if int(x) >= 0]
+            row_map = self._load_faiss_id_map(collection_name, vector_ids)
             out = []
-            ids = (res.get("ids") or [[]])[0]
-            docs = (res.get("documents") or [[]])[0]
-            metas = (res.get("metadatas") or [[]])[0]
-            dists = (res.get("distances") or [[]])[0]
-            for i, _id in enumerate(ids):
-                distance = float(dists[i]) if i < len(dists) else 2.0
+            for pos, vector_id in enumerate(ids[0].tolist()):
+                vector_id = int(vector_id)
+                if vector_id < 0:
+                    continue
+                row = row_map.get(vector_id)
+                if not row:
+                    continue
+                score = float(scores[0][pos])
                 out.append(
                     {
-                        "id": _id,
-                        "document": docs[i] if i < len(docs) else "",
-                        "metadata": metas[i] if i < len(metas) else {},
-                        "distance": distance,
-                        "score": max(0.0, 1.0 - distance / 2.0),
+                        "id": row["id"],
+                        "document": row["document"],
+                        "metadata": row["metadata"],
+                        "distance": 1.0 - score,
+                        "score": score,
                     }
                 )
             return out
         except Exception as e:
-            logger.error("[调试工具] 集合查询失败: %s", e, exc_info=True)
+            logger.error("[调试工具] FAISS集合查询失败: %s", e, exc_info=True)
             return [{"error": str(e)}]
 
     # ===== central memory =====

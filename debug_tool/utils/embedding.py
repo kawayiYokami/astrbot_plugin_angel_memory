@@ -1,8 +1,17 @@
 import logging
-from chromadb import Documents, EmbeddingFunction, Embeddings
+from typing import List
+
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
+
+Documents = List[str]
+Embeddings = List[List[float]]
+
+
+class EmbeddingFunction:
+    pass
+
 
 class OpenAIEmbeddingFunction(EmbeddingFunction):
     def __init__(self, api_key: str, base_url: str, model_name: str, dimensions: int = None):

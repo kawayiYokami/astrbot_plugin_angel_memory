@@ -124,12 +124,10 @@ class MemoryManager:
                         getattr(decay_config, "consolidate_speed", 2.5) or 2.5
                     )
                     now_ts = time.time()
-                    # 获取 ChromaDB 的文档 ID
-                    chroma_doc_id = result["ids"][0]
-                    # 使用 ChromaDB 文档 ID 进行更新
+                    legacy_doc_id = result["ids"][0]
                     await self.store.update_memory(
                         self.collection,
-                        chroma_doc_id,
+                        legacy_doc_id,
                         {
                             "strength": current_strength + 1,
                             "useful_count": current_useful_count + 1,
@@ -400,7 +398,7 @@ class MemoryManager:
         self, memory_id: str, metadata: dict
     ) -> Optional[BaseMemory]:
         """
-        从 ChromaDB 元数据构建 BaseMemory 对象。
+        从旧向量元数据构建 BaseMemory 对象。
 
         Fix 1: 补全 created_at，避免合并路径时间戳丢失。
         Fix 3: 补全 useful_count / useful_score / last_recalled_at，避免合并后衰减状态丢失。
@@ -672,10 +670,10 @@ class MemoryManager:
                         new_strength = max(0, current_strength - 1)
                         if new_strength == current_strength:
                             continue
-                        chroma_doc_id = result["ids"][0]
+                        legacy_doc_id = result["ids"][0]
                         await self.store.update_memory(
                             self.collection,
-                            chroma_doc_id,
+                            legacy_doc_id,
                             {"strength": new_strength},
                         )
                     except Exception as e:

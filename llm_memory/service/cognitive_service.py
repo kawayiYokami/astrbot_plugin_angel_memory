@@ -15,7 +15,6 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 from ..models.data_models import BaseMemory
-from ..components.vector_store import VectorStore
 from ..config.system_config import system_config
 from .memory_handlers import MemoryHandlerFactory
 from .memory_manager import MemoryManager
@@ -38,7 +37,7 @@ class CognitiveService:
 
     def __init__(
         self,
-        vector_store: VectorStore,
+        vector_store,
         memory_sql_manager=None,
         decay_config: MemoryDecayConfig | None = None,
     ):
@@ -46,7 +45,7 @@ class CognitiveService:
         初始化认知服务。
 
         Args:
-            vector_store: 一个已经初始化好的、共享的 VectorStore 实例。
+            vector_store: 一个已经初始化好的、共享的 FAISS 向量索引实例。
         """
         # 设置日志记录器
         self.logger = logger
@@ -56,12 +55,8 @@ class CognitiveService:
         self.vector_store = vector_store
         self.memory_sql_manager = memory_sql_manager
 
-        # 为认知服务获取主集合
-        self.main_collection = (
-            self.vector_store.get_or_create_collection_with_dimension_check(
-                system_config.collection_name
-            )
-        )
+        # 当前中央库为真相源，FAISS 仅维护轻量召回索引；旧主集合不再创建。
+        self.main_collection = None
         # 轻量记忆索引集合（仅 id + vector_text + embedding）
         self.memory_index_collection = (
             self.vector_store.get_or_create_collection_with_dimension_check(
@@ -86,9 +81,9 @@ class CognitiveService:
             decay_config=decay_config,
         )
 
-        # 记录初始化状态以验证VectorStore
+        # 记录初始化状态以验证向量索引
         self.logger.info(
-            f"认知服务初始化完成。向量存储客户端: {self.vector_store.client}"
+            f"认知服务初始化完成。向量索引: {self.vector_store.client}"
         )
 
     # ===== 存储管理接口 =====
@@ -267,8 +262,12 @@ class CognitiveService:
 
         这是一个危险操作，会永久删除所有存储的记忆。
         """
-        self.vector_store.clear_collection(self.main_collection)
-        self.logger.info("所有记忆已被清空。")
+        if self.memory_sql_manager is not None:
+            self.logger.warning("中央库模式不支持通过认知服务直接清空全部记忆。")
+            return
+        if self.main_collection is not None:
+            self.vector_store.clear_collection(self.main_collection)
+        self.logger.info("所有记忆向量索引已被清空。")
 
     @staticmethod
     def get_prompt(memory_config=None) -> str:

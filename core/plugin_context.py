@@ -18,7 +18,6 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 from ..llm_memory.utils.path_manager import PathManager
-from ..llm_memory.components.vector_store import VectorStore
 from ..llm_memory.components.embedding_provider import EmbeddingProvider
 
 
@@ -53,7 +52,7 @@ class PluginContext:
         self.path_manager: Optional[PathManager] = None
         # 异步资源，由ComponentFactory创建后设置
         self.embedding_provider: Optional[EmbeddingProvider] = None
-        self.vector_store: Optional[VectorStore] = None
+        self.vector_store: Optional[Any] = None
         # ComponentFactory 引用，用于获取组件
         self._component_factory = None
         self._scope_name_pattern = re.compile(r"^[a-zA-Z0-9\u4e00-\u9fff_-]+$")
@@ -404,9 +403,9 @@ class PluginContext:
         """获取文件数据库路径"""
         return self.path_manager.get_file_db_path()
 
-    def get_chroma_db_path(self) -> Path:
-        """获取Chroma数据库路径"""
-        return self.path_manager.get_chroma_db_path()
+    def get_faiss_index_dir(self) -> Path:
+        """获取当前供应商的FAISS索引目录"""
+        return self.path_manager.get_faiss_index_dir()
 
     def get_memory_center_dir(self) -> Path:
         """获取中央记忆目录（与provider无关）"""
@@ -424,16 +423,16 @@ class PluginContext:
         """获取由ComponentFactory创建的嵌入提供商实例"""
         return self.embedding_provider
 
-    def get_vector_store(self) -> Optional[VectorStore]:
-        """获取由ComponentFactory创建的向量存储实例"""
+    def get_vector_store(self) -> Optional[Any]:
+        """获取由ComponentFactory创建的向量索引实例"""
         return self.vector_store
 
     def set_embedding_provider(self, provider: EmbeddingProvider):
         """由ComponentFactory设置嵌入提供商实例"""
         self.embedding_provider = provider
 
-    def set_vector_store(self, store: VectorStore):
-        """由ComponentFactory设置向量存储实例"""
+    def set_vector_store(self, store: Any):
+        """由ComponentFactory设置向量索引实例"""
         self.vector_store = store
 
     def set_component_factory(self, component_factory):

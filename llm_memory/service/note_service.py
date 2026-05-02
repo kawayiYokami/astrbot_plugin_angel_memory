@@ -62,7 +62,7 @@ class NoteService:
     def set_vector_store(self, vector_store):
         self.vector_store = vector_store
         self._initialize_collections()
-        self.logger.info("VectorStore已设置，notes_index集合初始化完成")
+        self.logger.info("FAISS向量索引已设置，notes_index集合初始化完成")
 
     def _get_memory_sql_manager(self):
         if self.plugin_context is None:

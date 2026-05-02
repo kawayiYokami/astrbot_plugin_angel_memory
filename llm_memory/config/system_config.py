@@ -119,18 +119,17 @@ class MemorySystemConfig:
 
     def get_database_path(self, provider_id: Optional[str] = None) -> Path:
         """
-        获取数据库路径
+        获取向量索引路径
 
         Args:
             provider_id: 提供商ID，如果提供则使用提供商专用路径
 
         Returns:
-            数据库路径
+            向量索引路径
         """
         if provider_id:
-            return self.index_dir / f"chromadb_{provider_id}"
-        else:
-            return self.index_dir / "chromadb"
+            return self.index_dir / "faiss" / provider_id
+        return self.index_dir / "faiss"
 
 
 # 全局配置实例
