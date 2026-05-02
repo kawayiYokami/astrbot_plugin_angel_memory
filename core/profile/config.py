@@ -44,14 +44,18 @@ class ProfileExtractionConfig:
 
     @property
     def all_yellow(self) -> tuple:
+        """返回所有可用的黄灯标签类型"""
         return self._available_yellow
 
     def is_yellow_enabled(self, tag: str) -> bool:
+        """检查指定的黄灯标签是否已被部署者启用"""
         return tag in self.yellow_tags
 
     def is_green(self, tag: str) -> bool:
+        """检查标签是否在绿灯提取列表中"""
         return tag in self.green_tags
 
     def contains_red(self, text: str) -> bool:
+        """检查文本是否包含任意红灯关键词，若命中则跳过整条消息提取"""
         text_lower = text.lower()
         return any(kw in text_lower for kw in self.red_keywords)
