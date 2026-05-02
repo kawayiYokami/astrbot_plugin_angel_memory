@@ -81,9 +81,11 @@ class TestConflictResolution:
             profile_dir = _make_profile_dir(tmpdir, "U1", {
                 "preferred_name.md": "小貔貅",
             })
-            time.sleep(0.1)
-            with open(os.path.join(profile_dir, "preferred_name.md"), "w", encoding="utf-8") as f:
+            tag_path = os.path.join(profile_dir, "preferred_name.md")
+            with open(tag_path, "w", encoding="utf-8") as f:
                 f.write("大貔貅")
+            now = time.time()
+            os.utime(tag_path, (now, now))
             injector = ProfileInjector(tmpdir)
             tags = injector.read_profile_tags("U1")
             names = [t for t in tags if t["type"] == "preferred_name"]
