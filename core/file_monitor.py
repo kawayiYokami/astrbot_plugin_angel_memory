@@ -289,9 +289,8 @@ class FileMonitorService:
             base_path_len = len(base_path) + 1  # +1 for trailing slash
 
             for root, dirs, files in os.walk(base_path):
-                # 跳过画像目录，避免索引锁冲突
-                if "user_profile" in root:
-                    continue
+                # 跳过画像目录，避免索引锁冲突（排除子目录遍历）
+                dirs[:] = [d for d in dirs if d != "user_profile"]
                 for filename in files:
                     file_count += 1
                     # 快速检查扩展名（避免创建Path对象）
