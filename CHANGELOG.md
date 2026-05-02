@@ -2,6 +2,17 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.13] - 2026-05-02
+
+### Highlights
+- 研究助手接入上游 SubAgent / Handoff 机制，启动时注册 `transfer_to_researcher` 子代理工具。
+- 移除旧的 `research_topic` 工具入口，研究任务统一走上游委派执行链路。
+
+### Core Changes
+- `refactor(research)`: 新增 `research_subagent` 注册辅助模块，复用 `research_fellow_prompt.md` 与 `research_assistant.provider_id` / `persona_id` 配置。
+- `refactor(research)`: 移除手写 `ResearchTool.run()` 与插件内直接 `tool_loop_agent()` 调用。
+- `chore(config)`: 配置页移除旧研究启动提示 `start_messages`，避免展示已不再生效的行为。
+
 ## [1.3.12] - 2026-05-02
 
 ### Highlights
