@@ -77,7 +77,7 @@ class CoreMemoryRecallTool(FunctionTool):
 
             all_memories: List[BaseMemory] = await memory_runtime.comprehensive_recall(
                 query=str(query).strip(),
-                fresh_limit=candidate_limit,
+                limit=candidate_limit,
                 event=event,
                 memory_scope=memory_scope,
             )

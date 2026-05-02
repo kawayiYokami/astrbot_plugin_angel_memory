@@ -38,7 +38,6 @@ class SimpleMemoryRuntime:
         memory_type: str,
         query: str,
         limit: int = 10,
-        include_consolidated: bool = True,
         memory_scope: Optional[str] = None,
     ) -> List[BaseMemory]:
         memories = await self._manager.recall_by_tags(
@@ -46,8 +45,6 @@ class SimpleMemoryRuntime:
             limit=limit,
             memory_scope=memory_scope or "public",
         )
-        if not include_consolidated:
-            memories = [mem for mem in memories if not self._is_consolidated(mem)]
         if memory_type:
             return [
                 mem
@@ -60,12 +57,12 @@ class SimpleMemoryRuntime:
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: Optional[int] = None,
+        limit: Optional[int] = None,
         event: Any = None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
-        limit = int(fresh_limit or 10)
+        limit = int(limit or 10)
         return await self._manager.recall_by_tags(
             query=query,
             limit=limit,
@@ -77,7 +74,7 @@ class SimpleMemoryRuntime:
         query: str,
         entities: List[str],
         per_type_limit: int = 7,
-        final_limit: int = 7,
+        final_limit: Optional[int] = None,
         vector: Optional[List[float]] = None,
         event: Any = None,
         memory_scope: str = "public",
@@ -123,12 +120,3 @@ class SimpleMemoryRuntime:
             "emotional": "情感记忆",
         }
         return mapping.get(str(memory_type or "").strip(), str(memory_type or "").strip())
-
-    @staticmethod
-    def _is_consolidated(memory: BaseMemory) -> bool:
-        if bool(getattr(memory, "is_consolidated", False)):
-            return True
-
-        tags = [str(tag).strip().lower() for tag in (getattr(memory, "tags", None) or [])]
-        markers = {"consolidated", "merged", "合并记忆", "已巩固"}
-        return any(tag in markers for tag in tags)

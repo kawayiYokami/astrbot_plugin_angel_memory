@@ -30,10 +30,9 @@ MARKITDOWN_AVAILABLE = False
 
 
 class UniversalParser:
-    """通用文件解析器，支持多种文件格式"""
+    """通用文件解析器，仅保留 Markdown/TXT 路径。"""
 
-    # 支持的文件扩展名
-        # MarkdownParser支持的格式
+    SUPPORTED_EXTENSIONS: Set[str] = {
         ".md",
         ".txt",
     }

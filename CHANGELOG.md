@@ -2,6 +2,17 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.14] - 2026-05-02
+
+### Bug Fixes
+- `fix(parser)`: 修复 `UniversalParser.SUPPORTED_EXTENSIONS` 在移除 MarkItDown 后残留的缩进错误。
+
+### Core Changes
+- `refactor(memory)`: 清理 DeepMind 中已不走主流程的旧反馈服务封装。
+- `refactor(memory)`: 移除会话短期仓里废弃的生命值扣减路径，统一描述为会话工作记忆缓存。
+- `refactor(recall)`: 清理旧双轨召回命名，`comprehensive_recall` 统一使用 `limit`，不再暴露 `fresh/consolidated` 语义。
+- `refactor(recall)`: 移除链式召回中无效的 `memory_handlers` 传递，并让 `final_limit` 真正限制最终返回数量。
+
 ## [1.3.13] - 2026-05-02
 
 ### Highlights

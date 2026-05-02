@@ -155,7 +155,6 @@ class CognitiveService:
         memory_type: str,
         query: str,
         limit: int = 10,
-        include_consolidated: bool = True,
         memory_scope: Optional[str] = None,
     ) -> List[BaseMemory]:
         """
@@ -165,14 +164,13 @@ class CognitiveService:
             memory_type: 记忆类型（event/knowledge/skill/emotional/task）
             query: 搜索查询
             limit: 返回数量限制
-            include_consolidated: 是否包含已巩固记忆
 
         Returns:
             记忆列表
         """
         handler = self.memory_handler_factory.get_handler(memory_type)
         return await handler.recall(
-            query, limit, include_consolidated, memory_scope=memory_scope
+            query, limit, memory_scope=memory_scope
         )
 
     # ===== 高级记忆功能 =====
@@ -180,15 +178,15 @@ class CognitiveService:
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: int = None,
+        limit: int = None,
         event=None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
-        """实现双轨检索：同时从新鲜记忆和已巩固记忆中检索相关内容"""
+        """执行统一记忆检索。"""
         return await self.memory_manager.comprehensive_recall(
             query=query,
-            limit=fresh_limit,
+            limit=limit,
             event=event,
             vector=vector,
             memory_scope=memory_scope,
@@ -203,10 +201,9 @@ class CognitiveService:
         query: str,
         entities: List[str],
         per_type_limit: int = 7,
-        final_limit: int = 7,
+        final_limit: Optional[int] = None,
         vector: Optional[List[float]] = None,
         event=None,
-        memory_handlers: Dict[str, Any] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         """链式多通道回忆 - 基于关联网络的多轮回忆
@@ -215,21 +212,15 @@ class CognitiveService:
             query: 查询字符串
             entities: 核心实体列表
             per_type_limit: 每种记忆类型的限制
-            final_limit: 最终结果限制
+            final_limit: 最终返回数量限制
             vector: 预计算的查询向量（可选）
             event: 消息事件
-            memory_handlers: 记忆处理器字典
         """
-        # 如果 memory_handlers 没有显式传入，则从 factory 获取
-        if memory_handlers is None:
-            memory_handlers = self.memory_handler_factory.handlers
-            
         return await self.memory_manager.chained_recall(
             query=query, 
             entities=entities, 
             per_type_limit=per_type_limit, 
             final_limit=final_limit, 
-            memory_handlers=memory_handlers, 
             vector=vector,
             event=event,
             memory_scope=memory_scope,
