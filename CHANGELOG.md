@@ -2,6 +2,24 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.12] - 2026-05-02
+
+### Highlights
+- 使用 FAISS 自建轻量向量索引替换 ChromaDB 运行依赖，记忆与笔记向量层改为 provider 专用 sidecar index。
+- 启动时自动检查 SQL 真相层与当前 provider 的 FAISS 向量层一致性，缺失补写、孤儿清理、文本变化重写，必要时重建。
+- 调试工具改为直接读取 FAISS `memory_index` / `notes_index`，支持 sidecar 浏览、统计和向量查询。
+
+### Core Changes
+- `feat(vector)`: 新增 `FaissVectorStore` / `FaissTextIndex`，使用 `IndexFlatIP + IndexIDMap` 与显式 L2 normalize。
+- `refactor(vector)`: `VectorStore` 保留兼容名称，底层切换为 FAISS，不再导入或初始化 ChromaDB。
+- `refactor(startup)`: 组件初始化阶段执行 FAISS 启动一致性检查，日志输出真相层条数、向量层条数、缺失、孤儿、文本变化、写入、删除与重建状态。
+- `refactor(debug-tool)`: 调试工具移除 ChromaDB 依赖，向量页改为读取 FAISS sidecar SQLite 与 FAISS index。
+- `chore(deps)`: `requirements.txt` / `debug_tool/requirements.txt` 移除 `chromadb`，新增 `faiss-cpu` 与 `numpy`。
+
+### Tests
+- `feat(test)`: 新增 FAISS 单元测试，覆盖 upsert/search/delete/reload、provider 隔离、模型变化清空旧向量空间、SQL 真相层一致性同步。
+- `chore(test)`: 新增 `pytest.ini`，正式单测仅收集 `tests/`，避免 `debug_tool` 脚本式模拟测试被 pytest 误收集。
+
 ## [1.3.11] - 2026-04-30
 
 ### Highlights

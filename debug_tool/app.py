@@ -167,7 +167,7 @@ if mode == "📌 总览":
         st.write(f"- central db: `{ov.get('simple_db_path')}`")
         st.write(f"- maintenance: `{ov.get('maintenance_state_path')}`")
         st.write(f"- backups: `{ov.get('backup_dir')}`")
-        st.write(f"- chromadb: `{ov.get('chromadb_path')}`")
+        st.write(f"- faiss: `{ov.get('faiss_path')}`")
     with c2:
         st.markdown("**scope 列表**")
         scopes = ov.get("scopes") or []

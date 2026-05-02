@@ -106,27 +106,17 @@ class FileMonitorService:
                 self.note_service._thread_pool.shutdown(wait=True)
                 self.logger.debug("✅ NoteService线程池已关闭")
 
-            # 3. ChromaDB维护操作已禁用（防止数据库损坏）
-            # 原因：外部直接操作SQLite文件会与ChromaDB客户端冲突
-            self.logger.debug("跳过ChromaDB维护操作（由内部自动管理）")
+            # 3. 向量索引由睡眠维护管线统一同步。
+            self.logger.debug("跳过向量索引维护操作（由睡眠维护统一管理）")
 
             self.logger.info("🔓 所有资源已释放，线程已回收")
 
         except Exception as e:
             self.logger.error(f"清理资源失败: {e}")
 
-    def _force_chromadb_vacuum(self):
-        """
-        ⚠️ 已禁用直接VACUUM操作
-
-        原因：在ChromaDB客户端持有数据库连接时直接执行VACUUM会导致数据库损坏。
-        ChromaDB内部已有自动优化机制，无需手动干预。
-
-        如需释放空间，应：
-        1. 完全关闭所有ChromaDB客户端
-        2. 使用ChromaDB官方工具或重启服务后自动优化
-        """
-        self.logger.debug("已跳过VACUUM操作（由ChromaDB内部自动管理）")
+    def _force_vector_index_vacuum(self):
+        """已废弃：向量索引空间回收由FAISS重建流程处理。"""
+        self.logger.debug("已跳过向量索引VACUUM操作（由FAISS重建流程处理）")
         return
 
 
@@ -196,7 +186,7 @@ class FileMonitorService:
                 else:
                     self.logger.error("批量删除文件数据失败")
 
-            # 5. 执行新增/更新操作（顺序处理，避免ChromaDB锁竞争）
+            # 5. 执行新增/更新操作（顺序处理，降低文件索引抖动）
             add_count = 0
             if changes["to_add"]:
                 self.logger.info(

@@ -97,15 +97,16 @@ class SleepMaintenanceService:
 
         cognitive_service = plugin_context.get_component("cognitive_service")
         memory_sql_manager = plugin_context.get_component("memory_sql_manager")
-        if (
-            cognitive_service is None
-            or memory_sql_manager is None
-            or not hasattr(cognitive_service, "main_collection")
-        ):
-            deepmind.logger.warning(
-                "[睡眠维护] 向量到中央迁移：失败（组件不可用）"
-            )
+        if cognitive_service is None or memory_sql_manager is None:
+            deepmind.logger.warning("[睡眠维护] 向量到中央迁移：失败（组件不可用）")
             return "failed"
+
+        if getattr(cognitive_service, "main_collection", None) is None:
+            state["vector_to_center_migration_last_provider"] = current_provider
+            deepmind.logger.info(
+                "[睡眠维护] 向量到中央迁移：跳过（当前已使用中央库+FAISS轻量索引）"
+            )
+            return "skipped"
 
         backup_service = SimpleMemoryBackupService(deepmind.logger)
         result = await backup_service.backup_from_collection(
@@ -179,11 +180,6 @@ class SleepMaintenanceService:
             if state.get("memory_vector_sync_last_provider", "") != "bm25_only":
                 state["memory_vector_sync_last_provider"] = "bm25_only"
             deepmind.logger.info("[睡眠维护] 记忆向量库同步：跳过（当前为 BM25-only）")
-            return "skipped"
-
-        last_provider = str(state.get("memory_vector_sync_last_provider", "") or "")
-        if last_provider == target_provider:
-            deepmind.logger.info("[睡眠维护] 记忆向量库同步：跳过（供应商未变化）")
             return "skipped"
 
         cognitive_service = plugin_context.get_component("cognitive_service")

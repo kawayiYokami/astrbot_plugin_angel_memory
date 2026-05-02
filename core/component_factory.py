@@ -18,7 +18,7 @@ except ImportError:
 # 导入核心组件
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager
-from ..llm_memory.components.vector_store import VectorStore
+from ..llm_memory.components.faiss_memory_index import FaissVectorStore
 from ..llm_memory import CognitiveService
 from ..llm_memory.service.memory_decay_policy import (
     MemoryDecayConfig,
@@ -179,7 +179,7 @@ class ComponentFactory:
                 await self._start_file_monitor(file_monitor)
                 return self._components
 
-            # 2. 创建向量存储 (只有在 embedding_provider 可用时才会执行)
+            # 2. 创建 FAISS 向量索引 (只有在 embedding_provider 可用时才会执行)
             vector_store = self._create_vector_store(
                 embedding_provider,
                 rerank_provider=rerank_provider,
@@ -205,6 +205,13 @@ class ComponentFactory:
             # 5. 创建笔记服务
             note_service = self._create_note_service(vector_store)
             self._components["note_service"] = note_service
+
+            await self._run_startup_faiss_consistency_check(
+                memory_sql_manager=memory_sql_manager,
+                cognitive_service=cognitive_service,
+                vector_store=vector_store,
+                note_service=note_service,
+            )
 
             # 6. 创建DeepMind
             deepmind = await self._create_deepmind(
@@ -258,16 +265,16 @@ class ComponentFactory:
         return embedding_provider
 
     def _create_vector_store(self, embedding_provider, rerank_provider=None):
-        """创建向量存储"""
-        self.logger.info("🗄️ 创建向量存储...")
+        """创建 FAISS 向量索引。"""
+        self.logger.info("🗄️ 创建FAISS向量索引...")
 
-        # 使用PluginContext的ChromaDB路径
-        db_path = str(self.plugin_context.get_chroma_db_path())
-        self.logger.info(f"📁 使用数据库路径: {db_path}")
+        index_dir = self.plugin_context.get_faiss_index_dir()
+        self.logger.info(f"📁 使用FAISS索引路径: {index_dir}")
 
-        vector_store = VectorStore(
+        vector_store = FaissVectorStore(
             embedding_provider=embedding_provider,
-            db_path=db_path,
+            index_dir=index_dir,
+            provider_id=self.plugin_context.get_current_provider(),
             rerank_provider=rerank_provider,
         )
 
@@ -277,10 +284,10 @@ class ComponentFactory:
 
         if provider_type == "api":
             provider_id = provider_info.get("provider_id", "unknown")
-            self.logger.info(f"✅ 向量存储创建完成 (使用API提供商: {provider_id})")
+            self.logger.info(f"✅ FAISS向量索引创建完成 (使用API提供商: {provider_id})")
         else:
             model_name = provider_info.get("model_name", "unknown")
-            self.logger.info(f"✅ 向量存储创建完成 (使用本地模型: {model_name})")
+            self.logger.info(f"✅ FAISS向量索引创建完成 (使用本地模型: {model_name})")
 
         return vector_store
 
@@ -334,10 +341,10 @@ class ComponentFactory:
                         self.logger.info("✅ 使用上游可重排提供商: <auto>")
                         return p
 
-            self.logger.info("ℹ️ 未启用记忆二阶段重排，当前使用 Chroma 向量相似度排序结果")
+            self.logger.info("ℹ️ 未启用记忆二阶段重排，当前使用 FAISS 向量相似度排序结果")
             return None
         except Exception as e:
-            self.logger.warning(f"解析上游重排提供商失败，自动降级为 Chroma 向量相似度排序: {e}")
+            self.logger.warning(f"解析上游重排提供商失败，自动降级为 FAISS 向量相似度排序: {e}")
             return None
 
     def _create_cognitive_service(
@@ -466,6 +473,70 @@ class ComponentFactory:
         except Exception as e:
             self.logger.error(f"启动文件监控服务失败: {e}")
             # 文件监控失败不应该中断整个初始化流程
+
+    async def _run_startup_faiss_consistency_check(
+        self,
+        *,
+        memory_sql_manager: MemorySqlManager,
+        cognitive_service,
+        vector_store,
+        note_service,
+    ) -> None:
+        """启动时检查 SQL 真相层与当前 provider 的 FAISS 向量层是否一致。"""
+        import time
+
+        provider_id = self.plugin_context.get_current_provider()
+
+        async def _sync_index(index_name: str, index, rows):
+            start = time.time()
+            self.logger.info(
+                "[FAISS向量索引] 开始 "
+                f"任务名=启动一致性检查 index={index_name} "
+                f"provider_id={provider_id} 真相层条数={len(rows)}"
+            )
+            result = await index.sync_rows(rows)
+            cost_ms = int((time.time() - start) * 1000)
+            changed = int(result.get("changed", 0) or 0)
+            missing = int(result.get("missing", 0) or 0)
+            orphan = int(result.get("orphan", 0) or 0)
+            migrated = int(result.get("migrated", 0) or 0)
+            deleted = int(result.get("deleted", 0) or 0)
+            rebuilt = int(result.get("rebuilt", 0) or 0)
+            action = "重建" if rebuilt else ("同步" if (migrated or deleted or changed or missing or orphan) else "跳过")
+            self.logger.info(
+                "[FAISS向量索引] 完成 "
+                f"任务名=启动一致性检查 index={index_name} action={action} "
+                f"provider_id={provider_id} 真相层条数={result.get('sql_total', len(rows))} "
+                f"向量层原条数={result.get('vector_total_before', result.get('vector_total', 0))} "
+                f"缺失={missing} 孤儿={orphan} 文本变化={changed} "
+                f"写入={migrated} 删除={deleted} 重建={rebuilt} 耗时毫秒={cost_ms}"
+            )
+            return result
+
+        try:
+            memory_rows = await memory_sql_manager.list_memory_index_rows()
+            await _sync_index(
+                "memory_index",
+                cognitive_service.memory_index_collection,
+                memory_rows,
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"[FAISS向量索引] 失败 任务名=启动一致性检查 index=memory_index 异常={e}",
+                exc_info=True,
+            )
+
+        try:
+            notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
+            if note_service is not None:
+                note_service.notes_index_collection = notes_index
+            note_rows = await memory_sql_manager.list_note_index_vector_rows()
+            await _sync_index("notes_index", notes_index, note_rows)
+        except Exception as e:
+            self.logger.warning(
+                f"[FAISS向量索引] 失败 任务名=启动一致性检查 index=notes_index 异常={e}",
+                exc_info=True,
+            )
 
     def get_components(self) -> Dict[str, Any]:
         """获取已创建的组件"""

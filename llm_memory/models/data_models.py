@@ -105,7 +105,7 @@ class BaseMemory:
 
     def to_dict(self) -> dict:
         """转换为字典以进行JSON序列化。"""
-        # 将tags列表转换为字符串以兼容ChromaDB
+        # 将tags列表转换为字符串以兼容旧序列化格式
         tags_str = ", ".join(self.tags) if isinstance(self.tags, list) else ""
 
         return {
