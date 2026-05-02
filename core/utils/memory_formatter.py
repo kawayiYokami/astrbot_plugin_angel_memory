@@ -164,7 +164,7 @@ class MemoryFormatter:
     @staticmethod
     def format_session_memories(memories: List[MemoryItem]) -> str:
         """
-        格式化会话短期记忆列表，无过滤，但会去重。
+        格式化会话工作记忆列表，无过滤，但会去重。
 
         Args:
             memories: 记忆列表

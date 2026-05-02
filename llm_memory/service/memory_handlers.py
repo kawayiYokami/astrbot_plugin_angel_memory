@@ -117,7 +117,6 @@ class MemoryHandler:
         self,
         query: str,
         limit: int = 10,
-        include_consolidated: bool = True,
         similarity_threshold: float = 0.6,
         memory_scope: Optional[str] = None,
     ) -> List[BaseMemory]:
@@ -127,15 +126,12 @@ class MemoryHandler:
         Args:
             query: 搜索查询字符串
             limit: 返回结果的最大数量
-            include_consolidated: 是否包含已巩固的记忆
             similarity_threshold: 相似度阈值（0.0-1.0），低于此阈值的结果将被过滤
 
         Returns:
             相关的记忆列表
         """
         clauses = [{"memory_type": self.memory_type.value}]
-        if not include_consolidated:
-            clauses.append({"is_consolidated": False})
 
         scope = str(memory_scope or "").strip()
         if scope:

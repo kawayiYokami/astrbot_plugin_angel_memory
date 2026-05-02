@@ -242,7 +242,7 @@ class MemoryManager:
             )
 
         if limit is None:
-            limit = system_config.fresh_recall_limit
+            limit = system_config.default_recall_limit
         where_filter = self._build_scope_where_filter(memory_scope)
 
         if self.memory_sql_manager is not None and self.memory_index_collection is not None:
@@ -326,8 +326,7 @@ class MemoryManager:
         query: str,
         entities: List[str],
         per_type_limit: int = 7,
-        final_limit: int = 7,
-        memory_handlers: Dict[str, Any] = None,
+        final_limit: Optional[int] = None,
         event=None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
@@ -339,8 +338,7 @@ class MemoryManager:
             query: 搜索查询字符串
             entities: 核心实体列表
             per_type_limit: 每种类型最多召回数量（默认7）
-            final_limit: 候选池大小（默认7，实际使用50）
-            memory_handlers: 未使用（保留兼容性）
+            final_limit: 最终返回数量限制；为空时不额外截断
             event: 消息事件
             vector: 预计算向量
 
@@ -352,10 +350,11 @@ class MemoryManager:
         if self.query_processor and event:
             processed_query = self.query_processor.process_query_for_memory(query, event)
 
-        # 步骤1: 混合检索获取候选池（相似度≥0.5的所有记忆，已含时间衰减）
+        # 步骤1: 混合检索获取候选池（相似度≥0.5的记忆，已含时间衰减）
+        candidate_limit = max(100, int(final_limit or 0) * 10, int(per_type_limit) * 20)
         candidate_pool = await self.comprehensive_recall(
             query=processed_query,
-            limit=100,  # 足够大的限制，让相似度阈值0.5来过滤
+            limit=candidate_limit,
             event=event,
             vector=vector,
             memory_scope=memory_scope,
@@ -388,6 +387,8 @@ class MemoryManager:
 
         # 步骤4: 合并所有记忆
         all_memories = entity_memories + [mem for mems in type_memories.values() for mem in mems]
+        if final_limit is not None and int(final_limit) > 0:
+            all_memories = all_memories[: int(final_limit)]
 
         self.logger.debug(f"链式回忆: 实体记忆={len(entity_memories)}, 类型记忆={sum(len(v) for v in type_memories.values())}, 总计={len(all_memories)}")
 

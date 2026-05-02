@@ -1,8 +1,8 @@
 """
-会话短期记忆管理模块
+会话工作记忆缓存模块
 
-负责管理所有会话的短期记忆，支持并发和线程安全。
-实现基于生命值淘汰的短期记忆管理。
+负责管理所有会话的工作记忆缓存，支持并发和线程安全。
+短期仓只保存近期召回或新生成的少量记忆，并按类型容量裁剪。
 """
 
 import threading
@@ -23,12 +23,12 @@ class MemoryItem:
     reasoning: str
     tags: List[str]
     strength: int = 0
-    life_points: int = 3  # 生命值，新记忆默认3点
+    priority_points: int = 3  # 缓存优先级，当前用于容量裁剪时的稳定排序
     created_at: float = 0.0  # 创建时间戳
 
 
 class SessionMemory:
-    """单个会话的短期记忆管理"""
+    """单个会话的工作记忆缓存。"""
 
     def __init__(
         self,
@@ -49,7 +49,7 @@ class SessionMemory:
         self.capacity_multiplier = capacity_multiplier
         self.lock = threading.Lock()
 
-        # 使用列表存储记忆，按生命值和时间戳淘汰
+        # 使用列表存储记忆，按缓存优先级和时间戳裁剪
         self.memories = []  # List[MemoryItem]
 
         # 记忆ID到记忆项的映射（用于快速查找）
@@ -59,7 +59,7 @@ class SessionMemory:
 
     def add_memories(self, memories: List[BaseMemory]) -> None:
         """
-        添加记忆到会话中
+        将记忆放入会话工作缓存
 
         Args:
             memories: 记忆列表
@@ -174,8 +174,8 @@ class SessionMemory:
         # 计算每个用户的剩余容量
         user_remaining_capacity = self._calculate_user_remaining_capacity(current_user_memories, total_capacity)
 
-        # 按生命值排序记忆
-        user_info_memories.sort(key=lambda x: (-x.life_points, x.created_at))
+        # 高优先级、较新的用户信息优先进入短期仓
+        user_info_memories.sort(key=lambda x: (-x.priority_points, x.created_at))
 
         # 为每个用户分配记忆
         for memory in user_info_memories:
@@ -286,7 +286,7 @@ class SessionMemory:
             reasoning=getattr(memory, "reasoning", ""),
             tags=getattr(memory, "tags", []),
             strength=getattr(memory, "strength", 0),
-            life_points=3,  # 新记忆默认3点生命值
+            priority_points=3,
             created_at=self._safe_parse_created_at(getattr(memory, "created_at", None)),  # 安全解析创建时间
         )
 
@@ -309,7 +309,7 @@ class SessionMemory:
 
     def _cleanup_by_capacity(self, memory_type: str) -> None:
         """
-        根据容量清理记忆：删除该类型中生命值最低且最旧的记忆
+        根据容量清理记忆：删除该类型中优先级最低且最旧的记忆
         知识记忆类型有独立的用户信息容量管理
 
         Args:
@@ -336,8 +336,8 @@ class SessionMemory:
         # 计算需要删除的数量
         excess_count = len(type_memories) - capacity
 
-        # 按生命值升序，时间戳升序排序（生命值最低且最旧的排在前面）
-        type_memories.sort(key=lambda x: (x.life_points, x.created_at))
+        # 按优先级升序、时间戳升序排序（优先级最低且最旧的排在前面）
+        type_memories.sort(key=lambda x: (x.priority_points, x.created_at))
 
         # 删除最差的记忆
         for i in range(excess_count):
@@ -372,7 +372,7 @@ class SessionMemory:
         # 清理普通知识记忆
         regular_excess = len(regular_memories) - regular_capacity
         if regular_excess > 0:
-            regular_memories.sort(key=lambda x: (x.life_points, x.created_at))
+            regular_memories.sort(key=lambda x: (x.priority_points, x.created_at))
             for i in range(regular_excess):
                 memory_to_remove = regular_memories[i]
                 if memory_to_remove in self.memories:
@@ -410,8 +410,8 @@ class SessionMemory:
 
         # 为每个用户清理记忆
         for user_id, memories in user_groups.items():
-            # 按生命值排序，优先保留高生命值记忆
-            memories.sort(key=lambda x: (-x.life_points, x.created_at))
+            # 按缓存优先级排序，优先保留高优先级记忆
+            memories.sort(key=lambda x: (-x.priority_points, x.created_at))
 
             # 删除超出的记忆
             for memory in memories[capacity_per_user:]:
@@ -438,7 +438,7 @@ class SessionMemory:
 
     def get_memories(self) -> List[MemoryItem]:
         """
-        获取会话中的所有记忆
+        获取会话工作缓存中的所有记忆
 
         Returns:
             记忆列表
@@ -449,86 +449,14 @@ class SessionMemory:
 
 
     def clear(self) -> None:
-        """清空会话记忆"""
+        """清空会话工作缓存。"""
         with self.lock:
             self.memories.clear()
             self.memory_map.clear()
 
-    def update_memories(
-        self, new_memories: List[BaseMemory], useful_memory_ids: List[str]
-    ) -> None:
-        """
-        更新会话记忆：添加新记忆，评估现有记忆，清理死亡记忆
-
-        Args:
-            new_memories: 新记忆列表
-            useful_memory_ids: 有用记忆ID列表
-        """
-        with self.lock:
-            # 1. 添加新记忆
-            for memory in new_memories:
-                memory_type_str = (
-                    memory.memory_type.value
-                    if hasattr(memory.memory_type, "value")
-                    else str(memory.memory_type)
-                )
-                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(
-                    memory_type_str, memory_type_str.lower()
-                )
-
-                memory_item = MemoryItem(
-                    id=memory.id,
-                    memory_type=memory_type_key,
-                    judgment=getattr(memory, "judgment", ""),
-                    reasoning=getattr(memory, "reasoning", ""),
-                    tags=getattr(memory, "tags", []),
-                    strength=getattr(memory, "strength", 0),
-                    life_points=3,  # 新记忆默认3点生命值
-                    created_at=self._safe_parse_created_at(
-                        getattr(memory, "created_at", None)
-                    ),  # 保留原始创建时间，并统一解析为 float
-                )
-
-                # 如果记忆已存在，先移除旧的
-                if memory.id in self.memory_map:
-                    old_memory = self.memory_map[memory.id]
-                    if old_memory in self.memories:
-                        self.memories.remove(old_memory)
-
-                # 添加新记忆
-                self.memories.append(memory_item)
-                self.memory_map[memory.id] = memory_item
-
-                # 检查容量并智能清理
-                self._cleanup_by_capacity(memory_type_key)
-
-            # 2. 评估现有记忆的生命值
-            memories_to_remove = []
-            for memory in self.memories:
-                if memory.id in useful_memory_ids:
-                    # 有用记忆+1生命值
-                    memory.life_points += 1
-                else:
-                    # 其他记忆-1生命值
-                    memory.life_points -= 1
-
-                # 记录需要删除的记忆（生命值为0）
-                # 但保护用户信息记忆，不轻易删除
-                if memory.life_points <= 0 and not self._is_user_info_memory(memory):
-                    memories_to_remove.append(memory)
-                elif memory.life_points <= -2:  # 用户信息记忆最多只能降到-2
-                    memories_to_remove.append(memory)
-
-            # 3. 清理死亡记忆
-            for memory in memories_to_remove:
-                if memory in self.memories:
-                    self.memories.remove(memory)
-                if memory.id in self.memory_map:
-                    del self.memory_map[memory.id]
-
     def get_stats(self) -> Dict[str, Any]:
         """
-        获取会话记忆统计信息
+        获取会话工作缓存统计信息
 
         Returns:
             统计信息字典
@@ -539,11 +467,11 @@ class SessionMemory:
                 "capacity_multiplier": self.capacity_multiplier,
                 "total_memories": len(self.memories),
                 "by_type": {},
-                "life_points_distribution": {
+                "priority_distribution": {
                     "high": 0,  # >5
                     "medium": 0,  # 2-5
                     "low": 0,  # 1
-                    "critical": 0,  # =0 (即将死亡)
+                    "critical": 0,  # =0
                 },
             }
 
@@ -585,13 +513,13 @@ class SessionMemory:
                     }
                 stats["by_type"][sub_type]["current"] += 1
 
-                # 生命值分布统计
-                if memory.life_points > 5:
-                    stats["life_points_distribution"]["high"] += 1
-                elif memory.life_points >= 2:
-                    stats["life_points_distribution"]["medium"] += 1
-                elif memory.life_points == 1:
-                    stats["life_points_distribution"]["low"] += 1
+                # 缓存优先级分布统计
+                if memory.priority_points > 5:
+                    stats["priority_distribution"]["high"] += 1
+                elif memory.priority_points >= 2:
+                    stats["priority_distribution"]["medium"] += 1
+                elif memory.priority_points == 1:
+                    stats["priority_distribution"]["low"] += 1
 
             # 计算使用率
             for memory_type, type_stats in stats["by_type"].items():
@@ -603,11 +531,11 @@ class SessionMemory:
 
 
 class SessionMemoryManager:
-    """会话记忆管理器 - 管理所有会话的短期记忆"""
+    """会话工作记忆管理器 - 管理所有会话的短期缓存。"""
 
     def __init__(self, capacity_multiplier: float = 1.0):
         """
-        初始化会话记忆管理器
+        初始化会话工作缓存管理器
 
         Args:
             capacity_multiplier: 容量倍数
@@ -619,13 +547,13 @@ class SessionMemoryManager:
 
     def get_or_create_session(self, session_id: str) -> SessionMemory:
         """
-        获取或创建会话记忆
+        获取或创建会话工作缓存
 
         Args:
             session_id: 会话ID
 
         Returns:
-            会话记忆对象
+            会话工作缓存对象
         """
         with self.lock:
             if session_id not in self.sessions:
@@ -638,7 +566,7 @@ class SessionMemoryManager:
         self, session_id: str, memories: List[BaseMemory]
     ) -> None:
         """
-        向指定会话添加记忆
+        向指定会话工作缓存添加记忆
 
         Args:
             session_id: 会话ID
@@ -647,26 +575,9 @@ class SessionMemoryManager:
         session = self.get_or_create_session(session_id)
         session.add_memories(memories)
 
-    def update_session_memories(
-        self,
-        session_id: str,
-        new_memories: List[BaseMemory],
-        useful_memory_ids: List[str],
-    ) -> None:
-        """
-        更新会话记忆：添加新记忆，评估现有记忆，清理死亡记忆
-
-        Args:
-            session_id: 会话ID
-            new_memories: 新记忆列表
-            useful_memory_ids: 有用记忆ID列表
-        """
-        session = self.get_or_create_session(session_id)
-        session.update_memories(new_memories, useful_memory_ids)
-
     def get_session_memories(self, session_id: str) -> List[MemoryItem]:
         """
-        获取会话记忆
+        获取会话工作缓存
 
         Args:
             session_id: 会话ID
@@ -683,7 +594,7 @@ class SessionMemoryManager:
 
     def clear_session(self, session_id: str) -> None:
         """
-        清空指定会话的记忆
+        清空指定会话的工作缓存
 
         Args:
             session_id: 会话ID

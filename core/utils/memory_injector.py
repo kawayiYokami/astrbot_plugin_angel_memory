@@ -43,10 +43,10 @@ class MemoryInjector:
     @staticmethod
     def format_session_memories_for_prompt(session_memories: List[MemoryItem]) -> str:
         """
-        格式化会话短期记忆用于LLM提示词
+        格式化会话工作记忆用于LLM提示词
 
         Args:
-            session_memories: 会话短期记忆列表
+            session_memories: 会话工作记忆列表
 
         Returns:
             格式化后的记忆上下文

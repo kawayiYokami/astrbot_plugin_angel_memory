@@ -24,7 +24,6 @@ from .utils import SmallModelPromptBuilder, MemoryInjector
 from .utils.query_processor import get_query_processor
 from .services.retrieval_service import DeepMindRetrievalService
 from .services.injection_service import DeepMindInjectionService
-from .services.feedback_service import DeepMindFeedbackService
 from .services.sleep_service import DeepMindSleepService
 from .utils.feedback_queue import get_feedback_queue
 
@@ -125,7 +124,7 @@ class DeepMind:
         self.note_inject_top_k = note_top_k
         self.note_candidate_top_k = note_top_k * 7
 
-        # 初始化短期记忆管理器
+        # 初始化会话工作记忆缓存
         self.session_memory_manager = SessionMemoryManager(
             capacity_multiplier=self.short_term_memory_capacity
         )
@@ -139,7 +138,6 @@ class DeepMind:
         self.query_processor = get_query_processor()
         self.retrieval_service = DeepMindRetrievalService(self)
         self.injection_service = DeepMindInjectionService(self)
-        self.feedback_service = DeepMindFeedbackService(self)
         self.sleep_service = DeepMindSleepService(self)
         self._reflection_state_lock = asyncio.Lock()
         self._reflection_states: Dict[str, Dict[str, Any]] = {}
@@ -283,35 +281,6 @@ class DeepMind:
             has_secretary_decision,
         )
 
-    async def _update_memory_system(
-        self, feedback_data: Dict[str, Any], long_term_memories: List, session_id: str
-    ) -> None:
-        """
-        更新短期记忆并将长期反馈任务加入后台队列
-
-        Args:
-            feedback_data: LLM反馈数据
-            long_term_memories: 长期记忆列表
-            session_id: 会话ID
-        """
-        await self.feedback_service.update_memory_system(
-            feedback_data, long_term_memories, session_id
-        )
-
-    async def _execute_feedback_task(
-        self,
-        useful_memory_ids: List[str],
-        recalled_memory_ids: List[str],
-        new_memories: List[Dict[str, Any]],
-        merge_groups: List[List[str]],
-        session_id: str,
-    ) -> None:
-        """异步执行的长期记忆反馈。"""
-
-        await self.feedback_service.execute_feedback_task(
-            useful_memory_ids, recalled_memory_ids, new_memories, merge_groups, session_id
-        )
-
     def _clean_note_content(self, content: str) -> str:
         """
         清理笔记内容，保留单个换行符，去除双换行符
@@ -403,7 +372,7 @@ class DeepMind:
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
 
-        # 5. 将检索到的长期记忆填入短期记忆
+        # 5. 将检索到的长期记忆填入会话工作缓存
         if long_term_memories and self.memory_system:
             self.session_memory_manager.add_memories_to_session(session_id, long_term_memories)
 
@@ -1111,14 +1080,14 @@ class DeepMind:
                     memory_scope=memory_scope,
                 )
 
-            # 2. 更新短期记忆
+            # 2. 更新会话工作缓存
             # 获取有用的旧记忆
             useful_ids = feedback_data.get("useful_memory_ids", [])
             useful_long_term_memories = [
                 mem for mem in long_term_memories if mem.id in useful_ids
             ]
 
-            # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆
+            # 将有用的旧记忆和全新的记忆合并，一起放入会话工作缓存
             memories_for_session = useful_long_term_memories + newly_created_memories
             if memories_for_session:
                 self.session_memory_manager.add_memories_to_session(

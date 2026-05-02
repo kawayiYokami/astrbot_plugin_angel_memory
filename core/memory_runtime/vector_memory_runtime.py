@@ -37,28 +37,26 @@ class VectorMemoryRuntime:
         memory_type: str,
         query: str,
         limit: int = 10,
-        include_consolidated: bool = True,
         memory_scope: Optional[str] = None,
     ) -> List[BaseMemory]:
         return await self._cognitive_service.recall(
             memory_type=memory_type,
             query=query,
             limit=limit,
-            include_consolidated=include_consolidated,
             memory_scope=memory_scope,
         )
 
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: Optional[int] = None,
+        limit: Optional[int] = None,
         event: Any = None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         return await self._cognitive_service.comprehensive_recall(
             query=query,
-            fresh_limit=fresh_limit,
+            limit=limit,
             event=event,
             vector=vector,
             memory_scope=memory_scope,
@@ -69,7 +67,7 @@ class VectorMemoryRuntime:
         query: str,
         entities: List[str],
         per_type_limit: int = 7,
-        final_limit: int = 7,
+        final_limit: Optional[int] = None,
         vector: Optional[List[float]] = None,
         event: Any = None,
         memory_scope: str = "public",

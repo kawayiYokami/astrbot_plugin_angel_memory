@@ -25,7 +25,6 @@ class MemoryRuntime(Protocol):
         memory_type: str,
         query: str,
         limit: int = 10,
-        include_consolidated: bool = True,
         memory_scope: Optional[str] = None,
     ) -> List[BaseMemory]:
         ...
@@ -33,7 +32,7 @@ class MemoryRuntime(Protocol):
     async def comprehensive_recall(
         self,
         query: str,
-        fresh_limit: Optional[int] = None,
+        limit: Optional[int] = None,
         event: Any = None,
         vector: Optional[List[float]] = None,
         memory_scope: str = "public",
@@ -45,7 +44,7 @@ class MemoryRuntime(Protocol):
         query: str,
         entities: List[str],
         per_type_limit: int = 7,
-        final_limit: int = 7,
+        final_limit: Optional[int] = None,
         vector: Optional[List[float]] = None,
         event: Any = None,
         memory_scope: str = "public",
