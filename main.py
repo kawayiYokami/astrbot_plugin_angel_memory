@@ -27,7 +27,7 @@ from .core.plugin_context import PluginContextFactory
 from .tools.core_memory_remember import CoreMemoryRememberTool
 from .tools.core_memory_recall import CoreMemoryRecallTool
 from .tools.note_recall import NoteRecallTool
-from .tools.research_tool import ResearchTool
+from .tools.research_subagent import build_research_handoff_tool
 
 
 def configure_logging_behavior():
@@ -52,7 +52,7 @@ def configure_logging_behavior():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "1.2.8",
+    "1.3.13",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -107,17 +107,20 @@ class AngelMemoryPlugin(Star):
         # 5. 注册LLM工具
         self.llm_tools_enabled = True  # 标记LLM工具是否启用
         try:
-            # 创建 ResearchTool 实例
-            research_tool = ResearchTool()
-            research_tool.set_context(self.context)
-
-            self.context.add_llm_tools(
+            llm_tools = [
                 CoreMemoryRememberTool(),
                 CoreMemoryRecallTool(),
                 NoteRecallTool(),
-                research_tool
+            ]
+            research_handoff_tool = build_research_handoff_tool(
+                self.context, self.plugin_context
             )
-            self.logger.info("✅ 已注册 core_memory_remember、core_memory_recall、note_recall 和 research_topic 工具。")
+            if research_handoff_tool is not None:
+                llm_tools.append(research_handoff_tool)
+
+            self.context.add_llm_tools(*llm_tools)
+            registered_names = "、".join(tool.name for tool in llm_tools)
+            self.logger.info(f"已注册 LLM 工具：{registered_names}")
         except AttributeError as e:
             self.llm_tools_enabled = False
             self.logger.error(f"❌ 注册LLM工具失败，context可能不支持add_llm_tools方法: {e}", exc_info=True)

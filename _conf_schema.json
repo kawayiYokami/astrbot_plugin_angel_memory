@@ -187,12 +187,6 @@
         "_special": "select_provider",
         "default": "",
         "hint": "指定用于执行研究任务的 LLM 提供商 ID。留空则使用当前会话的提供商。推荐使用 DeepSeek V3.2 或 Gemini pro 等推理能力强的模型。"
-      },
-      "start_messages": {
-        "type": "string",
-        "description": "研究任务启动时发送的可爱提示",
-        "hint": "用 | 分隔多条消息，启动时会随机选择一条发送。留空则不发送。",
-        "default": "请稍等，我这就去把知识都抓回来！(ง •̀_•́)ง|好嘞！研究任务启动，我开始工作啦！|收到，正在开启深度研究模式... ✨"
       }
     }
   }
