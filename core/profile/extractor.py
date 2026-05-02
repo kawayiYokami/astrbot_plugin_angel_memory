@@ -21,9 +21,9 @@ EXTRACTION_PROMPT = """你是一个用户画像提取器。从以下对话消息
 规则：
 1. 只提取用户**主动透露**的、不敏感的公开信息
 2. 标签类型仅限：{green_tags}
-3. 输出格式：{"tags": [{"type": "标签类型", "value": "事实内容", "temporal": "present/past"}]}
+3. 输出格式：{{"tags": [{{"type": "标签类型", "value": "事实内容", "temporal": "present/past"}}]}}
 4. 值不超过30字，是摘要不是原文
-5. 没有可提取内容时返回 {"tags": []}
+5. 没有可提取内容时返回 {{"tags": []}}
 6. 严禁提取：密码、号码、地址、亲密话题
 7. 区分当前状态(present)和历史陈述(past)——"我以前当过老师"是past
 
@@ -80,8 +80,9 @@ class ProfileExtractor:
     # ---- LLM 提取 ----
 
     def build_prompt(self, message: str) -> str:
-        green = ", ".join(self.config.green_tags)
-        return EXTRACTION_PROMPT.format(green_tags=green, message=message)
+        """构建 LLM 提取提示词，注入当前绿灯+已启用的黄灯标签"""
+        allowed = [*self.config.green_tags, *self.config.yellow_tags]
+        return EXTRACTION_PROMPT.format(green_tags=", ".join(allowed), message=message)
 
     async def extract(
         self,
@@ -126,7 +127,8 @@ class ProfileExtractor:
             if not isinstance(tags, list):
                 return []
 
-            return [t for t in tags if _validate_tag(t, allowed_types=set(self.config.green_tags))]
+            allowed_types = set(self.config.green_tags) | set(self.config.yellow_tags)
+            return [t for t in tags if _validate_tag(t, allowed_types=allowed_types)]
 
         except Exception:
             logger.error("[画像提取] LLM提取失败", exc_info=True)

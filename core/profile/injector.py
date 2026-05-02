@@ -81,11 +81,10 @@ class ProfileInjector:
         except OSError:
             logger.warning("[画像注入] 列出目录失败: %s", profile_dir, exc_info=True)
 
-        # 去重：非 stale 优先，同 mtime 保留后出现的
+        # 去重：非 stale 优先，首次出现即为最佳（已按 stale,mtime 排序）
         deduped: dict[str, dict] = {}
         for tag in sorted(tags, key=lambda t: (t["stale"], -t["mtime"])):
-            if tag["type"] not in deduped or not tag["stale"]:
-                deduped[tag["type"]] = tag
+            deduped.setdefault(tag["type"], tag)
 
         return list(deduped.values())
 

@@ -86,11 +86,16 @@ class AngelMemoryPlugin(Star):
         data_dir = StarTools.get_data_dir("astrbot_plugin_angel_memory")
         self.logger.info(f"获取到插件数据目录: {data_dir}")
 
-        # 1.5 创建画像注入器
-        raw_dir = os.path.join(data_dir, "raw")
-        self.profile_injector = ProfileInjector(raw_dir, allowed_tags=set(self.profile_config.green_tags))
+        # 1.5 创建画像配置和提取器
         self.profile_config = ProfileExtractionConfig()
         self.profile_extractor = ProfileExtractor(self.profile_config)
+
+        # 1.6 创建画像注入器（依赖 profile_config）
+        raw_dir = os.path.join(data_dir, "raw")
+        self.profile_injector = ProfileInjector(
+            raw_dir,
+            allowed_tags=set(self.profile_config.green_tags),
+        )
 
         # 2. 创建统一的PluginContext，包含所有必要资源
         self.plugin_context = PluginContextFactory.create_from_initialization(
@@ -413,7 +418,8 @@ class AngelMemoryPlugin(Star):
             os.makedirs(profile_dir, exist_ok=True)
 
             for tag in tags:
-                fname = f"{tag['type']}.md"
+                temporal = tag.get("temporal", "present")
+                fname = f"{tag['type']}_{temporal}.md"
                 filepath = os.path.join(profile_dir, fname)
                 # 内容相同则跳过写入，保持 mtime 有意义
                 try:
@@ -425,7 +431,10 @@ class AngelMemoryPlugin(Star):
                     pass
                 self.profile_injector.write_tag(filepath, tag["value"])
         except Exception:
-            pass  # 画像提取失败不阻塞主流程
+            self.logger.warning(
+                "[画像提取] 失败 task=profile_extract user_id=%s",
+                user_id, exc_info=True,
+            )
 
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""
