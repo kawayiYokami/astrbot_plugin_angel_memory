@@ -25,6 +25,7 @@ from .utils.query_processor import get_query_processor
 from .services.retrieval_service import DeepMindRetrievalService
 from .services.injection_service import DeepMindInjectionService
 from .services.sleep_service import DeepMindSleepService
+from .services.user_profile_service import UserProfileService
 from .utils.feedback_queue import get_feedback_queue
 
 try:
@@ -138,6 +139,10 @@ class DeepMind:
         self.query_processor = get_query_processor()
         self.retrieval_service = DeepMindRetrievalService(self)
         self.injection_service = DeepMindInjectionService(self)
+        self.user_profile_service = UserProfileService(
+            memory_sql_manager=self.plugin_context.get_component("memory_sql_manager"),
+            logger=self.logger,
+        )
         self.sleep_service = DeepMindSleepService(self)
         self._reflection_state_lock = asyncio.Lock()
         self._reflection_states: Dict[str, Dict[str, Any]] = {}
@@ -407,7 +412,30 @@ class DeepMind:
             except Exception as e:
                 self.logger.warning(f"获取灵魂状态值失败: {e}")
 
-        # 8. 注入记忆、笔记和灵魂状态到请求
+        # 8. 刷新当前批次用户画像通道
+        try:
+            profile_refresh_started_at = time.time()
+            memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
+            if memory_sql_manager is not None:
+                self.user_profile_service.set_memory_sql_manager(memory_sql_manager)
+            memory_scope = await self.plugin_context.resolve_memory_scope_from_event(event)
+            await self.user_profile_service.refresh_session_profiles(
+                session_id=session_id,
+                chat_records=unprocessed_chat_records,
+                fallback_sender_id=str(getattr(event, "sender_id", "") or ""),
+                fallback_sender_name=str(getattr(event, "sender_name", "") or ""),
+                memory_scope=memory_scope,
+            )
+        except Exception as e:
+            elapsed_ms = int((time.time() - profile_refresh_started_at) * 1000)
+            self.logger.warning(
+                f"[用户画像] 失败 任务=刷新当前批次画像 触发条件=对话注入前 "
+                f"session={session_id} 当前批次消息数={len(unprocessed_chat_records)} "
+                f"耗时毫秒={elapsed_ms} 错误={e}",
+                exc_info=True,
+            )
+
+        # 9. 注入记忆、笔记和灵魂状态到请求
         has_secretary_decision = bool(secretary_decision)
         self._inject_memories_to_request(
             request,
@@ -417,7 +445,7 @@ class DeepMind:
             has_secretary_decision=has_secretary_decision,
         )
 
-        # 9. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
+        # 10. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
         try:
             memory_id_mapping = MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in long_term_memories], "id")
             angelmemory_context = {
@@ -958,6 +986,10 @@ class DeepMind:
                 config=self.config,
             )
 
+            self.logger.info(
+                f"[反思执行] 最终提示词 session={session_id} "
+                f"prompt_len={len(prompt)}\n{prompt}"
+            )
 
             # 调用小模型进行分析（在后台线程中同步调用）
             provider = self.context.get_provider_by_id(self.provider_id)

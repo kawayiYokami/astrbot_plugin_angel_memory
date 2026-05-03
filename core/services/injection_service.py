@@ -48,6 +48,7 @@ class DeepMindInjectionService:
             "1. **对话优先**：始终优先响应用户的当前对话内容，记忆和笔记仅作为补充参考。\n"
             "2. **绝对隐形**：严禁在回复中提及\"soul_state\"、\"系统提示\"、\"XML标签\"等来源信息。\n"
             "3. **状态保密**：soul_state 仅用于调整你的回复风格，绝不可在回复中泄露或讨论。\n"
+            "4. **自然默契**：你需要记得用户的一切，但要表现得像刚好理解用户所想，而不是正在翻看记忆看板。\n"
             "</instruction>"
         )
         system_context_parts.append(instruction)
@@ -82,6 +83,20 @@ class DeepMindInjectionService:
             system_context_parts.append(soul_state_content)
 
         short_term_memories = deepmind.session_memory_manager.get_session_memories(session_id)
+        user_profile_context = ""
+        if hasattr(deepmind, "user_profile_service") and deepmind.user_profile_service:
+            user_profile_context = deepmind.user_profile_service.format_session_profiles(
+                session_id
+            )
+            short_term_memories = deepmind.user_profile_service.filter_regular_memories(
+                session_id, short_term_memories
+            )
+
+        if user_profile_context:
+            system_context_parts.append(
+                f"<user_profiles>\n{user_profile_context}\n</user_profiles>"
+            )
+
         memory_context = deepmind.memory_injector.format_session_memories_for_prompt(
             short_term_memories
         )
