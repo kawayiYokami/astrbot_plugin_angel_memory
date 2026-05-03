@@ -986,6 +986,10 @@ class DeepMind:
                 config=self.config,
             )
 
+            self.logger.info(
+                f"[反思执行] 最终提示词 session={session_id} "
+                f"prompt_len={len(prompt)}\n{prompt}"
+            )
 
             # 调用小模型进行分析（在后台线程中同步调用）
             provider = self.context.get_provider_by_id(self.provider_id)
