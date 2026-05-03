@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import time
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from ...llm_memory.models.data_models import BaseMemory
@@ -8,7 +9,6 @@ from ...llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,
     extract_profile_attribute_from_tags,
     extract_user_id_from_tags,
-    extract_user_nickname_from_tags,
     is_user_id_tag,
     normalize_judgment,
 )
@@ -22,6 +22,7 @@ class UserProfileService:
         self.memory_sql_manager = memory_sql_manager
         self.logger = logger
         self._session_user_ids: Dict[str, List[str]] = {}
+        self._session_user_names: Dict[str, Dict[str, str]] = {}
         self._session_profiles: Dict[str, List[BaseMemory]] = {}
 
     def set_memory_sql_manager(self, memory_sql_manager) -> None:
@@ -32,8 +33,21 @@ class UserProfileService:
         chat_records: Sequence[Dict[str, Any]] | None,
         fallback_sender_id: str = "",
     ) -> List[str]:
+        user_ids, _ = UserProfileService.extract_current_users(
+            chat_records=chat_records,
+            fallback_sender_id=fallback_sender_id,
+        )
+        return user_ids
+
+    @staticmethod
+    def extract_current_users(
+        chat_records: Sequence[Dict[str, Any]] | None,
+        fallback_sender_id: str = "",
+        fallback_sender_name: str = "",
+    ) -> Tuple[List[str], Dict[str, str]]:
         seen = set()
         user_ids: List[str] = []
+        user_names: Dict[str, str] = {}
 
         for msg in chat_records or []:
             if not isinstance(msg, dict):
@@ -44,15 +58,21 @@ class UserProfileService:
             sender_id = str(msg.get("sender_id", "") or "").strip()
             if not UserProfileService._is_valid_user_id(sender_id):
                 continue
+            sender_name = str(msg.get("sender_name", "") or "").strip()
             if sender_id not in seen:
                 seen.add(sender_id)
                 user_ids.append(sender_id)
+            if sender_name:
+                user_names[sender_id] = sender_name
 
         fallback = str(fallback_sender_id or "").strip()
         if not user_ids and UserProfileService._is_valid_user_id(fallback):
             user_ids.append(fallback)
+            fallback_name = str(fallback_sender_name or "").strip()
+            if fallback_name:
+                user_names[fallback] = fallback_name
 
-        return user_ids
+        return user_ids, user_names
 
     @staticmethod
     def _is_valid_user_id(user_id: str) -> bool:
@@ -66,19 +86,26 @@ class UserProfileService:
         session_id: str,
         chat_records: Sequence[Dict[str, Any]] | None,
         fallback_sender_id: str = "",
+        fallback_sender_name: str = "",
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         sid = str(session_id or "").strip()
         if not sid:
             return []
 
-        user_ids = self.extract_current_user_ids(chat_records, fallback_sender_id)
+        user_ids, user_names = self.extract_current_users(
+            chat_records=chat_records,
+            fallback_sender_id=fallback_sender_id,
+            fallback_sender_name=fallback_sender_name,
+        )
         self._session_user_ids[sid] = user_ids
+        self._session_user_names[sid] = user_names
 
         if not user_ids or self.memory_sql_manager is None:
             self._session_profiles[sid] = []
             return []
 
+        started_at = time.time()
         try:
             profiles = await self.memory_sql_manager.recall_user_profiles(
                 user_ids=user_ids,
@@ -87,7 +114,10 @@ class UserProfileService:
         except Exception as e:
             if self.logger:
                 self.logger.warning(
-                    f"[用户画像] 画像召回失败 session={sid} 用户数={len(user_ids)} 错误={e}"
+                    f"[用户画像] 失败 任务=画像召回 触发条件=刷新当前批次画像 "
+                    f"session={sid} 用户数={len(user_ids)} "
+                    f"耗时毫秒={int((time.time() - started_at) * 1000)} 错误={e}",
+                    exc_info=True,
                 )
             profiles = []
 
@@ -134,14 +164,13 @@ class UserProfileService:
             return ""
 
         grouped: Dict[str, List[BaseMemory]] = defaultdict(list)
-        user_names: Dict[str, str] = {}
+        user_names = self._session_user_names.get(
+            str(session_id or "").strip(), {}
+        )
         for memory in profiles:
             user_id = extract_user_id_from_tags(getattr(memory, "tags", []))
             if not user_id or not extract_profile_attribute_from_tags(getattr(memory, "tags", [])):
                 continue
-            nickname = extract_user_nickname_from_tags(getattr(memory, "tags", []))
-            if nickname:
-                user_names[user_id] = nickname
             grouped[user_id].append(memory)
 
         lines = ["[用户画像]"]

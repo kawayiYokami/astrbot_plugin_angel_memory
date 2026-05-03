@@ -81,31 +81,36 @@ def test_user_profile_tags_require_user_id_and_attribute():
 
 def test_extract_current_user_ids_deduplicates_latest_batch():
     records = [
-        {"role": "user", "sender_id": "123456", "content": "a"},
+        {"role": "user", "sender_id": "123456", "sender_name": "小明", "content": "a"},
         {"role": "assistant", "sender_id": "assistant", "content": "b"},
-        {"role": "user", "sender_id": "123456", "content": "c"},
-        {"role": "user", "sender_id": "654321", "content": "d"},
+        {"role": "user", "sender_id": "123456", "sender_name": "明仔", "content": "c"},
+        {"role": "user", "sender_id": "654321", "sender_name": "小红", "content": "d"},
     ]
 
     assert UserProfileService.extract_current_user_ids(records) == [
         "123456",
         "654321",
     ]
+    user_ids, user_names = UserProfileService.extract_current_users(records)
+    assert user_ids == ["123456", "654321"]
+    assert user_names == {"123456": "明仔", "654321": "小红"}
 
 
 def test_format_profiles_includes_reasoning_and_filters_regular_duplicates():
     service = UserProfileService()
     service._session_user_ids["s1"] = ["123456"]
+    service._session_user_names["s1"] = {"123456": "当前昵称"}
     profile = _memory(
         "p1",
         "小明（123456）希望被称呼为阿明。",
-        ["小明", "123456", "用户别名"],
+        ["历史昵称", "123456", "用户别名"],
     )
     service._session_profiles["s1"] = [profile]
 
     formatted = service.format_session_profiles("s1")
     assert "[用户画像]" in formatted
-    assert "[小明（123456）]" in formatted
+    assert "[当前昵称（123456）]" in formatted
+    assert "[历史昵称（123456）]" not in formatted
     assert "[用户别名]" not in formatted
     assert "——因为用户在对话中明确说明。" in formatted
 

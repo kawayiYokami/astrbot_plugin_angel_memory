@@ -414,6 +414,7 @@ class DeepMind:
 
         # 8. 刷新当前批次用户画像通道
         try:
+            profile_refresh_started_at = time.time()
             memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
             if memory_sql_manager is not None:
                 self.user_profile_service.set_memory_sql_manager(memory_sql_manager)
@@ -422,10 +423,17 @@ class DeepMind:
                 session_id=session_id,
                 chat_records=unprocessed_chat_records,
                 fallback_sender_id=str(getattr(event, "sender_id", "") or ""),
+                fallback_sender_name=str(getattr(event, "sender_name", "") or ""),
                 memory_scope=memory_scope,
             )
         except Exception as e:
-            self.logger.warning(f"[用户画像] 刷新当前批次画像失败 session={session_id} 错误={e}")
+            elapsed_ms = int((time.time() - profile_refresh_started_at) * 1000)
+            self.logger.warning(
+                f"[用户画像] 失败 任务=刷新当前批次画像 触发条件=对话注入前 "
+                f"session={session_id} 当前批次消息数={len(unprocessed_chat_records)} "
+                f"耗时毫秒={elapsed_ms} 错误={e}",
+                exc_info=True,
+            )
 
         # 9. 注入记忆、笔记和灵魂状态到请求
         has_secretary_decision = bool(secretary_decision)
