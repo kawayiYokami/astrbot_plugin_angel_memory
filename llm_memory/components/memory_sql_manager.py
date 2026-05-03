@@ -17,6 +17,10 @@ except ImportError:
 
 from ..config.system_config import system_config
 from ..models.data_models import BaseMemory, MemoryType, ValidationError
+from ..utils.user_profile import (
+    PROFILE_ATTRIBUTE_TAGS,
+    is_user_profile_tags,
+)
 from ..service.memory_decay_policy import MemoryDecayConfig, MemoryDecayPolicy
 from .bm25_retriever import TantivyBM25Retriever
 from .hybrid_retrieval_engine import HybridRetrievalEngine
@@ -1790,6 +1794,82 @@ class MemorySqlManager:
 
     async def get_memories_by_ids(self, memory_ids: List[str]) -> List[BaseMemory]:
         return await asyncio.to_thread(self._get_memories_by_ids_sync, memory_ids)
+
+    async def recall_user_profiles(
+        self,
+        user_ids: List[str],
+        memory_scope: str,
+        limit_per_user: int = 30,
+    ) -> List[BaseMemory]:
+        return await asyncio.to_thread(
+            self._recall_user_profiles_sync,
+            user_ids,
+            memory_scope,
+            limit_per_user,
+        )
+
+    def _recall_user_profiles_sync(
+        self,
+        user_ids: List[str],
+        memory_scope: str,
+        limit_per_user: int = 30,
+    ) -> List[BaseMemory]:
+        user_tags = []
+        seen_users = set()
+        for raw in user_ids or []:
+            user_id = str(raw or "").strip()
+            if not user_id or user_id in seen_users:
+                continue
+            seen_users.add(user_id)
+            user_tags.append(user_id)
+        if not user_tags:
+            return []
+
+        scope_clause, scope_args = self._scope_sql(memory_scope, alias="mr")
+        user_placeholders = ",".join(["?" for _ in user_tags])
+        attr_tags = sorted(PROFILE_ATTRIBUTE_TAGS)
+        attr_placeholders = ",".join(["?" for _ in attr_tags])
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT mr.id
+                FROM memory_records mr
+                JOIN memory_tag_rel utr ON utr.memory_id = mr.id
+                JOIN global_tags ugt ON ugt.id = utr.tag_id
+                JOIN memory_tag_rel atr ON atr.memory_id = mr.id
+                JOIN global_tags agt ON agt.id = atr.tag_id
+                WHERE {scope_clause}
+                  AND ugt.name IN ({user_placeholders})
+                  AND agt.name IN ({attr_placeholders})
+                ORDER BY mr.is_active DESC, mr.updated_at DESC, mr.created_at DESC
+                """,
+                tuple([*scope_args, *user_tags, *attr_tags]),
+            ).fetchall()
+
+        ordered_ids = [str(row["id"]) for row in rows]
+        memories = self._get_memories_by_ids_sync(ordered_ids)
+        memory_map = {mem.id: mem for mem in memories if is_user_profile_tags(mem.tags)}
+
+        per_user_count = {user_id: 0 for user_id in user_tags}
+        result: List[BaseMemory] = []
+        for memory_id in ordered_ids:
+            mem = memory_map.get(memory_id)
+            if mem is None:
+                continue
+            matched_user = ""
+            tags = set(str(tag) for tag in (mem.tags or []))
+            for user_id in user_tags:
+                if user_id in tags:
+                    matched_user = user_id
+                    break
+            if not matched_user:
+                continue
+            if per_user_count[matched_user] >= int(limit_per_user):
+                continue
+            per_user_count[matched_user] += 1
+            result.append(mem)
+        return result
 
     async def merge_group(self, memory_ids: List[str]) -> Optional[BaseMemory]:
         return await asyncio.to_thread(self._merge_group_sync, memory_ids)

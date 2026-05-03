@@ -25,6 +25,7 @@ from .utils.query_processor import get_query_processor
 from .services.retrieval_service import DeepMindRetrievalService
 from .services.injection_service import DeepMindInjectionService
 from .services.sleep_service import DeepMindSleepService
+from .services.user_profile_service import UserProfileService
 from .utils.feedback_queue import get_feedback_queue
 
 try:
@@ -138,6 +139,10 @@ class DeepMind:
         self.query_processor = get_query_processor()
         self.retrieval_service = DeepMindRetrievalService(self)
         self.injection_service = DeepMindInjectionService(self)
+        self.user_profile_service = UserProfileService(
+            memory_sql_manager=self.plugin_context.get_component("memory_sql_manager"),
+            logger=self.logger,
+        )
         self.sleep_service = DeepMindSleepService(self)
         self._reflection_state_lock = asyncio.Lock()
         self._reflection_states: Dict[str, Dict[str, Any]] = {}
@@ -407,7 +412,22 @@ class DeepMind:
             except Exception as e:
                 self.logger.warning(f"获取灵魂状态值失败: {e}")
 
-        # 8. 注入记忆、笔记和灵魂状态到请求
+        # 8. 刷新当前批次用户画像通道
+        try:
+            memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
+            if memory_sql_manager is not None:
+                self.user_profile_service.set_memory_sql_manager(memory_sql_manager)
+            memory_scope = await self.plugin_context.resolve_memory_scope_from_event(event)
+            await self.user_profile_service.refresh_session_profiles(
+                session_id=session_id,
+                chat_records=unprocessed_chat_records,
+                fallback_sender_id=str(getattr(event, "sender_id", "") or ""),
+                memory_scope=memory_scope,
+            )
+        except Exception as e:
+            self.logger.warning(f"[用户画像] 刷新当前批次画像失败 session={session_id} 错误={e}")
+
+        # 9. 注入记忆、笔记和灵魂状态到请求
         has_secretary_decision = bool(secretary_decision)
         self._inject_memories_to_request(
             request,
@@ -417,7 +437,7 @@ class DeepMind:
             has_secretary_decision=has_secretary_decision,
         )
 
-        # 9. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
+        # 10. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
         try:
             memory_id_mapping = MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in long_term_memories], "id")
             angelmemory_context = {
