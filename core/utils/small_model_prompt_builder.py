@@ -246,12 +246,9 @@ class SmallModelPromptBuilder:
         Returns:
             完整的反思提示词字符串
         """
-        # 读取反思指南 - 使用 PathManager 统一管理路径
-        from ...llm_memory.utils.path_manager import PathManager
+        from ...llm_memory.prompts.prompt_assembler import PromptAssembler
 
-        guide_path = PathManager.get_prompt_path()
-        with open(guide_path, "r", encoding="utf-8") as f:
-            guide_content = f.read()
+        guide_content = PromptAssembler.build_memory_system_guide()
 
         # 构建数据上下文（仅包含实际数据，不包含指令）
         data_context = f"""

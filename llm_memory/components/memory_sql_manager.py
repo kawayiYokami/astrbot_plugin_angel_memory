@@ -1962,8 +1962,7 @@ class MemorySqlManager:
         self,
         useful_memory_ids: Optional[List[str]] = None,
         recalled_memory_ids: Optional[List[str]] = None,
-        new_memories: Optional[List[Dict[str, Any]]] = None,
-        merge_groups: Optional[List[List[str]]] = None,
+        memory_actions: Optional[List[Dict[str, Any]]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         resolved_scope = self._normalize_scope(memory_scope)
@@ -1979,30 +1978,140 @@ class MemorySqlManager:
             if useless_recalled:
                 await self.decay_recalled_but_useless(useless_recalled, delta=1)
 
-        for mem_data in (new_memories or []):
-            judgment = str(mem_data.get("judgment") or "").strip()
-            reasoning = str(mem_data.get("reasoning") or "").strip()
+        for action_data in (memory_actions or []):
+            action = str(action_data.get("action", "") or "").strip().lower()
+            memory_data = action_data.get("memory")
+            if not isinstance(memory_data, dict):
+                continue
+
+            judgment = str(memory_data.get("judgment") or "").strip()
+            reasoning = str(memory_data.get("reasoning") or "").strip()
             if not judgment:
                 continue
-            memory = await self.remember(
-                memory_type=str(mem_data.get("type") or "knowledge"),
-                judgment=judgment,
-                reasoning=reasoning,
-                tags=mem_data.get("tags") or [],
-                is_active=bool(mem_data.get("is_active", False)),
-                strength=mem_data.get("strength"),
-                memory_scope=resolved_scope,
-            )
-            created_memories.append(memory)
 
-        for group in (merge_groups or []):
-            if not isinstance(group, list) or len(group) < 2:
+            if action == "create":
+                memory = await self.remember(
+                    memory_type=str(memory_data.get("type") or "knowledge"),
+                    judgment=judgment,
+                    reasoning=reasoning,
+                    tags=memory_data.get("tags") or [],
+                    is_active=bool(memory_data.get("is_active", False)),
+                    strength=memory_data.get("strength"),
+                    memory_scope=resolved_scope,
+                )
+                created_memories.append(memory)
                 continue
-            merged = await self.merge_group(group)
+
+            if action not in {"merge", "updata"}:
+                continue
+
+            source_memory_ids = action_data.get("source_memory_ids", [])
+            if not isinstance(source_memory_ids, list) or not source_memory_ids:
+                continue
+
+            merged = await asyncio.to_thread(
+                self._merge_action_sync,
+                source_memory_ids,
+                memory_data,
+                resolved_scope,
+            )
             if merged:
                 created_memories.append(merged)
 
         return created_memories
+
+    def _merge_action_sync(
+        self,
+        source_memory_ids: List[str],
+        memory_data: Dict[str, Any],
+        resolved_scope: str,
+    ) -> Optional[BaseMemory]:
+        source_ids = list(
+            dict.fromkeys(
+                str(memory_id).strip()
+                for memory_id in (source_memory_ids or [])
+                if str(memory_id).strip()
+            )
+        )
+        if not source_ids:
+            return None
+
+        memories = self._get_memories_by_ids_sync(source_ids)
+        if not memories:
+            return None
+
+        non_public_scopes = {
+            str(mem.memory_scope or "public").strip()
+            for mem in memories
+            if str(mem.memory_scope or "public").strip() != "public"
+        }
+        if len(non_public_scopes) > 1:
+            raise ValidationError("禁止合并不同私有分类域的记忆")
+
+        merged_scope = next(iter(non_public_scopes), resolved_scope)
+        now = time.time()
+        new_memory = BaseMemory(
+            memory_type=self._to_memory_type(str(memory_data.get("type") or "knowledge")),
+            judgment=str(memory_data.get("judgment") or "").strip(),
+            reasoning=str(memory_data.get("reasoning") or "").strip(),
+            tags=self._normalize_tags(memory_data.get("tags") or []),
+            id=str(uuid.uuid4()),
+            strength=sum(mem.strength for mem in memories),
+            is_active=bool(memory_data.get("is_active", False)),
+            created_at=now,
+            memory_scope=merged_scope,
+            useful_count=sum(int(getattr(mem, "useful_count", 0) or 0) for mem in memories),
+            useful_score=max(float(getattr(mem, "useful_score", 0.0) or 0.0) for mem in memories),
+            last_recalled_at=max(float(getattr(mem, "last_recalled_at", 0.0) or 0.0) for mem in memories),
+        )
+
+        ids = [mem.id for mem in memories]
+        placeholders = ",".join(["?" for _ in ids])
+        with self._lock:
+            cache_snapshot = set(self._tag_names)
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO memory_records(
+                        id, memory_type, judgment, reasoning, strength, is_active,
+                        useful_count, useful_score, last_recalled_at,
+                        memory_scope, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_memory.id,
+                        new_memory.memory_type.value,
+                        new_memory.judgment,
+                        new_memory.reasoning,
+                        new_memory.strength,
+                        1 if new_memory.is_active else 0,
+                        new_memory.useful_count,
+                        new_memory.useful_score,
+                        new_memory.last_recalled_at,
+                        new_memory.memory_scope,
+                        new_memory.created_at,
+                        now,
+                    ),
+                )
+                self._upsert_tags_and_bind(conn, new_memory.id, new_memory.tags)
+                conn.execute(
+                    f"DELETE FROM memory_tag_rel WHERE memory_id IN ({placeholders})",
+                    tuple(ids),
+                )
+                conn.execute(
+                    f"DELETE FROM memory_records WHERE id IN ({placeholders})",
+                    tuple(ids),
+                )
+            except Exception:
+                with self._lock:
+                    self._tag_names = cache_snapshot
+                raise
+        self._sync_memory_fts_batch_sync(
+            upsert_ids=[new_memory.id],
+            delete_ids=ids,
+        )
+        return new_memory
 
     def close(self) -> None:
         with self._lock:

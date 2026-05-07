@@ -4,6 +4,7 @@
 负责将记忆格式化为统一的文本格式，便于阅读和理解。
 """
 
+from types import SimpleNamespace
 from typing import List, Dict, Any, Optional
 import time
 
@@ -31,12 +32,13 @@ class MemoryFormatter:
         # 处理 MemoryItem 对象的 memory_type 属性
 
         # 格式化论点
-        judgment = memory.judgment.strip()
+        judgment = str(getattr(memory, "judgment", "") or "").strip()
 
         # 格式化理由
         reasoning = ""
-        if memory.reasoning and memory.reasoning.strip():
-            reasoning = f"\n——因为{memory.reasoning.strip()}"
+        memory_reasoning = str(getattr(memory, "reasoning", "") or "")
+        if memory_reasoning and memory_reasoning.strip():
+            reasoning = f"\n——因为{memory_reasoning.strip()}"
 
         # 格式化时间（相对时间）
         time_suffix = ""
@@ -71,7 +73,14 @@ class MemoryFormatter:
         grouped_memories = {}
         for memory in memories:
             # 处理 MemoryItem 对象的 memory_type 属性
-            type_value = memory.memory_type
+            type_value = (
+                memory.memory_type.value
+                if hasattr(memory.memory_type, "value")
+                else memory.memory_type
+            )
+            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(
+                type_value, str(type_value or "").lower()
+            )
             type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
             grouped_memories.setdefault(type_name, []).append(
                 MemoryFormatter.format_single_memory(memory)
@@ -82,7 +91,7 @@ class MemoryFormatter:
     def format_memories_for_prompt(
         memories: List[MemoryItem],
         useful_memory_ids: Optional[List[str]] = None,
-        new_memories: Optional[List[Dict[str, Any]]] = None,
+        action_memories: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         格式化记忆用于提示词
@@ -90,12 +99,12 @@ class MemoryFormatter:
         Args:
             memories: 记忆列表
             useful_memory_ids: 有用记忆ID列表
-            new_memories: 新记忆列表
+            action_memories: 动作中产出的新记忆列表
 
         Returns:
             格式化后的记忆文本
         """
-        if not memories and not new_memories:
+        if not memories and not action_memories:
             return ""
 
         # 创建ID到记忆的映射
@@ -109,17 +118,18 @@ class MemoryFormatter:
             )
 
         # 添加新记忆（使用列表推导式）
-        if new_memories:
+        if action_memories:
             memories_to_format.extend(
-                MemoryItem(
+                SimpleNamespace(
                     id=nm.get("id", "new"),
                     memory_type=nm.get("type", "knowledge"),
                     judgment=nm.get("judgment", ""),
                     reasoning=nm.get("reasoning", ""),
                     tags=nm.get("tags", []),
                     strength=nm.get("strength", 0.5),
+                    created_at=time.time(),
                 )
-                for nm in new_memories
+                for nm in action_memories
             )
 
         if not memories_to_format:
@@ -154,7 +164,7 @@ class MemoryFormatter:
 
         for memory in memories:
             # 标准化judgment文本用于比较
-            normalized_judgment = memory.judgment.strip().lower()
+            normalized_judgment = str(getattr(memory, "judgment", "") or "").strip().lower()
             if normalized_judgment not in seen_judgments:
                 seen_judgments.add(normalized_judgment)
                 deduplicated.append(memory)
@@ -213,7 +223,14 @@ class MemoryFormatter:
         grouped = {}
         for memory in memories:
             # 处理 MemoryItem 对象的 memory_type 属性
-            type_value = memory.memory_type
+            type_value = (
+                memory.memory_type.value
+                if hasattr(memory.memory_type, "value")
+                else memory.memory_type
+            )
+            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(
+                type_value, str(type_value or "").lower()
+            )
             type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
             grouped.setdefault(type_name, []).append(memory)
 
@@ -223,10 +240,10 @@ class MemoryFormatter:
             for i, memory in enumerate(memory_list, 1):
                 # 生成短ID并格式化记忆
                 short_id = MemoryIDResolver.generate_short_id(memory.id)
-                judgment = memory.judgment.strip()
+                judgment = str(getattr(memory, "judgment", "") or "").strip()
                 reasoning = (
-                    f"\n   ——因为{memory.reasoning.strip()}"
-                    if memory.reasoning and memory.reasoning.strip()
+                    f"\n   ——因为{str(getattr(memory, 'reasoning', '') or '').strip()}"
+                    if str(getattr(memory, "reasoning", "") or "").strip()
                     else ""
                 )
                 display_lines.append(f"\n{i}. [id:{short_id}]{judgment}{reasoning}")

@@ -88,19 +88,29 @@ class SimpleMemoryRuntime:
         )
         return memories
 
+    async def get_memories_by_ids(
+        self,
+        memory_ids: List[str],
+        memory_scope: Optional[str] = None,
+    ) -> List[BaseMemory]:
+        memories = await self._manager.get_memories_by_ids(memory_ids)
+        return self._filter_and_order_memories(
+            memories=memories,
+            memory_ids=memory_ids,
+            memory_scope=memory_scope,
+        )
+
     async def feedback(
         self,
         useful_memory_ids: Optional[List[str]] = None,
         recalled_memory_ids: Optional[List[str]] = None,
-        new_memories: Optional[List[dict]] = None,
-        merge_groups: Optional[List[List[str]]] = None,
+        memory_actions: Optional[List[dict]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         return await self._manager.process_feedback(
             useful_memory_ids=useful_memory_ids,
             recalled_memory_ids=recalled_memory_ids,
-            new_memories=new_memories,
-            merge_groups=merge_groups,
+            memory_actions=memory_actions,
             memory_scope=memory_scope,
         )
 
@@ -109,6 +119,34 @@ class SimpleMemoryRuntime:
 
     def shutdown(self) -> None:
         return None
+
+    @staticmethod
+    def _filter_and_order_memories(
+        memories: List[BaseMemory],
+        memory_ids: List[str],
+        memory_scope: Optional[str] = None,
+    ) -> List[BaseMemory]:
+        scope = str(memory_scope or "").strip()
+        memory_map = {str(mem.id): mem for mem in memories or [] if getattr(mem, "id", None)}
+        ordered: List[BaseMemory] = []
+        seen = set()
+        for raw_id in memory_ids or []:
+            memory_id = str(raw_id or "").strip()
+            if not memory_id or memory_id in seen:
+                continue
+            seen.add(memory_id)
+            memory = memory_map.get(memory_id)
+            if memory is None:
+                continue
+            if scope:
+                mem_scope = str(getattr(memory, "memory_scope", "public") or "public").strip()
+                if scope == "public":
+                    if mem_scope != "public":
+                        continue
+                elif mem_scope not in {scope, "public"}:
+                    continue
+            ordered.append(memory)
+        return ordered
 
     @staticmethod
     def _map_type_to_cn(memory_type: str) -> str:

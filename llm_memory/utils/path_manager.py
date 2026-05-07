@@ -173,22 +173,26 @@ class PathManager:
         """获取 simple memory 数据库路径（与 provider 无关）"""
         return self.get_memory_center_index_dir() / "simple_memory.db"
 
-    # === 对外路径方法（仅提示词路径） ===
+    # === 对外路径方法（提示词路径） ===
 
     @classmethod
     def get_prompt_path(cls) -> Path:
-        """获取提示词文件路径（插件根目录的唯一对外用途）
+        """获取旧提示词主文件路径。
 
         Returns:
-            提示词文件路径（始终返回异步思考提示词）
+            历史主文件路径
         """
-        # 总是返回异步思考提示词
         return (
             cls._get_plugin_root()
             / "llm_memory"
             / "prompts"
             / "memory_system_guide_async.md"
         )
+
+    @classmethod
+    def get_prompt_sections_dir(cls) -> Path:
+        """获取模块化提示词 sections 目录。"""
+        return cls._get_plugin_root() / "llm_memory" / "prompts" / "sections"
 
     # === 便捷方法 ===
 

@@ -1,7 +1,9 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
+
+from ...llm_memory.models.data_models import BaseMemory
 
 
 class DeepMindInjectionService:
@@ -30,13 +32,71 @@ class DeepMindInjectionService:
         filled_length = int(round(normalized_value * bar_length))
         return "█" * filled_length + " " * (bar_length - filled_length)
 
-    def inject_memories_to_request(
+    async def refresh_session_memories(
+        self,
+        session_id: str,
+        memory_scope: str = "public",
+    ) -> List[BaseMemory]:
+        """按短期仓引用刷新长期记忆内容，并清理失效引用。"""
+        deepmind = self.deepmind
+        memory_ids = deepmind.session_memory_manager.get_session_memory_ids(session_id)
+        if not memory_ids or not deepmind.memory_system:
+            return []
+
+        try:
+            memories = await deepmind.memory_system.get_memories_by_ids(
+                memory_ids,
+                memory_scope=memory_scope,
+            )
+        except Exception as e:
+            deepmind.logger.warning(
+                f"[短期记忆] 失败 任务=批量回查 触发条件=注入前刷新 "
+                f"session={session_id} 引用数={len(memory_ids)} 错误={e}",
+                exc_info=True,
+            )
+            return []
+
+        found_ids = {str(getattr(memory, "id", "") or "").strip() for memory in memories}
+        missing_ids = [
+            memory_id
+            for memory_id in memory_ids
+            if str(memory_id or "").strip()
+            and str(memory_id or "").strip() not in found_ids
+        ]
+        removed_count = deepmind.session_memory_manager.remove_memory_ids_from_session(
+            session_id,
+            missing_ids,
+        )
+        if removed_count:
+            deepmind.logger.debug(
+                f"[短期记忆] 清理失效引用 session={session_id} count={removed_count}"
+            )
+
+        memory_map = {
+            str(getattr(memory, "id", "") or "").strip(): memory
+            for memory in memories
+            if str(getattr(memory, "id", "") or "").strip()
+        }
+        ordered_memories = []
+        seen = set()
+        for memory_id in memory_ids:
+            mid = str(memory_id or "").strip()
+            if not mid or mid in seen:
+                continue
+            seen.add(mid)
+            memory = memory_map.get(mid)
+            if memory is not None:
+                ordered_memories.append(memory)
+        return ordered_memories
+
+    async def inject_memories_to_request(
         self,
         request: ProviderRequest,
         session_id: str,
         note_context: str,
         soul_state_values: Optional[Dict[str, Any]] = None,
         has_secretary_decision: bool = False,
+        memory_scope: str = "public",
     ) -> None:
         deepmind = self.deepmind
         system_context_parts = []
@@ -82,7 +142,10 @@ class DeepMindInjectionService:
             )
             system_context_parts.append(soul_state_content)
 
-        short_term_memories = deepmind.session_memory_manager.get_session_memories(session_id)
+        short_term_memories = await self.refresh_session_memories(
+            session_id=session_id,
+            memory_scope=memory_scope,
+        )
         user_profile_context = ""
         if hasattr(deepmind, "user_profile_service") and deepmind.user_profile_service:
             user_profile_context = deepmind.user_profile_service.format_session_profiles(

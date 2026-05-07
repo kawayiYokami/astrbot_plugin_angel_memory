@@ -2,7 +2,7 @@
 会话工作记忆缓存模块
 
 负责管理所有会话的工作记忆缓存，支持并发和线程安全。
-短期仓只保存近期召回或新生成的少量记忆，并按类型容量裁剪。
+短期仓只保存近期召回或新生成的长期记忆引用，并按类型容量裁剪。
 """
 
 import threading
@@ -15,16 +15,16 @@ from .config import MemoryConstants, MemoryCapacityConfig
 
 @dataclass
 class MemoryItem:
-    """记忆项数据结构"""
+    """会话短期仓中的长期记忆引用。
+
+    这里不保存 judgment/reasoning/tags 等事实字段，注入前必须按 id 回查长期库。
+    """
 
     id: str
     memory_type: str
-    judgment: str
-    reasoning: str
-    tags: List[str]
-    strength: int = 0
     priority_points: int = 3  # 缓存优先级，当前用于容量裁剪时的稳定排序
-    created_at: float = 0.0  # 创建时间戳
+    added_at: float = 0.0  # 进入短期仓的时间戳
+    user_id: str = ""  # 仅用于用户相关容量均衡，不作为事实来源
 
 
 class SessionMemory:
@@ -49,10 +49,10 @@ class SessionMemory:
         self.capacity_multiplier = capacity_multiplier
         self.lock = threading.Lock()
 
-        # 使用列表存储记忆，按缓存优先级和时间戳裁剪
+        # 使用列表存储记忆引用，按缓存优先级和进入时间裁剪
         self.memories = []  # List[MemoryItem]
 
-        # 记忆ID到记忆项的映射（用于快速查找）
+        # 记忆ID到记忆引用的映射（用于快速查找）
         self.memory_map = {}  # Dict[str, MemoryItem]
 
 
@@ -62,7 +62,7 @@ class SessionMemory:
         将记忆放入会话工作缓存
 
         Args:
-            memories: 记忆列表
+            memories: 长期记忆列表
         """
         with self.lock:
             # 按类型分组记忆
@@ -132,12 +132,7 @@ class SessionMemory:
         Returns:
             是否为昵称/印象记忆
         """
-        if not hasattr(memory, "tags") or not isinstance(memory.tags, list):
-            return False
-
-        # 检查是否包含"昵称"、"印象"等标签
-        nickname_tags = ["昵称", "印象", "称呼", "名字"]
-        return any(tag in memory.tags for tag in nickname_tags)
+        return int(getattr(memory, "priority_points", 3) or 3) > 5
 
     def _is_user_info_memory(self, memory: MemoryItem) -> bool:
         """
@@ -149,13 +144,7 @@ class SessionMemory:
         Returns:
             是否为用户相关信息记忆
         """
-        if not hasattr(memory, "tags") or not isinstance(memory.tags, list):
-            return False
-
-        user_tags = [tag for tag in memory.tags if tag == "用户"]
-        id_tags = [tag for tag in memory.tags if tag.isdigit() and len(tag) > 5]
-
-        return len(user_tags) > 0 and len(id_tags) > 0
+        return bool(str(getattr(memory, "user_id", "") or "").strip())
 
     def _add_user_info_memories_with_capacity_management(self, user_info_memories: List[MemoryItem]) -> None:
         """
@@ -175,12 +164,12 @@ class SessionMemory:
         user_remaining_capacity = self._calculate_user_remaining_capacity(current_user_memories, total_capacity)
 
         # 高优先级、较新的用户信息优先进入短期仓
-        user_info_memories.sort(key=lambda x: (-x.priority_points, x.created_at))
+        user_info_memories.sort(key=lambda x: (-x.priority_points, x.added_at))
 
         # 为每个用户分配记忆
         for memory in user_info_memories:
             user_id = self._extract_user_id(memory)
-            if user_id and user_remaining_capacity.get(user_id, 0) > 0:
+            if user_id and user_remaining_capacity[user_id] > 0:
                 self._add_memory_item(memory)
                 user_remaining_capacity[user_id] -= 1
             # 用户容量已满时直接跳过，不添加记忆
@@ -242,32 +231,6 @@ class SessionMemory:
         # 清理容量
         self._cleanup_by_capacity(memory_type)
 
-    @staticmethod
-    def _safe_parse_created_at(value) -> float:
-        """安全解析created_at为float时间戳，兼容脏数据"""
-        import time
-
-        now = time.time()
-        if value is None:
-            return now
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return now
-            try:
-                return float(stripped)
-            except ValueError:
-                pass
-            try:
-                from datetime import datetime
-
-                return datetime.fromisoformat(stripped).timestamp()
-            except (ValueError, AttributeError):
-                pass
-        return now
-
     def _create_memory_item(self, memory: BaseMemory, memory_type: str) -> MemoryItem:
         """
         创建记忆项对象
@@ -279,15 +242,19 @@ class SessionMemory:
         Returns:
             记忆项对象
         """
+        tags = getattr(memory, "tags", [])
+        if not isinstance(tags, list):
+            tags = []
+
+        nickname_tags = {"昵称", "印象", "称呼", "名字", "用户别名"}
+        priority_points = 6 if any(tag in nickname_tags for tag in tags) else 3
+
         return MemoryItem(
-            id=memory.id,
+            id=str(getattr(memory, "id", "") or "").strip(),
             memory_type=memory_type,
-            judgment=getattr(memory, "judgment", ""),
-            reasoning=getattr(memory, "reasoning", ""),
-            tags=getattr(memory, "tags", []),
-            strength=getattr(memory, "strength", 0),
-            priority_points=3,
-            created_at=self._safe_parse_created_at(getattr(memory, "created_at", None)),  # 安全解析创建时间
+            priority_points=priority_points,
+            added_at=time.time(),
+            user_id=self._extract_user_id_from_tags(tags),
         )
 
     def _add_memory_item(self, memory_item: MemoryItem) -> None:
@@ -297,13 +264,16 @@ class SessionMemory:
         Args:
             memory_item: 记忆项对象
         """
-        # 如果记忆已存在，先移除旧的
+        if not memory_item.id:
+            return
+
+        # 如果引用已存在，先移除旧的
         if memory_item.id in self.memory_map:
             old_memory = self.memory_map[memory_item.id]
             if old_memory in self.memories:
                 self.memories.remove(old_memory)
 
-        # 添加新记忆
+        # 添加新引用
         self.memories.append(memory_item)
         self.memory_map[memory_item.id] = memory_item
 
@@ -336,8 +306,8 @@ class SessionMemory:
         # 计算需要删除的数量
         excess_count = len(type_memories) - capacity
 
-        # 按优先级升序、时间戳升序排序（优先级最低且最旧的排在前面）
-        type_memories.sort(key=lambda x: (x.priority_points, x.created_at))
+        # 按优先级升序、进入时间升序排序（优先级最低且最旧的排在前面）
+        type_memories.sort(key=lambda x: (x.priority_points, x.added_at))
 
         # 删除最差的记忆
         for i in range(excess_count):
@@ -372,7 +342,7 @@ class SessionMemory:
         # 清理普通知识记忆
         regular_excess = len(regular_memories) - regular_capacity
         if regular_excess > 0:
-            regular_memories.sort(key=lambda x: (x.priority_points, x.created_at))
+            regular_memories.sort(key=lambda x: (x.priority_points, x.added_at))
             for i in range(regular_excess):
                 memory_to_remove = regular_memories[i]
                 if memory_to_remove in self.memories:
@@ -411,7 +381,7 @@ class SessionMemory:
         # 为每个用户清理记忆
         for user_id, memories in user_groups.items():
             # 按缓存优先级排序，优先保留高优先级记忆
-            memories.sort(key=lambda x: (-x.priority_points, x.created_at))
+            memories.sort(key=lambda x: (-x.priority_points, x.added_at))
 
             # 删除超出的记忆
             for memory in memories[capacity_per_user:]:
@@ -430,10 +400,14 @@ class SessionMemory:
         Returns:
             用户ID字符串，如果未找到返回空字符串
         """
-        if hasattr(memory, "tags") and isinstance(memory.tags, list):
-            for tag in memory.tags:
-                if tag.isdigit() and len(tag) > 5:
-                    return tag
+        return str(getattr(memory, "user_id", "") or "").strip()
+
+    @staticmethod
+    def _extract_user_id_from_tags(tags: List[str]) -> str:
+        for tag in tags or []:
+            text = str(tag or "").strip()
+            if text.isdigit() and len(text) > 5:
+                return text
         return ""
 
     def get_memories(self) -> List[MemoryItem]:
@@ -445,6 +419,23 @@ class SessionMemory:
         """
         with self.lock:
             return list(self.memories)
+
+    def get_memory_ids(self) -> List[str]:
+        """获取短期仓中的长期记忆 ID，保持当前引用顺序。"""
+        with self.lock:
+            return [memory.id for memory in self.memories if memory.id]
+
+    def remove_memory_ids(self, memory_ids: List[str]) -> int:
+        """从短期仓移除指定失效引用。"""
+        ids = {str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()}
+        if not ids:
+            return 0
+        with self.lock:
+            before = len(self.memories)
+            self.memories = [memory for memory in self.memories if memory.id not in ids]
+            for memory_id in ids:
+                self.memory_map.pop(memory_id, None)
+            return before - len(self.memories)
 
 
 
@@ -589,6 +580,29 @@ class SessionMemoryManager:
             if session_id in self.sessions:
                 return self.sessions[session_id].get_memories()
             return []
+
+    def get_session_memory_ids(self, session_id: str) -> List[str]:
+        """
+        获取指定会话短期仓中的长期记忆 ID。
+        """
+        with self.lock:
+            if session_id in self.sessions:
+                return self.sessions[session_id].get_memory_ids()
+            return []
+
+    def remove_memory_ids_from_session(
+        self, session_id: str, memory_ids: List[str]
+    ) -> int:
+        """
+        从指定会话短期仓移除失效记忆引用。
+
+        Returns:
+            实际移除的引用数量。
+        """
+        with self.lock:
+            if session_id in self.sessions:
+                return self.sessions[session_id].remove_memory_ids(memory_ids)
+            return 0
 
 
 

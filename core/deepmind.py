@@ -267,23 +267,25 @@ class DeepMind:
         """创建一个10格的文本进度条"""
         return self.injection_service.create_tendency_bar(normalized_value)
 
-    def _inject_memories_to_request(
+    async def _inject_memories_to_request(
         self,
         request: ProviderRequest,
         session_id: str,
         note_context: str,
         soul_state_values: Optional[Dict[str, Any]] = None,
         has_secretary_decision: bool = False,
+        memory_scope: str = "public",
     ) -> None:
         """
         将记忆、笔记和灵魂状态统一注入到LLM请求中（使用 extra_user_content_parts）
         """
-        self.injection_service.inject_memories_to_request(
+        await self.injection_service.inject_memories_to_request(
             request,
             session_id,
             note_context,
             soul_state_values,
             has_secretary_decision,
+            memory_scope=memory_scope,
         )
 
     def _clean_note_content(self, content: str) -> str:
@@ -437,12 +439,13 @@ class DeepMind:
 
         # 9. 注入记忆、笔记和灵魂状态到请求
         has_secretary_decision = bool(secretary_decision)
-        self._inject_memories_to_request(
+        await self._inject_memories_to_request(
             request,
             session_id,
             note_context,
             soul_state_values,
             has_secretary_decision=has_secretary_decision,
+            memory_scope=memory_scope,
         )
 
         # 10. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
@@ -513,20 +516,26 @@ class DeepMind:
         memories_json = []
         for memory in memories:
             # 处理枚举类型的memory_type（兼容BaseMemory和MemoryItem）
+            raw_memory_type = getattr(memory, "memory_type", "")
             memory_type = (
-                memory.memory_type.value
-                if hasattr(memory.memory_type, "value")
-                else memory.memory_type
+                raw_memory_type.value
+                if hasattr(raw_memory_type, "value")
+                else raw_memory_type
             )
 
             memory_data = {
-                "id": memory.id,
+                "id": getattr(memory, "id", ""),
                 "type": memory_type,
-                "strength": memory.strength,
-                "judgment": memory.judgment,
-                "reasoning": memory.reasoning,
-                "tags": memory.tags,
             }
+            if hasattr(memory, "priority_points"):
+                memory_data["priority_points"] = getattr(memory, "priority_points", 0)
+            if hasattr(memory, "added_at"):
+                memory_data["added_at"] = getattr(memory, "added_at", 0.0)
+            if hasattr(memory, "user_id"):
+                memory_data["user_id"] = getattr(memory, "user_id", "")
+            for field_name in ("strength", "judgment", "reasoning", "tags"):
+                if hasattr(memory, field_name):
+                    memory_data[field_name] = getattr(memory, field_name)
             memories_json.append(memory_data)
 
         return memories_json
@@ -1068,29 +1077,37 @@ class DeepMind:
 
             # --- 开始最终修正 ---
 
-            # 1. 从 feedback_data 中获取原始的、按类型分组的新记忆字典
-            new_memories_raw = feedback_data.get("new_memories", {})
-
-            # 2. 调用已有的工具函数，将其转换为底层服务期望的"扁平列表"格式
-            new_memories_normalized = MemoryIDResolver.normalize_new_memories_format(
-                new_memories_raw, self.logger
+            memory_actions_raw = feedback_data.get("memory_actions", [])
+            memory_actions_normalized = MemoryIDResolver.normalize_memory_actions_format(
+                memory_actions_raw, self.logger
             )
 
+            for action in memory_actions_normalized:
+                if action.get("action") not in {"merge", "updata"}:
+                    continue
+                source_memory_ids = action.get("source_memory_ids", [])
+                action["source_memory_ids"] = [
+                    memory_id_mapping.get(memory_id, memory_id)
+                    for memory_id in source_memory_ids
+                ]
+
             # --- 记忆生成限制 (基于灵魂 ImpressionDepth) ---
-            if hasattr(self, "soul") and self.soul and new_memories_normalized:
+            if hasattr(self, "soul") and self.soul and memory_actions_normalized:
                 # 获取允许生成的最大数量
                 impression_limit = int(self.soul.get_value("ImpressionDepth"))
-                original_count = len(new_memories_normalized)
+                original_count = len(memory_actions_normalized)
 
                 # 截断列表
                 if original_count > impression_limit:
-                    new_memories_normalized = new_memories_normalized[:impression_limit]
+                    memory_actions_normalized = memory_actions_normalized[:impression_limit]
                     self.logger.info(f"✂️ 记忆截断: 灵魂仅允许记录 {impression_limit} 条 (原 {original_count} 条)")
 
                 # 为每条新记忆注入当前的灵魂快照
                 snapshot = self.soul.get_snapshot()
-                for mem in new_memories_normalized:
-                    mem["state_snapshot"] = snapshot
+                for action in memory_actions_normalized:
+                    memory = action.get("memory")
+                    if isinstance(memory, dict):
+                        memory["state_snapshot"] = snapshot
 
             # --- 修正结束 ---
 
@@ -1107,8 +1124,7 @@ class DeepMind:
                 newly_created_memories = await self.memory_system.feedback(
                     useful_memory_ids=feedback_data.get("useful_memory_ids", []),
                     recalled_memory_ids=[mem.id for mem in (long_term_memories or []) if getattr(mem, "id", None)],
-                    new_memories=new_memories_normalized,  # <--- 使用转换后的数据
-                    merge_groups=feedback_data.get("merge_groups", []),
+                    memory_actions=memory_actions_normalized,
                     memory_scope=memory_scope,
                 )
 
