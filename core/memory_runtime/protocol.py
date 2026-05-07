@@ -51,12 +51,18 @@ class MemoryRuntime(Protocol):
     ) -> List[BaseMemory]:
         ...
 
+    async def get_memories_by_ids(
+        self,
+        memory_ids: List[str],
+        memory_scope: Optional[str] = None,
+    ) -> List[BaseMemory]:
+        ...
+
     async def feedback(
         self,
         useful_memory_ids: Optional[List[str]] = None,
         recalled_memory_ids: Optional[List[str]] = None,
-        new_memories: Optional[List[dict]] = None,
-        merge_groups: Optional[List[List[str]]] = None,
+        memory_actions: Optional[List[dict]] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         ...

@@ -436,6 +436,7 @@ class MemoryManager:
     async def merge_memories(
         self,
         memories_to_merge_ids: List[str],
+        new_memory_type: str,
         new_judgment: str,
         new_reasoning: str,
         new_tags: List[str],
@@ -447,13 +448,14 @@ class MemoryManager:
         英文翻译：LLM-driven memory abstraction process where similar memories are autonomously merged into a more abstract, refined new memory
 
         合并规则：
-        - 新记忆强度 = 所有被合并记忆强度之和
-        - 新记忆类型默认为知识记忆
-        - 删除所有被合并的旧记忆
-        - 不记录合并来源，新记忆独立存在
+        - 新记忆强度 = 所有被替换旧记忆强度之和
+        - 支持单条旧记忆更新，也支持多条旧记忆合并
+        - 删除所有被替换的旧记忆
+        - 最终保留的是本次动作携带的新记忆内容
 
         Args:
-            memories_to_merge_ids: 被合并的旧记忆ID列表
+            memories_to_merge_ids: 被替换/合并的旧记忆ID列表
+            new_memory_type: 新记忆类型
             new_judgment: 新记忆的判断/论断
             new_reasoning: 新记忆的理由
             new_tags: 新记忆的标签列表
@@ -464,14 +466,21 @@ class MemoryManager:
         Raises:
             ValidationError: 如果输入参数无效或合并过程失败
         """
-        if not memories_to_merge_ids or len(memories_to_merge_ids) < 2:
-            raise ValidationError("至少需要2个记忆ID才能进行合并")
+        normalized_source_ids = list(
+            dict.fromkeys(
+                str(memory_id).strip()
+                for memory_id in (memories_to_merge_ids or [])
+                if str(memory_id).strip()
+            )
+        )
+        if not normalized_source_ids:
+            raise ValidationError("至少需要1个有效记忆ID才能进行合并")
 
         # 步骤 1: 加载所有待合并记忆
         memories_to_merge = []
         total_strength = 0
 
-        for memory_id in memories_to_merge_ids:
+        for memory_id in normalized_source_ids:
             # 从存储中获取记忆元数据
             try:
                 memory_results = self.collection.get(ids=[memory_id])
@@ -497,8 +506,8 @@ class MemoryManager:
                 self.logger.error(f"加载记忆 {memory_id} 失败: {str(e)}")
                 continue
 
-        if len(memories_to_merge) < 2:
-            raise ValidationError(f"只有 {len(memories_to_merge)} 个有效记忆，无法合并")
+        if len(memories_to_merge) < 1:
+            raise ValidationError("没有找到可被替换的有效旧记忆")
 
         non_public_scopes = {
             str(getattr(memory_obj, "memory_scope", "public") or "public").strip()
@@ -510,20 +519,21 @@ class MemoryManager:
                 "禁止合并来自不同私有分类域的记忆：检测到多个非 public memory_scope。"
             )
         merged_scope = next(iter(non_public_scopes), "public")
+        try:
+            target_memory_type = MemoryType(str(new_memory_type or "").strip())
+        except ValueError:
+            target_memory_type = MemoryType.KNOWLEDGE
 
-        # 步骤 2: 创建新记忆（默认为知识记忆）
-        # 使用去重后的强度，避免相同ID重复累加
-        unique_strength = sum(
-            memory_obj.strength for memory_obj in set(memories_to_merge)
-        )
+        # 步骤 2: 创建最终新记忆
+        merged_strength = sum(memory_obj.strength for memory_obj in memories_to_merge)
 
         # Fix 4: 不再设置 is_consolidated — 该字段已通过 comprehensive_recall 迁移删除
         new_memory = BaseMemory(
-            memory_type=MemoryType.KNOWLEDGE,
+            memory_type=target_memory_type,
             judgment=new_judgment,
             reasoning=new_reasoning,
             tags=new_tags,
-            strength=unique_strength,  # 强度等于去重后记忆之和
+            strength=merged_strength,
             memory_scope=merged_scope,
             is_consolidated=False,  # 读取侧全部迁移前先保留兼容字段
         )
@@ -532,10 +542,10 @@ class MemoryManager:
         await self.store.remember(self.collection, new_memory)
 
         # 步骤 4: 删除所有旧记忆
-        self.collection.delete(ids=memories_to_merge_ids)
+        self.collection.delete(ids=normalized_source_ids)
 
         self.logger.debug(
-            f"成功合并 {len(memories_to_merge)} 条记忆为新记忆 '{new_judgment}'，强度为 {total_strength}"
+            f"成功用新记忆替换/合并 {len(memories_to_merge)} 条旧记忆，新 judgment='{new_judgment}'，累计强度={total_strength}"
         )
 
         return new_memory
@@ -546,8 +556,7 @@ class MemoryManager:
         self,
         useful_memory_ids: List[str] = None,
         recalled_memory_ids: List[str] = None,
-        new_memories: List[dict] = None,
-        merge_groups: List[List[str]] = None,
+        memory_actions: List[dict] = None,
         memory_handlers: Dict[str, object] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
@@ -558,14 +567,7 @@ class MemoryManager:
 
         Args:
             useful_memory_ids: 有用的回忆ID列表
-            new_memories: 新记忆列表，每个元素格式：
-                {
-                    "type": "knowledge/event/skill/emotional/task",
-                    "judgment": "论断",
-                    "reasoning": "解释",
-                    "tags": ["标签1", "标签2"]
-                }
-            merge_groups: 要合并的记忆ID组列表，每组是要合并的ID列表
+            memory_actions: 记忆动作列表
             memory_handlers: 记忆处理器字典，用于创建新记忆
 
         Returns:
@@ -573,23 +575,24 @@ class MemoryManager:
 
         功能：
         1. 标记有用回忆并强化
-        2. 批量创建新记忆
-        3. 合并重复记忆
+        2. 执行新增动作
+        3. 执行合并动作
         """
         if self.memory_sql_manager is not None:
             result = await self.memory_sql_manager.process_feedback(
                 useful_memory_ids=useful_memory_ids,
                 recalled_memory_ids=recalled_memory_ids,
-                new_memories=new_memories,
-                merge_groups=merge_groups,
+                memory_actions=memory_actions,
                 memory_scope=memory_scope,
             )
-            # 修复：中央库模式合并记忆时，同步删除向量索引并为合并记忆写入新向量
-            if merge_groups and self.memory_index_collection is not None:
+            if self.memory_index_collection is not None:
                 ids_to_delete = []
-                for group in merge_groups:
-                    if isinstance(group, list):
-                        ids_to_delete.extend([str(mid) for mid in group if mid])
+                for action in (memory_actions or []):
+                    if str(action.get("action", "")).strip().lower() not in {"merge", "updata"}:
+                        continue
+                    source_memory_ids = action.get("source_memory_ids", [])
+                    if isinstance(source_memory_ids, list):
+                        ids_to_delete.extend([str(mid) for mid in source_memory_ids if str(mid).strip()])
 
                 if ids_to_delete:
                     try:
@@ -637,8 +640,7 @@ class MemoryManager:
 
         useful_memory_ids = useful_memory_ids or []
         recalled_memory_ids = recalled_memory_ids or []
-        new_memories = new_memories or []
-        merge_groups = merge_groups or []
+        memory_actions = memory_actions or []
         memory_handlers = memory_handlers or {}
         resolved_scope = str(memory_scope or "").strip()
         if not resolved_scope:
@@ -679,63 +681,57 @@ class MemoryManager:
                         )
                     except Exception as e:
                         self.logger.warning(f"召回无用衰减失败 id={memory_id}: {e}")
-        # 2. 批量创建新记忆
-        for mem_data in new_memories:
-            mem_type = mem_data.get("type", "knowledge")
+        for action_data in memory_actions:
+            action = str(action_data.get("action", "") or "").strip().lower()
+            memory_data = action_data.get("memory")
+            if not isinstance(memory_data, dict):
+                self.logger.warning(f"跳过缺少 memory 的动作: {action_data}")
+                continue
 
-            # 检查必需字段
-            judgment = mem_data.get("judgment")
-            reasoning = mem_data.get("reasoning")
+            mem_type = str(memory_data.get("type", "knowledge") or "knowledge").strip()
+            judgment = memory_data.get("judgment")
+            reasoning = memory_data.get("reasoning")
+            tags = memory_data.get("tags", [])
 
             if not judgment:
                 self.logger.warning(
-                    f"跳过缺少必需字段的记忆: judgment={bool(judgment)}"
+                    f"跳过缺少必需字段的记忆动作: action={action} judgment={bool(judgment)}"
                 )
                 continue
 
-            # tags 是可选的，默认为空列表
-            tags = mem_data.get("tags", [])
+            if action == "create":
+                new_memory_object = None
+                handler = memory_handlers.get(mem_type)
+                if handler:
+                    new_memory_object = await handler.remember(
+                        judgment, reasoning, tags, memory_scope=resolved_scope
+                    )
+                else:
+                    self.logger.warning(f"未找到记忆类型 {mem_type} 的处理器，跳过创建")
 
-            # 根据类型创建记忆，获取返回的对象
-            new_memory_object = None
-            handler = memory_handlers.get(mem_type)
-            if handler:
-                new_memory_object = await handler.remember(
-                    judgment, reasoning, tags, memory_scope=resolved_scope
-                )
-            else:
-                self.logger.warning(f"未找到记忆类型 {mem_type} 的处理器，跳过创建")
-
-            if new_memory_object:
-                created_memories.append(new_memory_object)  # 收集创建的对象
-
-                # 任务记忆特殊状态管理：新任务记忆创建时，将之前最新的任务记忆转为已巩固状态
-                if mem_type == "task":
-                    await self._consolidate_previous_task_memory(new_memory_object.id)
-
-        # 3. 合并重复记忆
-        for group in merge_groups:
-            # 验证格式：必须是列表且至少包含2个元素
-            if not isinstance(group, list):
-                self.logger.warning(f"跳过无效的merge_group（非列表）: {type(group)}")
-                continue
-            if len(group) < 2:
-                self.logger.warning(f"跳过无效的merge_group（少于2个ID）: {group}")
+                if new_memory_object:
+                    created_memories.append(new_memory_object)
+                    if mem_type == "task":
+                        await self._consolidate_previous_task_memory(new_memory_object.id)
                 continue
 
-            # 获取第一个记忆作为模板
-            first_mem = self.collection.get(ids=[group[0]])
-            if first_mem and first_mem["metadatas"]:
-                metadata = first_mem["metadatas"][0]
-                # 使用第一个记忆的数据作为合并后的内容
-                await self.merge_memories(
-                    memories_to_merge_ids=group,
-                    new_judgment=metadata.get("judgment", "合并记忆"),
-                    new_reasoning=metadata.get("reasoning", "合并多个相似记忆"),
-                    new_tags=metadata.get("tags", "").split(", ")
-                    if metadata.get("tags")
-                    else [],
-                )
+            if action not in {"merge", "updata"}:
+                self.logger.warning(f"跳过不支持的动作: {action}")
+                continue
+
+            source_memory_ids = action_data.get("source_memory_ids", [])
+            if not isinstance(source_memory_ids, list) or len(source_memory_ids) == 0:
+                self.logger.warning(f"跳过缺少 source_memory_ids 的 {action} 动作: {action_data}")
+                continue
+            merged_memory = await self.merge_memories(
+                memories_to_merge_ids=source_memory_ids,
+                new_memory_type=mem_type,
+                new_judgment=judgment,
+                new_reasoning=reasoning,
+                new_tags=tags,
+            )
+            if merged_memory:
+                created_memories.append(merged_memory)
 
         return created_memories  # 返回新创建的记忆对象列表
 

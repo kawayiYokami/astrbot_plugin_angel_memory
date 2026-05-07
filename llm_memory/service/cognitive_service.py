@@ -226,12 +226,87 @@ class CognitiveService:
             memory_scope=memory_scope,
         )
 
+    async def get_memories_by_ids(
+        self,
+        memory_ids: List[str],
+        memory_scope: Optional[str] = None,
+    ) -> List[BaseMemory]:
+        """按 ID 批量读取长期记忆真相源。"""
+        ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]
+        if not ids:
+            return []
+
+        if self.memory_sql_manager is not None:
+            memories = await self.memory_sql_manager.get_memories_by_ids(ids)
+            scope = str(memory_scope or "").strip()
+            memory_map = {
+                str(memory.id): memory
+                for memory in memories or []
+                if getattr(memory, "id", None)
+            }
+            ordered: List[BaseMemory] = []
+            seen = set()
+            for memory_id in ids:
+                if memory_id in seen:
+                    continue
+                seen.add(memory_id)
+                memory = memory_map.get(memory_id)
+                if memory is None:
+                    continue
+                if scope:
+                    mem_scope = str(
+                        getattr(memory, "memory_scope", "public") or "public"
+                    ).strip()
+                    if scope == "public":
+                        if mem_scope != "public":
+                            continue
+                    elif mem_scope not in {scope, "public"}:
+                        continue
+                ordered.append(memory)
+            return ordered
+
+        if self.main_collection is not None:
+            try:
+                result = self.main_collection.get(ids=ids, include=["metadatas"])
+                result_ids = [str(mid) for mid in (result.get("ids") or [])]
+                metadatas = result.get("metadatas") or []
+                memories_by_id: Dict[str, BaseMemory] = {}
+                for memory_id, metadata in zip(result_ids, metadatas):
+                    if not isinstance(metadata, dict):
+                        continue
+                    memory = self.memory_manager._build_memory_from_metadata(
+                        memory_id,
+                        metadata,
+                    )
+                    if memory is not None:
+                        memories_by_id[memory_id] = memory
+                scope = str(memory_scope or "").strip()
+                ordered = []
+                for memory_id in ids:
+                    memory = memories_by_id.get(memory_id)
+                    if memory is None:
+                        continue
+                    if scope:
+                        mem_scope = str(
+                            getattr(memory, "memory_scope", "public") or "public"
+                        ).strip()
+                        if scope == "public":
+                            if mem_scope != "public":
+                                continue
+                        elif mem_scope not in {scope, "public"}:
+                            continue
+                    ordered.append(memory)
+                return ordered
+            except Exception as e:
+                self.logger.warning(f"按 ID 读取旧向量记忆失败: {e}", exc_info=True)
+
+        return []
+
     async def feedback(
         self,
         useful_memory_ids: List[str] = None,
         recalled_memory_ids: List[str] = None,
-        new_memories: List[dict] = None,
-        merge_groups: List[List[str]] = None,
+        memory_actions: List[dict] = None,
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         """统一反馈接口 - 处理回忆后的反馈（核心工作流）"""
@@ -239,8 +314,7 @@ class CognitiveService:
         return await self.memory_manager.process_feedback(
             useful_memory_ids,
             recalled_memory_ids,
-            new_memories,
-            merge_groups,
+            memory_actions,
             memory_handlers,
             memory_scope=memory_scope,
         )
@@ -274,14 +348,10 @@ class CognitiveService:
         Returns:
             记忆系统使用指南的完整内容
         """
-        from ..utils.path_manager import PathManager
-
-        # 默认使用异步版本的提示词
-        prompt_path = PathManager.get_prompt_path()
+        from ..prompts.prompt_assembler import PromptAssembler
 
         try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                return f.read()
+            return PromptAssembler.build_memory_system_guide()
         except FileNotFoundError:
             return "记忆系统提示词文件未找到，请检查文件是否存在。"
         except Exception as e:

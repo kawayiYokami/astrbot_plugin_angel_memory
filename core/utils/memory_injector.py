@@ -28,16 +28,22 @@ class MemoryInjector:
             格式化后的记忆上下文
         """
         useful_memory_ids = feedback_data.get("useful_memory_ids", [])
-        new_memories_raw = feedback_data.get("new_memories", {})
+        memory_actions_raw = feedback_data.get("memory_actions", [])
 
-        # 使用 MemoryIDResolver 处理数据格式转换
-        new_memories = MemoryIDResolver.normalize_new_memories_format(new_memories_raw)
+        memory_actions = MemoryIDResolver.normalize_memory_actions_format(
+            memory_actions_raw
+        )
+        action_memories = [
+            dict(action.get("memory", {}))
+            for action in memory_actions
+            if isinstance(action, dict) and isinstance(action.get("memory"), dict)
+        ]
 
         # 使用记忆格式化器
         return MemoryFormatter.format_memories_for_prompt(
             memories=session_memories,
             useful_memory_ids=useful_memory_ids,
-            new_memories=new_memories,
+            action_memories=action_memories,
         )
 
     @staticmethod
