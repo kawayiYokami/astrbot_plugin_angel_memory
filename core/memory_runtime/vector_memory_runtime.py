@@ -109,5 +109,9 @@ class VectorMemoryRuntime:
     async def consolidate_memories(self) -> None:
         await self._cognitive_service.consolidate_memories()
 
+    async def recall_by_sender_tag(self, tag: str, limit: int = 20):
+        """跨 scope 按发送者 tag 召回记忆。"""
+        return await self._cognitive_service.memory_manager.recall_by_sender_tag(tag, limit)
+
     def shutdown(self) -> None:
         return None

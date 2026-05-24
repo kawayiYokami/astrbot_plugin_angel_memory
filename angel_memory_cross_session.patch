@@ -1,0 +1,167 @@
+diff --git a/core/deepmind.py b/core/deepmind.py
+index 2cb359e..b4a98da 100644
+--- a/core/deepmind.py
++++ b/core/deepmind.py
+@@ -379,6 +379,24 @@ class DeepMind:
+         candidate_notes = retrieval_data["candidate_notes"]
+         core_topic = retrieval_data["core_topic"]
+ 
++        # 4.5 跨 scope 按发送者 uid 追加记忆
++        sender_id = str(event.get_sender_id() or "").strip()
++        if sender_id:
++            try:
++                memory_runtime = self.plugin_context.get_component("memory_runtime")
++                if memory_runtime and hasattr(memory_runtime, 'recall_by_sender_tag'):
++                    cross_memories = await memory_runtime.recall_by_sender_tag(
++                        f"uid:{sender_id}", limit=10
++                    )
++                    if cross_memories:
++                        existing_ids = {getattr(m, 'id', '') for m in long_term_memories}
++                        for mem in cross_memories:
++                            if getattr(mem, 'id', '') not in existing_ids:
++                                existing_ids.add(mem.id)
++                                long_term_memories.append(mem)
++            except Exception:
++                pass
++
+         # 5. 将检索到的长期记忆填入会话工作缓存
+         if long_term_memories and self.memory_system:
+             self.session_memory_manager.add_memories_to_session(session_id, long_term_memories)
+diff --git a/core/memory_runtime/simple_memory_runtime.py b/core/memory_runtime/simple_memory_runtime.py
+index c42867d..9aa61d5 100644
+--- a/core/memory_runtime/simple_memory_runtime.py
++++ b/core/memory_runtime/simple_memory_runtime.py
+@@ -117,6 +117,16 @@ class SimpleMemoryRuntime:
+     async def consolidate_memories(self) -> None:
+         await self._manager.consolidate_memories()
+ 
++    async def recall_by_sender_tag(self, tag: str, limit: int = 20):
++        """跨 scope 按发送者 tag 召回记忆。"""
++        memory_ids = await self._manager.get_memory_ids_by_tag(tag)
++        if not memory_ids:
++            return []
++        memories = await self._manager.get_memories_by_ids(memory_ids)
++        # 简单按创建时间倒序
++        memories.sort(key=lambda m: getattr(m, 'created_at', 0), reverse=True)
++        return memories[:limit]
++
+     def shutdown(self) -> None:
+         return None
+ 
+diff --git a/core/memory_runtime/vector_memory_runtime.py b/core/memory_runtime/vector_memory_runtime.py
+index 9d2151b..9ec5be0 100644
+--- a/core/memory_runtime/vector_memory_runtime.py
++++ b/core/memory_runtime/vector_memory_runtime.py
+@@ -109,5 +109,9 @@ class VectorMemoryRuntime:
+     async def consolidate_memories(self) -> None:
+         await self._cognitive_service.consolidate_memories()
+ 
++    async def recall_by_sender_tag(self, tag: str, limit: int = 20):
++        """跨 scope 按发送者 tag 召回记忆。"""
++        return await self._cognitive_service.memory_manager.recall_by_sender_tag(tag, limit)
++
+     def shutdown(self) -> None:
+         return None
+diff --git a/llm_memory/components/memory_sql_manager.py b/llm_memory/components/memory_sql_manager.py
+index 2329bc5..f0c3bd5 100644
+--- a/llm_memory/components/memory_sql_manager.py
++++ b/llm_memory/components/memory_sql_manager.py
+@@ -1795,6 +1795,28 @@ class MemorySqlManager:
+     async def get_memories_by_ids(self, memory_ids: List[str]) -> List[BaseMemory]:
+         return await asyncio.to_thread(self._get_memories_by_ids_sync, memory_ids)
+ 
++    async def get_memory_ids_by_tag(self, tag: str) -> List[str]:
++        """按 tag 查询所有 memory_id，不限制 scope。用于跨会话用户记忆。"""
++        return await asyncio.to_thread(self._get_memory_ids_by_tag_sync, tag)
++
++    def _get_memory_ids_by_tag_sync(self, tag: str) -> List[str]:
++        tag = str(tag or "").strip()
++        if not tag:
++            return []
++        try:
++            with self._db_lock:
++                conn = self._get_conn()
++                rows = conn.execute(
++                    "SELECT mr.id FROM memory_records mr "
++                    "JOIN memory_tag_rel mtr ON mtr.memory_id = mr.id "
++                    "JOIN global_tags gt ON gt.id = mtr.tag_id "
++                    "WHERE gt.name = ? ORDER BY mr.created_at DESC LIMIT 200",
++                    (tag,),
++                ).fetchall()
++            return [str(row[0]) for row in rows]
++        except Exception:
++            return []
++
+     async def recall_user_profiles(
+         self,
+         user_ids: List[str],
+diff --git a/llm_memory/service/memory_manager.py b/llm_memory/service/memory_manager.py
+index fbf8272..85fc03e 100644
+--- a/llm_memory/service/memory_manager.py
++++ b/llm_memory/service/memory_manager.py
+@@ -321,6 +321,25 @@ class MemoryManager:
+ 
+         return memories
+ 
++    async def recall_by_sender_tag(
++        self,
++        tag: str,
++        limit: int = 20,
++    ) -> List[BaseMemory]:
++        """按发送者 tag 跨 scope 召回记忆。"""
++        if self.memory_sql_manager is None:
++            return []
++
++        memory_ids = await self.memory_sql_manager.get_memory_ids_by_tag(tag)
++        if not memory_ids:
++            return []
++
++        memories = await self.memory_sql_manager.get_memories_by_ids(memory_ids)
++        # 应用时间衰减后排序
++        memories = self._apply_time_decay(memories)
++        memories.sort(key=lambda m: getattr(m, 'similarity', 0.0), reverse=True)
++        return memories[:limit]
++
+     async def chained_recall(
+         self,
+         query: str,
+diff --git a/tools/core_memory_recall.py b/tools/core_memory_recall.py
+index e52469d..a5fb8d6 100644
+--- a/tools/core_memory_recall.py
++++ b/tools/core_memory_recall.py
+@@ -81,6 +81,19 @@ class CoreMemoryRecallTool(FunctionTool):
+                 memory_scope=memory_scope,
+             )
+ 
++            # --- 跨 scope 按发送者 tag 追加记忆 ---
++            sender_id = str(event.get_sender_id())
++            if sender_id and hasattr(memory_runtime, 'recall_by_sender_tag'):
++                cross_memories = await memory_runtime.recall_by_sender_tag(
++                    f"uid:{sender_id}", limit=candidate_limit
++                )
++                # 去重合并
++                existing_ids = {mem.id for mem in all_memories if getattr(mem, 'id', None)}
++                for mem in cross_memories:
++                    if getattr(mem, 'id', None) not in existing_ids:
++                        existing_ids.add(mem.id)
++                        all_memories.append(mem)
++
+             all_active_memories = [mem for mem in all_memories if mem.is_active]
+ 
+             if not all_active_memories:
+diff --git a/tools/core_memory_remember.py b/tools/core_memory_remember.py
+index 85226c7..8cdede5 100644
+--- a/tools/core_memory_remember.py
++++ b/tools/core_memory_remember.py
+@@ -99,6 +99,11 @@ class CoreMemoryRememberTool(FunctionTool):
+             self.logger.error(f"{self.name}: 无法获取上下文信息或 memory_runtime 实例: {e}")
+             return "错误：无法确定当前会话ID，记忆写入已拒绝（严格隔离模式）。"
+ 
++        # --- 自动追加发送者 QQ 号到 tags ---
++        sender_id = str(event.get_sender_id())
++        if sender_id:
++            tags = list(tags) + [f"uid:{sender_id}"]
++
+         # --- 调用服务 ---
+         try:
+             memory_id = await memory_runtime.remember(

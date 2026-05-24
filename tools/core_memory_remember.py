@@ -99,6 +99,11 @@ class CoreMemoryRememberTool(FunctionTool):
             self.logger.error(f"{self.name}: 无法获取上下文信息或 memory_runtime 实例: {e}")
             return "错误：无法确定当前会话ID，记忆写入已拒绝（严格隔离模式）。"
 
+        # --- 自动追加发送者 QQ 号到 tags ---
+        sender_id = str(event.get_sender_id())
+        if sender_id:
+            tags = list(tags) + [f"uid:{sender_id}"]
+
         # --- 调用服务 ---
         try:
             memory_id = await memory_runtime.remember(

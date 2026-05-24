@@ -379,6 +379,24 @@ class DeepMind:
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
 
+        # 4.5 跨 scope 按发送者 uid 追加记忆
+        sender_id = str(event.get_sender_id() or "").strip()
+        if sender_id:
+            try:
+                memory_runtime = self.plugin_context.get_component("memory_runtime")
+                if memory_runtime and hasattr(memory_runtime, 'recall_by_sender_tag'):
+                    cross_memories = await memory_runtime.recall_by_sender_tag(
+                        f"uid:{sender_id}", limit=10
+                    )
+                    if cross_memories:
+                        existing_ids = {getattr(m, 'id', '') for m in long_term_memories}
+                        for mem in cross_memories:
+                            if getattr(mem, 'id', '') not in existing_ids:
+                                existing_ids.add(mem.id)
+                                long_term_memories.append(mem)
+            except Exception:
+                pass
+
         # 5. 将检索到的长期记忆填入会话工作缓存
         if long_term_memories and self.memory_system:
             self.session_memory_manager.add_memories_to_session(session_id, long_term_memories)

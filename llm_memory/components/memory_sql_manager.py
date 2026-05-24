@@ -1795,6 +1795,28 @@ class MemorySqlManager:
     async def get_memories_by_ids(self, memory_ids: List[str]) -> List[BaseMemory]:
         return await asyncio.to_thread(self._get_memories_by_ids_sync, memory_ids)
 
+    async def get_memory_ids_by_tag(self, tag: str) -> List[str]:
+        """按 tag 查询所有 memory_id，不限制 scope。用于跨会话用户记忆。"""
+        return await asyncio.to_thread(self._get_memory_ids_by_tag_sync, tag)
+
+    def _get_memory_ids_by_tag_sync(self, tag: str) -> List[str]:
+        tag = str(tag or "").strip()
+        if not tag:
+            return []
+        try:
+            with self._db_lock:
+                conn = self._get_conn()
+                rows = conn.execute(
+                    "SELECT mr.id FROM memory_records mr "
+                    "JOIN memory_tag_rel mtr ON mtr.memory_id = mr.id "
+                    "JOIN global_tags gt ON gt.id = mtr.tag_id "
+                    "WHERE gt.name = ? ORDER BY mr.created_at DESC LIMIT 200",
+                    (tag,),
+                ).fetchall()
+            return [str(row[0]) for row in rows]
+        except Exception:
+            return []
+
     async def recall_user_profiles(
         self,
         user_ids: List[str],

@@ -321,6 +321,25 @@ class MemoryManager:
 
         return memories
 
+    async def recall_by_sender_tag(
+        self,
+        tag: str,
+        limit: int = 20,
+    ) -> List[BaseMemory]:
+        """按发送者 tag 跨 scope 召回记忆。"""
+        if self.memory_sql_manager is None:
+            return []
+
+        memory_ids = await self.memory_sql_manager.get_memory_ids_by_tag(tag)
+        if not memory_ids:
+            return []
+
+        memories = await self.memory_sql_manager.get_memories_by_ids(memory_ids)
+        # 应用时间衰减后排序
+        memories = self._apply_time_decay(memories)
+        memories.sort(key=lambda m: getattr(m, 'similarity', 0.0), reverse=True)
+        return memories[:limit]
+
     async def chained_recall(
         self,
         query: str,

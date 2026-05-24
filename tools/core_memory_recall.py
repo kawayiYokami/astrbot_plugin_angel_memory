@@ -81,6 +81,19 @@ class CoreMemoryRecallTool(FunctionTool):
                 memory_scope=memory_scope,
             )
 
+            # --- 跨 scope 按发送者 tag 追加记忆 ---
+            sender_id = str(event.get_sender_id())
+            if sender_id and hasattr(memory_runtime, 'recall_by_sender_tag'):
+                cross_memories = await memory_runtime.recall_by_sender_tag(
+                    f"uid:{sender_id}", limit=candidate_limit
+                )
+                # 去重合并
+                existing_ids = {mem.id for mem in all_memories if getattr(mem, 'id', None)}
+                for mem in cross_memories:
+                    if getattr(mem, 'id', None) not in existing_ids:
+                        existing_ids.add(mem.id)
+                        all_memories.append(mem)
+
             all_active_memories = [mem for mem in all_memories if mem.is_active]
 
             if not all_active_memories:

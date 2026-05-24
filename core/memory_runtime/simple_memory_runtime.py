@@ -117,6 +117,16 @@ class SimpleMemoryRuntime:
     async def consolidate_memories(self) -> None:
         await self._manager.consolidate_memories()
 
+    async def recall_by_sender_tag(self, tag: str, limit: int = 20):
+        """跨 scope 按发送者 tag 召回记忆。"""
+        memory_ids = await self._manager.get_memory_ids_by_tag(tag)
+        if not memory_ids:
+            return []
+        memories = await self._manager.get_memories_by_ids(memory_ids)
+        # 简单按创建时间倒序
+        memories.sort(key=lambda m: getattr(m, 'created_at', 0), reverse=True)
+        return memories[:limit]
+
     def shutdown(self) -> None:
         return None
 
