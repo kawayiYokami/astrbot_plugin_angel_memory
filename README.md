@@ -79,7 +79,7 @@
 
 2. **安装Angel Memory插件**
    ```bash
-   git clone https://github.com/kawayiYokami/astrbot_plugin_angel_memory.git
+   git clone https://github.com/pichu10941-tech/astrbot_plugin_angel_memory.git
    ```
 
 3. **安装依赖**
@@ -444,16 +444,16 @@ memory_behavior:
 - 灵魂状态变化
 - 工具调用记录
 
-## 🤝 贡献指南
+**必须安装前置插件：[astrbot_plugin_angel_heart](https://github.com/kawayiYokami/astrbot_plugin_angel_heart)**
 
-欢迎提交Issue和Pull Request！
+**推荐使用 AstrBot WebUI 插件管理安装（搜索 '天使' 即可）**
 
-### 开发环境
+如果你需要手动部署，可以将 [astrbot_plugin_angel_heart](https://github.com/kawayiYokami/astrbot_plugin_angel_heart) 和本插件克隆到 `AstrBot/data/plugins/` 目录：
 
 ```bash
-# 克隆项目
-git clone https://github.com/kawayiYokami/astrbot_plugin_angel_memory.git
-cd astrbot_plugin_angel_memory
+cd AstrBot/data/plugins/
+git clone https://github.com/kawayiYokami/astrbot_plugin_angel_heart.git
+git clone https://github.com/pichu10941-tech/astrbot_plugin_angel_memory.git
 
 # 安装依赖
 pip install -r requirements.txt
