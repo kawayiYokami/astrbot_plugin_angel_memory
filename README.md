@@ -106,6 +106,7 @@
 | `memory_behavior.min_message_length` | 5 | 触发记忆处理的最小消息长度 |
 | `memory_behavior.sleep_interval` | 3600 | 记忆巩固间隔（秒） |
 | `enable_soul_system.*` | - | 灵魂系统各维度的默认值 |
+| 🆕 `cross_session_user` | true | 跨会话用户记忆（v1.4.0 默认启用，按 uid 标签自动关联） |
 
 `conversation_scope_map` 示例：
 
@@ -117,6 +118,15 @@
 ```
 
 匹配顺序：先当前人格名（Persona名），后会话ID（`unified_msg_origin`）。
+
+### 🔗 跨会话用户记忆（v1.4.0）
+插件自动记录每条消息发送者的QQ号/UID，实现**按用户跨群**的记忆关联：
+
+- **写入**：`core_memory_remember` 自动在 tags 追加 `uid:用户ID`，无需 LLM 感知
+- **主动召回**：`core_memory_recall` 除当前会话 scope 外，额外跨 scope 搜索相同的 `uid:` 标签，去重合并
+- **被动注入**：DeepMind 在 `on_llm_request` 中也自动追加跨 scope uid 记忆，LLM 无需手动调用工具即可感知
+
+此功能全自动运行，无需配置。配合 `conversation_scope_map` 使用时，先按 scope 检索，再跨 scope 按 uid 补充，两套机制互不干扰。
 
 ## 🧰 Debug Tool（查看记忆 + 导入导出）
 

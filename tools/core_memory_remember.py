@@ -14,7 +14,7 @@ except ImportError:
 @dataclass
 class CoreMemoryRememberTool(FunctionTool):
     name: str = "core_memory_remember"
-    description: str = "当你认为接收到的信息**极其重要、具有长期价值**，且**不应被遗忘**时，调用此工具将其永久保存为主动记忆。例如，用户反复强调的偏好、核心事实、关键原则，或你自身推导出的长期有效结论。"
+    description: str = "当你认为接收到的信息**极其重要、具有长期价值**，且**不应被遗忘**时，调用此工具将其永久保存为主动记忆。例如，用户反复强调的偏好、核心事实、关键原则，或你自身推导出的长期有效结论。\n注意：工具会自动追加发送者的 uid 标签，同一用户在不同群/私聊中存的记忆会被关联到一起。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",

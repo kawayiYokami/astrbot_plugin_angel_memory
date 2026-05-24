@@ -18,7 +18,7 @@ except ImportError:
 @dataclass
 class CoreMemoryRecallTool(FunctionTool):
     name: str = "core_memory_recall"
-    description: str = "当你需要主动反思或回顾那些已被你'铭记'的核心原则、长期目标或关键事实时，调用此工具。你必须提供明确的检索 query（不能为 None 或空字符串），系统会先按 query 检索，再根据记忆强度进行**加权随机抽取**。"
+    description: str = "当你需要主动反思或回顾那些已被你'铭记'的核心原则、长期目标或关键事实时，调用此工具。你必须提供明确的检索 query（不能为 None 或空字符串），系统会先按 query 检索，再根据记忆强度进行**加权随机抽取**。\n注意：除当前会话记忆外，会自动跨群/跨私聊搜索同一发送者 uid 标签下的记忆并合并返回。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
