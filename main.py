@@ -52,8 +52,8 @@ def configure_logging_behavior():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "1.3.14",
-    "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
+    "1.4.0",
+    "https://github.com/pichu10941-tech/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
     """天使记忆插件主类
