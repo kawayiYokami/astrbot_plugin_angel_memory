@@ -623,7 +623,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self._model_info = None
         self._available = None  # None表示未测试，True/False表示测试结果
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
-        self.batch_size = 64  # 程序启动时的批量大小，遇到413会减半
+        self.batch_size = 64  # 程序启动时的批量大小，遇到413会自动减半并在本次生命周期内持久生效
         self._cache_enabled = True  # 缓存启用标志
 
         # 延迟测试可用性，避免在构造函数中进行异步操作
@@ -772,31 +772,61 @@ class APIEmbeddingProvider(EmbeddingProvider):
     async def _get_embeddings_with_batch(
         self, texts: List[str], batch_size: int
     ) -> List[List[float]]:
-        """使用指定批量大小并发获取向量嵌入"""
+        """使用指定批量大小并发获取向量嵌入，遇到413自动减半并在本次生命周期内持久化"""
 
-        if batch_size >= len(texts):
-            # 单批次处理
-            result = await self.provider.get_embeddings(texts)
-            return result
-        else:
-            # 分批并发处理
-            tasks = []
-            batch_info = []
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i : i + batch_size]
-                task = self.provider.get_embeddings(batch)
-                tasks.append(task)
-                batch_info.append(len(batch))
+        while True:
+            try:
+                if batch_size >= len(texts):
+                    # 单批次处理
+                    result = await self.provider.get_embeddings(texts)
+                    return result
+                else:
+                    # 分批并发处理
+                    tasks = []
+                    for i in range(0, len(texts), batch_size):
+                        batch = texts[i : i + batch_size]
+                        task = self.provider.get_embeddings(batch)
+                        tasks.append(task)
 
-            # 并发执行所有批次
-            batch_results = await asyncio.gather(*tasks)
+                    # 并发执行所有批次
+                    batch_results = await asyncio.gather(*tasks)
 
-            # 按顺序拼接结果
-            result = []
-            for batch_embeddings in batch_results:
-                result.extend(batch_embeddings)
+                    # 按顺序拼接结果
+                    result = []
+                    for batch_embeddings in batch_results:
+                        result.extend(batch_embeddings)
 
-            return result
+                    return result
+            except Exception as e:
+                if self._is_batch_too_large_error(e) and batch_size > 1:
+                    new_batch_size = max(1, batch_size // 2)
+                    self.logger.warning(
+                        f"批量向量化遇到413错误，batch_size从{batch_size}减半到"
+                        f"{new_batch_size}，本次生命周期内持久生效"
+                    )
+                    batch_size = new_batch_size
+                    self.batch_size = new_batch_size  # 持久化到实例，本次生命周期内都使用减半后的值
+                    # 继续循环用新的batch_size重试
+                else:
+                    raise
+
+    @staticmethod
+    def _is_batch_too_large_error(e: Exception) -> bool:
+        """判断异常是否为批量大小超限（HTTP 413）"""
+        # openai.APIStatusError 或类似异常
+        if hasattr(e, "status_code") and e.status_code == 413:
+            return True
+        # 嵌套在 gather 产生的异常组中
+        if hasattr(e, "exceptions"):
+            return any(
+                hasattr(sub, "status_code") and sub.status_code == 413
+                for sub in e.exceptions
+            )
+        # 兜底：检查错误消息中是否包含413相关关键词
+        err_msg = str(e)
+        if "413" in err_msg and "batch" in err_msg.lower():
+            return True
+        return False
 
     def get_model_info(self) -> Dict[str, Any]:
         """获取模型信息"""
