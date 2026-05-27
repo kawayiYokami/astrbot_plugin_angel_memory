@@ -52,7 +52,7 @@ def configure_logging_behavior():
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "1.3.14",
+    "1.3.37",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -135,6 +135,14 @@ class AngelMemoryPlugin(Star):
         self.logger.info(
             f"Angel Memory Plugin 实例创建完成 (提供商: {self.plugin_context.get_current_provider()}), 后台初始化已启动"
         )
+
+        # 6. 注册 WebUI API 路由
+        try:
+            from .web_api import register_all_routes
+            register_all_routes(self.context, self.plugin_context)
+            self.logger.info("已注册 WebUI API 路由（Plugin Pages）")
+        except Exception as e:
+            self.logger.warning(f"WebUI API 路由注册失败（不影响核心功能）: {e}")
 
     def _load_complete_config(self):
         """在主线程检查配置项"""
