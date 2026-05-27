@@ -173,3 +173,7 @@ AGNET.md
 
 # Codex CLI configuration (contains API keys)
 .codex/
+
+# WebUI 开发依赖
+webui/node_modules/
+webui/dist/

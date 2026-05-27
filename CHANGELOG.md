@@ -2,6 +2,29 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.37] - 2026-05-27
+
+### Highlights
+- 新增内置 WebUI 管理面板（基于 AstrBot Plugin Pages），无需额外启动服务即可在 AstrBot 后台管理记忆系统。
+- 移除旧的 `debug_tool/`（Streamlit），所有功能已迁移至内置管理面板。
+
+### Core Changes
+- `feat(webui)`: 新增 `web_api/` 后端模块，通过 `register_web_api` 注册 16 个管理 API 路由。
+- `feat(webui)`: 新增 `pages/memory-dashboard/` 前端（Vue 3 + Vuetify 3），包含 9 个管理页面。
+- `feat(webui)`: 用户画像页直接复用 `llm_memory.utils.user_profile` 的识别逻辑，确保与运行时行为一致。
+- `refactor(debug)`: 移除 `debug_tool/` 目录及其独立依赖。
+
+### WebUI 管理面板功能
+- 📌 总览：系统状态、提供商信息、统计数据
+- 🧾 记忆浏览：分页、搜索、按 scope 过滤、删除
+- 👤 用户画像：识别所有用户、按属性分组展示画像记忆
+- 🔖 Tags 调试：标签命中搜索、全局标签列表
+- 🧭 向量检索：memory_index / notes_index 向量查询与浏览
+- 🗂️ 笔记索引：分页浏览笔记索引记录
+- 📝 笔记读取：按 note_short_id + 行范围模拟读取
+- 🔄 导入导出：JSON 快照导出与导入
+- 🛠️ 维护状态：查看维护状态、下载备份文件
+
 ## [1.3.14] - 2026-05-02
 
 ### Bug Fixes
