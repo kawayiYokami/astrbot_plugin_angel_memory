@@ -170,29 +170,22 @@
       }
     }
   },
-  "research_assistant": {
+  "note_assistant": {
     "type": "object",
-    "description": "[研究助手] 深度研究功能配置(测试，不稳定，请多反馈)",
-    "hint": "配置用于执行深度研究任务的设置。该功能允许AI自主搜索、阅读和内化知识。",
+    "description": "[笔记] 笔记功能配置",
+    "hint": "笔记功能让 AI 在交流与学习中自主整理、归档笔记，并在记忆检索时一并调用笔记知识库。可分别控制「检索」与「生成」两项能力。",
     "items": {
-      "enabled": {
+      "enable_recall": {
         "type": "bool",
-        "description": "启用研究助手",
+        "description": "在增强检索中检索笔记",
         "default": true,
-        "hint": "关闭后不会注册研究助手工具到 LLM 工具列表，LLM 将无法调用研究子代理。"
+        "hint": "开启后，回忆记忆时会一并检索笔记知识库并注入相关笔记；关闭则增强检索不再涉及笔记。"
       },
-      "persona_id": {
-        "type": "string",
-        "description": "研究人格名称",
-        "default": "",
-        "hint": "填写专用研究人格名称。系统会将人格的提示词补充到内置研究提示词中，并使用人格配置的工具集。建议提示词仅补充领域知识或特定要求，不必重复说明研究流程。"
-      },
-      "provider_id": {
-        "type": "string",
-        "description": "[核心模型设置] 用于研究助手的LLM提供商ID",
-        "_special": "select_provider",
-        "default": "",
-        "hint": "指定用于执行研究任务的 LLM 提供商 ID。留空则使用当前会话的提供商。推荐使用 DeepSeek V3.2 或 Gemini pro 等推理能力强的模型。"
+      "enable_create": {
+        "type": "bool",
+        "description": "允许 AI 自主生成笔记",
+        "default": true,
+        "hint": "开启后会向 LLM 注册 note_create 工具，AI 可在学习或交流中主动整理并归档笔记；关闭则不注册该工具。"
       }
     }
   }

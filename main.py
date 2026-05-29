@@ -27,7 +27,7 @@ from .core.plugin_context import PluginContextFactory
 from .tools.core_memory_remember import CoreMemoryRememberTool
 from .tools.core_memory_recall import CoreMemoryRecallTool
 from .tools.note_recall import NoteRecallTool
-from .tools.research_subagent import build_research_handoff_tool
+from .tools.note_create import NoteCreateTool
 
 
 def configure_logging_behavior():
@@ -112,11 +112,9 @@ class AngelMemoryPlugin(Star):
                 CoreMemoryRecallTool(),
                 NoteRecallTool(),
             ]
-            research_handoff_tool = build_research_handoff_tool(
-                self.context, self.plugin_context
-            )
-            if research_handoff_tool is not None:
-                llm_tools.append(research_handoff_tool)
+            note_config = self.plugin_context.get_config("note_assistant", {}) or {}
+            if note_config.get("enable_create", True):
+                llm_tools.append(NoteCreateTool())
 
             self.context.add_llm_tools(*llm_tools)
             registered_names = "、".join(tool.name for tool in llm_tools)

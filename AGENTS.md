@@ -7,7 +7,7 @@
 - **core_memory_remember**（[`CoreMemoryRememberTool`](tools/core_memory_remember.py:18)）：主动记忆工具，永久保存重要信息
 - **core_memory_recall**（[`CoreMemoryRecallTool`](tools/core_memory_recall.py:20)）：主动回忆工具，加权随机抽取核心记忆
 - **note_recall**（[`NoteRecallTool`](tools/note_recall.py:19)）：笔记展开工具，查看完整笔记内容
-- **transfer_to_researcher**（[`build_research_handoff_tool`](tools/research_subagent.py:11)）：上游 Handoff 研究子代理，启动独立研究 Agent
+- **note_create**（[`NoteCreateTool`](tools/note_create.py:18)）：笔记创建工具，AI 在学习/交流中自主整理并归档 Markdown 笔记
 
 这些工具在插件初始化时通过[`context.add_llm_tools()`](main.py:139)注入，成为LLM的主动能力。
 
@@ -196,6 +196,7 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 ### 7. 文件监控与笔记系统
 - 自动监控文档变化，实时更新索引
  仅支持 Markdown 和 TXT 格式（v1.3.10 起移除了 markitdown 依赖以避免 onnxruntime 冲突）。
+- AI 通过 `note_create` 自主生成的笔记统一存放在 `raw/.angel/note/`，与用户手动放入 `raw/` 的文件区分，避免混淆。
 - 与记忆系统协同，提供结构化知识库
 
 ## 性能优化策略
