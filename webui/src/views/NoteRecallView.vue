@@ -17,8 +17,8 @@
           </v-col>
           <v-col cols="12" sm="3">
             <v-text-field
-              v-model.number="startLine"
-              label="start_line"
+              v-model.number="offset"
+              label="offset"
               type="number"
               density="compact"
               variant="outlined"
@@ -27,8 +27,8 @@
           </v-col>
           <v-col cols="12" sm="3">
             <v-text-field
-              v-model.number="endLine"
-              label="end_line"
+              v-model.number="limit"
+              label="limit"
               type="number"
               density="compact"
               variant="outlined"
@@ -84,8 +84,8 @@ import { useBridge } from '@/composables/useBridge'
 const { apiGet, apiPost } = useBridge()
 
 const noteShortId = ref(0)
-const startLine = ref(1)
-const endLine = ref(200)
+const offset = ref(1)
+const limit = ref(200)
 const loading = ref(false)
 const result = ref<any>(null)
 const error = ref('')
@@ -102,8 +102,8 @@ async function doRecall() {
   try {
     const data: any = await apiPost('notes/recall', {
       note_short_id: noteShortId.value,
-      start_line: startLine.value,
-      end_line: endLine.value,
+      offset: offset.value,
+      limit: limit.value,
     })
     if (data.error) {
       error.value = data.error

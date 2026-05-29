@@ -137,8 +137,7 @@ with st.sidebar:
             "🔖 全局Tags调试",
             "🧭 memory_index 检索",
             "🗂️ 中央笔记索引",
-            "🧠 notes_index 检索",
-            "📝 note_recall 模拟",
+            "📝 angel_note_read 模拟",
             "🔄 中央库导入导出",
             "🛠️ 维护状态",
             "📂 浏览笔记文件",
@@ -257,7 +256,7 @@ elif mode == "🧾 中央记忆浏览":
                 st.json(item.get("metadata", {}))
 
 elif mode == "🔖 全局Tags调试":
-    st.subheader("🔖 全局 Tags 调试（global_tags + memory_tag_rel + note_tag_rel）")
+    st.subheader("🔖 全局 Tags 调试（global_tags + memory_tag_rel）")
     if not db_mgr.has_central_db():
         st.error("未找到中央记忆库。")
         st.stop()
@@ -338,17 +337,14 @@ elif mode == "🧭 memory_index 检索":
                     st.caption(f"metadata: {item.get('metadata')}")
 
 elif mode == "🗂️ 中央笔记索引":
-    st.subheader("🗂️ 中央笔记索引（note_index_records + note_tag_rel）")
+    st.subheader("🗂️ 笔记文件注册表（note_index_records）")
     if not db_mgr.has_central_db():
         st.error("未找到中央记忆库。")
         st.stop()
 
     stats = db_mgr.get_note_index_stats()
-    st.caption(
-        f"note_index_records: {stats.get('note_index_count', 0)} | "
-        f"note_tag_rel: {stats.get('note_tag_rel_count', 0)}"
-    )
-    keyword = st.text_input("关键词（路径/标题/tags）", value="")
+    st.caption(f"note_index_records: {stats.get('note_index_count', 0)}")
+    keyword = st.text_input("关键词（路径）", value="")
     page_size = 20
     current_page = int(st.session_state.get("note_index_page", 1) or 1)
     offset = max(0, (current_page - 1) * page_size)
@@ -377,49 +373,15 @@ elif mode == "🗂️ 中央笔记索引":
     st.caption(f"总记录 {total}，当前页 {len(items)} 条")
     for row in items:
         with st.container(border=True):
-            title = " / ".join(
-                [str(row.get(f"heading_h{i}") or "").strip() for i in range(1, 7) if str(row.get(f"heading_h{i}") or "").strip()]
-            ) or "(无标题)"
             st.markdown(f"**{row.get('source_file_path', '')}**")
-            st.caption(f"title: {title}")
             st.caption(
-                f"note_short_id: {row.get('note_short_id', -1)} | total_lines: {row.get('total_lines', 0)} | "
-                f"tags: {row.get('tags_text', '')}"
+                f"note_short_id: {row.get('note_short_id', -1)} | total_lines: {row.get('total_lines', 0)}"
             )
             with st.expander("详情"):
                 st.json(row)
 
-elif mode == "🧠 notes_index 检索":
-    st.subheader("🧠 向量轻量索引调试（collection = notes_index）")
-    if not db_mgr.has_vector_db():
-        st.error("未连接向量库。")
-        st.stop()
-
-    collections = db_mgr.get_collections()
-    if "notes_index" not in collections:
-        st.warning("未找到 `notes_index` 集合。")
-    else:
-        st.caption(f"notes_index count: {db_mgr.get_collection_stats('notes_index').get('count', 0)}")
-        query = st.text_input("向量查询", value="", placeholder="输入一句话测试笔记向量召回")
-        topk = st.slider("Top K", min_value=1, max_value=30, value=10, key="notes_index_topk")
-        if query:
-            results = db_mgr.query_collection(
-                collection_name="notes_index",
-                query_text=query,
-                n_results=int(topk),
-            )
-            for item in results:
-                if item.get("error"):
-                    st.error(item.get("error"))
-                    continue
-                with st.container(border=True):
-                    st.markdown(f"**score:** `{item.get('score', 0):.4f}` | **id:** `{item.get('id')}`")
-                    st.code(item.get("document") or "", language="text")
-                    if item.get("metadata"):
-                        st.caption(f"metadata: {item.get('metadata')}")
-
-elif mode == "📝 note_recall 模拟":
-    st.subheader("📝 note_recall 模拟（按 note_short_id + 行范围）")
+elif mode == "📝 angel_note_read 模拟":
+    st.subheader("📝 angel_note_read 模拟（按 note_short_id + 行范围）")
     if not os.path.exists(raw_dir):
         st.error(f"笔记目录不存在: {raw_dir}")
         st.stop()
@@ -427,9 +389,9 @@ elif mode == "📝 note_recall 模拟":
     with c1:
         note_short_id = st.number_input("note_short_id", min_value=0, value=0, step=1)
     with c2:
-        start_line = st.number_input("start_line", min_value=1, value=1, step=1)
+        offset = st.number_input("offset", min_value=1, value=1, step=1)
     with c3:
-        end_line = st.number_input("end_line", min_value=1, value=200, step=1)
+        limit = st.number_input("limit", min_value=1, value=200, step=1)
 
     if st.button("模拟读取", key="simulate_note_recall"):
         row = db_mgr.get_note_index_by_short_id(int(note_short_id))
@@ -448,18 +410,13 @@ elif mode == "📝 note_recall 模拟":
                 text = f.read()
             lines = text.splitlines()
             total_lines = len(lines)
-            if start_line > end_line:
-                st.error("start_line 不能大于 end_line")
-                st.stop()
             if total_lines <= 0:
                 actual_start = 0
                 actual_end = 0
                 seg = ""
             else:
-                actual_start = min(max(1, int(start_line)), total_lines)
-                actual_end = min(max(1, int(end_line)), total_lines)
-                if actual_start > actual_end:
-                    actual_start = actual_end
+                actual_start = min(max(1, int(offset)), total_lines)
+                actual_end = min(actual_start + int(limit) - 1, total_lines)
                 seg = "\n".join(lines[actual_start - 1: actual_end])
             st.caption(
                 f"note_short_id={int(note_short_id)} | total_lines={total_lines} | "

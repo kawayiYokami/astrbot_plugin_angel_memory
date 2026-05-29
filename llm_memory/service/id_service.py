@@ -1,13 +1,11 @@
 """
 ID转换服务 - 精简版ID转换接口
 
-专注提供核心的ID转换功能：批量标签ID转换、文件ID转换和资源管理。
-封装TagManager和FileIndexManager，为上层服务提供高效的API。
+专注提供文件ID转换和资源管理。
 """
 
-from typing import List, Optional
+from typing import Optional
 
-from ..components.tag_manager import TagManager
 from ..components.file_index_manager import FileIndexManager
 
 # 导入日志记录器
@@ -35,8 +33,7 @@ class IDService:
     """
     精简版ID转换服务
 
-    专注核心功能，提供批量标签ID转换、单个文件ID转换和资源管理。
-    封装TagManager和FileIndexManager，为上层服务提供高效的API。
+    专注核心功能，提供单个文件ID转换和资源管理。
     """
 
     def __init__(self, plugin_context=None):
@@ -61,35 +58,15 @@ class IDService:
             raise ValueError("PluginContext必须提供，无法使用默认配置")
 
         # 初始化底层管理器
-        self.tag_manager = TagManager(self.data_directory, self.provider_id)
         # 文件扫描状态属于中央真相源，不按 provider 分仓
         self.file_manager = FileIndexManager(
             self.file_index_directory, self.file_index_provider
         )
 
         self.logger.info(
-            f"ID服务初始化完成 (提供商: {self.provider_id}, 标签目录: {self.data_directory}, "
+            f"ID服务初始化完成 (提供商: {self.provider_id}, "
             f"文件索引目录: {self.file_index_directory}, 文件索引作用域: {self.file_index_provider})"
         )
-
-    def ids_to_tags(self, tag_ids: List[int]) -> List[str]:
-        """
-        批量ID转标签名
-
-        Args:
-            tag_ids: 标签ID列表
-
-        Returns:
-            标签名称列表，顺序与输入ID对应。为保持向后兼容，返回空列表而非抛出异常
-        """
-        if not tag_ids:
-            return []
-
-        try:
-            return self.tag_manager.get_tag_names(tag_ids)
-        except Exception as e:
-            self.logger.error(f"批量ID转标签失败: {tag_ids}, 错误: {e}")
-            return []
 
     def file_to_id(self, file_path: str, timestamp: int = 0) -> int:
         """
@@ -130,7 +107,6 @@ class IDService:
     def close(self):
         """关闭服务，释放资源"""
         try:
-            self.tag_manager.close()
             self.file_manager.close()
         except Exception as e:
             self.logger.error(f"关闭ID服务失败: {e}")

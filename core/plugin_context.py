@@ -415,6 +415,10 @@ class PluginContext:
         """获取SimpleMemory数据库路径（与provider无关）"""
         return self.path_manager.get_simple_memory_db_path()
 
+    def get_note_chunks_db_path(self) -> Path:
+        """获取笔记切片数据库路径（与provider无关，可随时重建）"""
+        return self.path_manager.get_note_chunks_db_path()
+
     def get_current_provider(self) -> str:
         """获取当前供应商ID"""
         return self.path_manager.get_current_provider()

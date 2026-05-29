@@ -46,6 +46,8 @@ def register_all_routes(context: "Context", plugin_context) -> None:
         (f"/{PLUGIN_NAME}/notes/recall", notes_api.recall_note, ["POST"], "笔记内容读取"),
         (f"/{PLUGIN_NAME}/notes/files", notes_api.list_note_files, ["GET"], "笔记文件列表"),
         (f"/{PLUGIN_NAME}/notes/file-content", notes_api.get_file_content, ["GET"], "笔记文件内容"),
+        (f"/{PLUGIN_NAME}/notes/search-chunks", notes_api.search_chunks, ["GET"], "笔记切片搜索"),
+        (f"/{PLUGIN_NAME}/notes/chunk-stats", notes_api.chunk_stats, ["GET"], "笔记切片统计"),
         # 导入导出
         (f"/{PLUGIN_NAME}/export", maintenance_api.export_snapshot, ["GET"], "导出快照"),
         (f"/{PLUGIN_NAME}/import", maintenance_api.import_snapshot, ["POST"], "导入快照"),

@@ -19,6 +19,8 @@ except ImportError:
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager
 from ..llm_memory.components.faiss_memory_index import FaissVectorStore
+from ..llm_memory.components.note_chunk_store import NoteChunkStore
+from ..llm_memory.components.note_chunk_search import NoteChunkSearchEngine
 from ..llm_memory import CognitiveService
 from ..llm_memory.service.memory_decay_policy import (
     MemoryDecayConfig,
@@ -82,6 +84,13 @@ class ComponentFactory:
             )
             self._components["memory_sql_manager"] = memory_sql_manager
 
+            # 创建笔记切片存储和搜索引擎
+            note_chunk_store = self._create_note_chunk_store()
+            self._components["note_chunk_store"] = note_chunk_store
+
+            note_chunk_search = self._create_note_chunk_search(rerank_provider)
+            self._components["note_chunk_search"] = note_chunk_search
+
             embedding_provider_id = self.plugin_context.get_embedding_provider_id()
             enable_local_embedding = self.plugin_context.get_enable_local_embedding()
             vector_enabled = bool(str(embedding_provider_id or "").strip() or enable_local_embedding)
@@ -94,7 +103,7 @@ class ComponentFactory:
                 )
                 self._components["memory_runtime"] = memory_runtime
 
-                note_service = self._create_note_service(vector_store=None)
+                note_service = self._create_note_service()
                 self._components["note_service"] = note_service
 
                 deepmind = await self._create_deepmind(
@@ -155,7 +164,7 @@ class ComponentFactory:
                 )
                 self._components["memory_runtime"] = memory_runtime
 
-                note_service = self._create_note_service(vector_store=None)
+                note_service = self._create_note_service()
                 self._components["note_service"] = note_service
 
                 deepmind = await self._create_deepmind(
@@ -203,14 +212,12 @@ class ComponentFactory:
             self._components["memory_runtime"] = memory_runtime
 
             # 5. 创建笔记服务
-            note_service = self._create_note_service(vector_store)
+            note_service = self._create_note_service()
             self._components["note_service"] = note_service
 
             await self._run_startup_faiss_consistency_check(
                 memory_sql_manager=memory_sql_manager,
                 cognitive_service=cognitive_service,
-                vector_store=vector_store,
-                note_service=note_service,
             )
 
             # 6. 创建DeepMind
@@ -380,6 +387,45 @@ class ComponentFactory:
         self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
         return manager
 
+    def _create_note_chunk_store(self) -> Optional[NoteChunkStore]:
+        """创建笔记切片存储"""
+        try:
+            db_path = self.plugin_context.get_note_chunks_db_path()
+            store = NoteChunkStore(db_path=db_path)
+            self.logger.info(f"✅ 笔记切片存储创建完成: {db_path}")
+            return store
+        except Exception as e:
+            self.logger.warning(f"笔记切片存储创建失败（不影响主流程）: {e}")
+            return None
+
+    def _create_note_chunk_search(self, rerank_provider=None) -> Optional[NoteChunkSearchEngine]:
+        """创建笔记切片搜索引擎"""
+        try:
+            index_dir = str(self.plugin_context.get_memory_center_dir() / "index")
+            engine = NoteChunkSearchEngine(
+                index_dir=index_dir,
+                rerank_provider=rerank_provider,
+            )
+            self.logger.info("✅ 笔记切片搜索引擎创建完成")
+            return engine
+        except Exception as e:
+            self.logger.warning(f"笔记切片搜索引擎创建失败（不影响主流程）: {e}")
+            return None
+
+    def _sync_chunk_search_index(self) -> None:
+        """同步切片搜索索引（启动时调用）"""
+        note_chunk_search = self._components.get("note_chunk_search")
+        note_chunk_store = self._components.get("note_chunk_store")
+        if note_chunk_search is None or note_chunk_store is None:
+            return
+        try:
+            stats = note_chunk_store.get_stats()
+            total = stats.get("total_chunks", 0)
+            if total > 0:
+                self.logger.info(f"切片搜索索引已就绪: 切片库含 {total} 条记录")
+        except Exception as e:
+            self.logger.warning(f"切片搜索索引状态检查失败: {e}")
+
     def _create_memory_runtime(self, cognitive_service, memory_sql_manager: MemorySqlManager):
         """创建统一记忆运行时。"""
         self.logger.info("🧩 创建统一记忆运行时...")
@@ -393,16 +439,11 @@ class ComponentFactory:
         self.logger.info("✅ 统一记忆运行时创建完成 (Vector+BM25)")
         return runtime
 
-    def _create_note_service(self, vector_store):
+    def _create_note_service(self):
         """创建笔记服务"""
         self.logger.info("📝 创建笔记服务...")
 
-        # 使用PluginContext模式创建NoteService
         note_service = NoteService.from_plugin_context(self.plugin_context)
-        # 设置VectorStore
-        if vector_store is not None:
-            note_service.set_vector_store(vector_store)
-
         self.logger.info("✅ 笔记服务创建完成")
 
         return note_service
@@ -479,10 +520,8 @@ class ComponentFactory:
         *,
         memory_sql_manager: MemorySqlManager,
         cognitive_service,
-        vector_store,
-        note_service,
     ) -> None:
-        """启动时检查 SQL 真相层与当前 provider 的 FAISS 向量层是否一致。"""
+        """启动时检查记忆 SQL 真相层与当前 provider 的 FAISS 向量层是否一致。"""
         import time
 
         provider_id = self.plugin_context.get_current_provider()
@@ -526,18 +565,6 @@ class ComponentFactory:
                 exc_info=True,
             )
 
-        try:
-            notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
-            if note_service is not None:
-                note_service.notes_index_collection = notes_index
-            note_rows = await memory_sql_manager.list_note_index_vector_rows()
-            await _sync_index("notes_index", notes_index, note_rows)
-        except Exception as e:
-            self.logger.warning(
-                f"[FAISS向量索引] 失败 任务名=启动一致性检查 index=notes_index 异常={e}",
-                exc_info=True,
-            )
-
     def get_components(self) -> Dict[str, Any]:
         """获取已创建的组件"""
         return self._components.copy()
@@ -563,6 +590,8 @@ class ComponentFactory:
             "file_monitor",
             "deepmind",
             "memory_runtime",
+            "note_chunk_search",
+            "note_chunk_store",
             "memory_sql_manager",
             "note_service",
             "cognitive_service",

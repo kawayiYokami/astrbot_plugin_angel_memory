@@ -499,7 +499,7 @@ class FaissTextIndex:
 
 
 class FaissVectorStore:
-    """Small FAISS-backed vector store for memory_index and notes_index."""
+    """Small FAISS-backed vector store for the memory_index collection."""
 
     def __init__(
         self,
@@ -609,28 +609,6 @@ class FaissVectorStore:
         await collection.upsert_rows(rows)
 
     async def recall_memory_ids(
-        self,
-        collection: FaissTextIndex,
-        query: str,
-        limit: int = 10,
-        vector: Optional[List[float]] = None,
-        similarity_threshold: float = 0.5,
-    ) -> List[Tuple[str, float]]:
-        return await collection.search(
-            query=query,
-            limit=limit,
-            vector=vector,
-            similarity_threshold=similarity_threshold,
-        )
-
-    async def upsert_note_index_rows(
-        self,
-        collection: FaissTextIndex,
-        rows: List[Dict[str, str]],
-    ) -> None:
-        await collection.upsert_rows(rows)
-
-    async def recall_note_source_ids(
         self,
         collection: FaissTextIndex,
         query: str,

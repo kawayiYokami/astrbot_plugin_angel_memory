@@ -124,9 +124,9 @@ class FileMonitorService:
         """格式化计时信息为日志字符串（中央索引链路）"""
         parts = []
 
-        # 1. 文件解析（切块 + ID查询）
+        # 1. 文件解析（行数统计 + ID查询）
         if "parse" in timings:
-            parse_parts = [f"切块{timings['parse']:.0f}ms"]
+            parse_parts = [f"解析{timings['parse']:.0f}ms"]
             if "id_lookup" in timings and timings["id_lookup"] > 1:
                 parse_parts.append(f"ID{timings['id_lookup']:.0f}ms")
             parts.append(f"文件解析：{' + '.join(parse_parts)}")
@@ -139,9 +139,13 @@ class FileMonitorService:
         if "store_total" in timings:
             parts.append(f"中央索引写入：{timings['store_total']:.0f}ms")
 
-        # 4. 向量缓存写入（包含 embedding）
-        if "vector_sync" in timings:
-            parts.append(f"向量缓存写入：{timings['vector_sync']:.0f}ms")
+        # 4. 切片生成和写入
+        if "chunk_generate" in timings:
+            parts.append(f"切片生成：{timings['chunk_generate']:.0f}ms")
+        if "chunk_store" in timings:
+            parts.append(f"切片库写入：{timings['chunk_store']:.0f}ms")
+        if "chunk_search_index" in timings:
+            parts.append(f"搜索索引写入：{timings['chunk_search_index']:.0f}ms")
 
         # 5. 线程等待（如果显著）
         if "_thread_wait" in timings and timings["_thread_wait"] > 100:
@@ -159,6 +163,10 @@ class FileMonitorService:
         self.logger.info(f"开始增量同步: {self.raw_directory}")
 
         try:
+            version_rebuild = bool(getattr(self.file_index_manager, "was_version_reset", False))
+            if version_rebuild:
+                self._clear_note_indexes_for_file_index_rebuild()
+
             # 1. 获取数据库状态
             old_files = self.file_index_manager.get_all_files()
             self.logger.debug(f"数据库中有 {len(old_files)} 个文件记录")
@@ -172,6 +180,12 @@ class FileMonitorService:
             self.logger.info(
                 f"变更检测完成: 删除 {len(changes['to_delete'])} 个, 新增/更新 {len(changes['to_add'])} 个, 无变化 {len(changes['unchanged'])} 个"
             )
+            bulk_search_rebuild = version_rebuild or len(changes["to_add"]) >= 20
+            if bulk_search_rebuild and changes["to_add"]:
+                self.logger.info(
+                    "[切片搜索索引] 检测到批量文件变更，切换为先切片落库、最后统一重建 "
+                    f"新增更新={len(changes['to_add'])} 版本重建={'是' if version_rebuild else '否'}"
+                )
 
             # 4. 执行删除操作（先删除旧数据）
             delete_count = 0
@@ -201,7 +215,9 @@ class FileMonitorService:
                         file_start = time_module.time()
 
                         doc_count, timings = self._process_file_change(
-                            relative_path, timestamp
+                            relative_path,
+                            timestamp,
+                            update_search_index=not bulk_search_rebuild,
                         )
                         if doc_count > 0:
                             add_count += 1
@@ -227,6 +243,9 @@ class FileMonitorService:
                         self.logger.error(f"处理文件失败: {relative_path}, 错误: {e}")
                         continue
 
+                if bulk_search_rebuild:
+                    self._rebuild_chunk_search_index_from_store()
+
             # 6. 计算执行时间
             execution_time = time.time() - start_time
 
@@ -240,6 +259,62 @@ class FileMonitorService:
             import traceback
 
             self.logger.error(f"错误详情: {traceback.format_exc()}")
+
+    def _rebuild_chunk_search_index_from_store(self) -> None:
+        """从切片库一次性重建 Tantivy 搜索索引。"""
+        import time
+
+        plugin_context = getattr(self.note_service, "plugin_context", None)
+        if plugin_context is None:
+            return
+        chunk_store = plugin_context.get_component("note_chunk_store")
+        chunk_search = plugin_context.get_component("note_chunk_search")
+        if chunk_store is None or chunk_search is None:
+            return
+
+        start = time.time()
+        chunks = chunk_store.list_all_chunks()
+        indexed = chunk_search.rebuild_all(chunks)
+        cost_ms = int((time.time() - start) * 1000)
+        self.logger.info(
+            f"[切片搜索索引] 全量重建完成 切片数={len(chunks)} 写入={indexed} 耗时毫秒={cost_ms}"
+        )
+
+    def _clear_note_indexes_for_file_index_rebuild(self) -> None:
+        """文件索引版本升级后，清空所有可重建的笔记派生索引。"""
+        import asyncio
+        import time
+
+        start = time.time()
+        self.logger.info("[文件索引] 检测到版本重建，开始清空笔记派生索引")
+        plugin_context = getattr(self.note_service, "plugin_context", None)
+        if plugin_context is None:
+            self.logger.warning("[文件索引] 清空笔记派生索引跳过：plugin_context 不可用")
+            return
+
+        deleted_registry = 0
+        cleared_chunks = 0
+        try:
+            memory_sql_manager = plugin_context.get_component("memory_sql_manager")
+            if memory_sql_manager is not None:
+                result = asyncio.run(memory_sql_manager.clear_note_file_registry())
+                deleted_registry = int(result.get("deleted", 0) or 0)
+
+            chunk_store = plugin_context.get_component("note_chunk_store")
+            if chunk_store is not None:
+                cleared_chunks = int(chunk_store.clear_all() or 0)
+
+            chunk_search = plugin_context.get_component("note_chunk_search")
+            if chunk_search is not None:
+                chunk_search.rebuild_all([])
+
+            cost_ms = int((time.time() - start) * 1000)
+            self.logger.info(
+                "[文件索引] 笔记派生索引清空完成 "
+                f"注册表删除={deleted_registry} 切片删除={cleared_chunks} 耗时毫秒={cost_ms}"
+            )
+        except Exception as e:
+            self.logger.error(f"[文件索引] 笔记派生索引清空失败: {e}", exc_info=True)
 
     def _scan_directory_for_files(self, directory_path: Path) -> Dict[str, int]:
         """
@@ -261,14 +336,6 @@ class FileMonitorService:
         supported_extensions = {
             ".md",
             ".txt",
-            ".pdf",
-            ".docx",
-            ".pptx",
-            ".xlsx",
-            ".html",
-            ".csv",
-            ".json",
-            ".xml",
         }
 
         try:
@@ -366,7 +433,13 @@ class FileMonitorService:
 
         return {"to_delete": to_delete, "to_add": to_add, "unchanged": unchanged}
 
-    def _process_file_change(self, relative_path: str, timestamp: int) -> tuple:
+    def _process_file_change(
+        self,
+        relative_path: str,
+        timestamp: int,
+        *,
+        update_search_index: bool = True,
+    ) -> tuple:
         """处理单个文件的变更，返回(文档数量, 计时字典)（同步版本）"""
         try:
             # 构建完整文件路径
@@ -384,7 +457,9 @@ class FileMonitorService:
             try:
                 # 小弟处理文件，使用领导分配的file_id（同步调用）
                 doc_count, timings = self.note_service.parse_and_store_file_sync(
-                    str(full_path), relative_path
+                    str(full_path),
+                    relative_path,
+                    update_search_index=update_search_index,
                 )
                 return doc_count, timings
             except Exception as e:

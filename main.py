@@ -24,10 +24,10 @@ except ImportError:
 # 导入核心模块
 from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
-from .tools.core_memory_remember import CoreMemoryRememberTool
-from .tools.core_memory_recall import CoreMemoryRecallTool
-from .tools.note_recall import NoteRecallTool
-from .tools.note_create import NoteCreateTool
+from .tools.angel_remember import CoreMemoryRememberTool
+from .tools.angel_recall import CoreMemoryRecallTool
+from .tools.angel_note_read import NoteRecallTool
+from .tools.angel_note_create import NoteCreateTool
 
 
 def configure_logging_behavior():

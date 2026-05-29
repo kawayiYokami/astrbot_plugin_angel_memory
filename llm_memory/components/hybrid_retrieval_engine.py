@@ -188,7 +188,14 @@ class HybridRetrievalEngine:
             doc_text_map=doc_text_map,
         )
         if reranked:
-            return [{"id": x["id"], "final_score": float(x.get("final_score", 0.0))} for x in reranked]
+            return [
+                {
+                    "id": x["id"],
+                    "final_score": float(x.get("final_score", 0.0)),
+                    "score_kind": "normalized",
+                }
+                for x in reranked
+            ]
         # 重排失败/无结果：降级到无重排策略。
         if has_vector:
             return fusion_search(

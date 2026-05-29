@@ -53,7 +53,7 @@ class TagsAPI:
                     gt.id,
                     gt.name,
                     (SELECT COUNT(*) FROM memory_tag_rel mtr WHERE mtr.tag_id = gt.id) AS memory_refs,
-                    (SELECT COUNT(*) FROM note_tag_rel ntr WHERE ntr.tag_id = gt.id) AS note_refs
+                    0 AS note_refs
                 FROM global_tags gt
                 {where_sql}
                 ORDER BY (memory_refs + note_refs) DESC, gt.id ASC

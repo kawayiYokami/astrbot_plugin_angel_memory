@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from pathlib import Path
@@ -27,7 +26,6 @@ class SleepMaintenanceService:
             "deprecated_field_cleanup_done": False,
             "vector_to_center_migration_last_provider": "",
             "memory_vector_sync_last_provider": "",
-            "notes_vector_sync_last_provider": "",
             "daily_json_backup_last_day": "",
             "cleanup_last_sleep_at": 0.0,
         }
@@ -147,7 +145,6 @@ class SleepMaintenanceService:
         for runner in (
             self._task_memory_scope_migration,
             self._task_deprecated_field_cleanup,
-            self._task_notes_vector_sync,
             self._task_daily_json_backup,
         ):
             try:
@@ -201,122 +198,6 @@ class SleepMaintenanceService:
         state["memory_vector_sync_last_provider"] = target_provider
         deepmind.logger.info("[睡眠维护] 记忆向量库同步：完成")
         return "success"
-
-    async def _task_notes_vector_sync(self, state: Dict[str, Any]) -> str:
-        deepmind = self.deepmind
-        plugin_context = deepmind.plugin_context
-        if plugin_context.get_component("vector_store") is None:
-            deepmind.logger.info("[睡眠维护] 笔记向量库同步：跳过（当前为 BM25-only）")
-            return "skipped"
-
-        provider = plugin_context.get_current_provider()
-        current_provider = str(provider) if provider is not None else ""
-        last_provider = str(state.get("notes_vector_sync_last_provider", "") or "")
-        # 与记忆迁移/同步保持一致：首次无专用记录时，复用已有 provider 状态避免误判全量重建
-        if not last_provider:
-            last_provider = str(state.get("vector_to_center_migration_last_provider", "") or "")
-        if not last_provider:
-            last_provider = str(state.get("memory_vector_sync_last_provider", "") or "")
-
-        memory_sql_manager = plugin_context.get_component("memory_sql_manager")
-        vector_store = plugin_context.get_component("vector_store")
-        if memory_sql_manager is None or vector_store is None:
-            deepmind.logger.warning("[睡眠维护] 笔记向量库同步：失败（组件不可用）")
-            return "failed"
-
-        try:
-            notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
-            note_service = plugin_context.get_component("note_service")
-            if note_service is not None:
-                note_service.notes_index_collection = notes_index
-            rows = await memory_sql_manager.list_note_index_vector_rows()
-
-            # 供应商变化：全量重建（embedding 语义空间变化）
-            if current_provider and last_provider != current_provider:
-                deepmind.logger.info(
-                    "[睡眠维护] 笔记向量库同步：检测到供应商变化，开始全量重建 "
-                    f"旧供应商={last_provider or '空'} 新供应商={current_provider} "
-                    f"待写入条数={len(rows)}"
-                )
-                vector_store.clear_collection(notes_index)
-                notes_index = vector_store.get_or_create_collection_with_dimension_check("notes_index")
-                if note_service is not None:
-                    note_service.notes_index_collection = notes_index
-                await vector_store.upsert_note_index_rows(notes_index, rows)
-                state["notes_vector_sync_last_provider"] = current_provider
-                deepmind.logger.info(
-                    "[睡眠维护] 笔记向量库同步：完成（供应商变化全量重建） "
-                    f"写入条数={len(rows)}"
-                )
-                return "success"
-
-            # 供应商未变化：增量同步（只补新增、删失效）
-            sql_ids = {str(row.get("id") or "").strip() for row in rows if str(row.get("id") or "").strip()}
-            vector_ids = await self._list_collection_ids(notes_index)
-            vector_id_set = set(vector_ids)
-
-            to_add = sql_ids - vector_id_set
-            to_delete = vector_id_set - sql_ids
-
-            if to_delete:
-                deleted = await self._delete_collection_ids(notes_index, list(to_delete))
-                deepmind.logger.debug(f"[睡眠维护] 笔记向量库同步：成功删除 {deleted} 个失效记录")
-
-            if to_add:
-                add_rows = [row for row in rows if str(row.get("id") or "").strip() in to_add]
-                await vector_store.upsert_note_index_rows(notes_index, add_rows)
-
-            if not to_add and not to_delete:
-                if current_provider:
-                    state["notes_vector_sync_last_provider"] = current_provider
-                deepmind.logger.info("[睡眠维护] 笔记向量库同步：跳过（无增量变更）")
-                return "skipped"
-
-            deepmind.logger.info(
-                "[睡眠维护] 笔记向量库同步：完成（增量同步） "
-                f"新增={len(to_add)} 删除={len(to_delete)}"
-            )
-            if current_provider:
-                state["notes_vector_sync_last_provider"] = current_provider
-            return "success"
-        except Exception as e:
-            deepmind.logger.warning(
-                f"[睡眠维护] 笔记向量库同步：失败，异常={e}",
-                exc_info=True,
-            )
-            return "failed"
-
-    @staticmethod
-    async def _list_collection_ids(collection, batch_size: int = 5000) -> list[str]:
-        ids: list[str] = []
-        offset = 0
-        while True:
-            result = collection.get(limit=batch_size, offset=offset, include=[])
-            batch = result.get("ids", []) if isinstance(result, dict) else []
-            if not batch:
-                break
-            ids.extend([str(x) for x in batch if str(x)])
-            if len(batch) < batch_size:
-                break
-            offset += len(batch)
-        return ids
-
-    @staticmethod
-    async def _delete_collection_ids(collection, ids: list[str], batch_size: int = 5000) -> int:
-        """分批删除向量库中的记录，返回实际删除的记录数"""
-        if not ids:
-            return 0
-
-        deleted_count = 0
-        for i in range(0, len(ids), batch_size):
-            chunk = ids[i : i + batch_size]
-            try:
-                await asyncio.to_thread(collection.delete, ids=chunk)
-                deleted_count += len(chunk)
-            except Exception as e:
-                raise RuntimeError(f"删除批次失败（已删除 {deleted_count} 条）: {e}") from e
-
-        return deleted_count
 
     async def _task_memory_scope_migration(self, state: Dict[str, Any]) -> str:
         deepmind = self.deepmind
