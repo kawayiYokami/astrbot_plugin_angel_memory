@@ -175,6 +175,12 @@
     "description": "[研究助手] 深度研究功能配置(测试，不稳定，请多反馈)",
     "hint": "配置用于执行深度研究任务的设置。该功能允许AI自主搜索、阅读和内化知识。",
     "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用研究助手",
+        "default": true,
+        "hint": "关闭后不会注册研究助手工具到 LLM 工具列表，LLM 将无法调用研究子代理。"
+      },
       "persona_id": {
         "type": "string",
         "description": "研究人格名称",
