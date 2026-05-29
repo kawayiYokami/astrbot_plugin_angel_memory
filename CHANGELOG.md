@@ -2,6 +2,27 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.4.9] - 2026-05-29
+
+### Highlights
+- 笔记系统全面升级为「切片 SQLite + Tantivy CJK bigram」检索架构，替换旧的 `notes_index` 向量集合与标签检索链路。
+- 记忆 BM25 分词从 jieba 切换为 CJK 1~2-gram，记忆向量+BM25 融合算法改为 RRF（Reciprocal Rank Fusion，K=60）。
+- LLM 工具统一更名为 `angel_remember` / `angel_recall` / `angel_note_read` / `angel_note_create`。
+
+### Core Changes
+- `feat(notes)`: 新增段落级笔记切片器，采用路径第 0 行、空行边界切片，并保持代码块与表格完整。
+- `feat(notes)`: 新增独立切片存储 `note_chunks.db`，与记忆库分离，支持随时全量重建。
+- `feat(notes)`: 新增 Tantivy 多级搜索引擎，使用 CJK 1~2-gram，优先执行 2-gram AND，结果不足时降级为 1+2-gram OR。
+- `feat(notes)`: 笔记搜索支持多词查询（空格 / `|` 分隔），按命中词数与 BM25 分数排序，并按文件聚合结果。
+- `refactor(notes)`: `angel_note_read` 改为 `offset + limit` 分页读取，默认最大 3 万字符，并返回 `has_more` 提示。
+- `refactor(notes)`: `angel_recall` 统一检索记忆与笔记，笔记结果聚合到文件级并执行精准后过滤。
+- `refactor(memory)`: 记忆 BM25 检索同步升级为 CJK bigram 分词，移除 jieba 运行依赖。
+- `refactor(memory)`: 记忆向量+BM25 融合切换为 RRF；RRF 分数按相对排名截断，不再套用 0.5 绝对相似度阈值。
+- `refactor(config)`: 笔记配置合并到 `note_assistant` 组，`top_k` 默认改为 3。
+- `refactor(startup)`: 启动时按索引版本触发切片索引重建，旧文件索引版本直接失效，避免架构升级后残留旧状态。
+- `refactor(webui)`: 调试页面改为切片检索视图，展示内容摘要、分数与行号；前端资源已重新构建。
+- `chore(cleanup)`: 清理旧笔记向量链路、`notes_index` 同步任务、旧标签检索路径与不再使用的 parser/tag 管理代码。
+
 ## [1.3.40] - 2026-05-29
 
 ### Highlights
