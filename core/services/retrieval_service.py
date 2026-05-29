@@ -105,21 +105,12 @@ class DeepMindRetrievalService:
 
         candidate_notes = []
         if note_recall_enabled and deepmind.note_service:
-            if precompute_vectors:
-                note_query, note_vector = (
-                    await deepmind.query_processor.process_query_for_notes_with_vector(
-                        query, event
-                    )
-                )
-            else:
-                note_query = deepmind.query_processor.process_query_for_notes(query, event)
-                note_vector = None
+            note_query = deepmind.query_processor.process_query_for_notes(query, event)
 
             candidate_notes = await deepmind.note_service.search_notes_by_top_k(
                 query=note_query,
                 recall_count=deepmind.note_candidate_top_k,
                 top_k=deepmind.note_candidate_top_k,
-                vector=note_vector,
             )
 
         memory_id_mapping = {}

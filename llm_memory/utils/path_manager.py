@@ -173,6 +173,10 @@ class PathManager:
         """获取 simple memory 数据库路径（与 provider 无关）"""
         return self.get_memory_center_index_dir() / "simple_memory.db"
 
+    def get_note_chunks_db_path(self) -> Path:
+        """获取笔记切片数据库路径（与 provider 无关，可随时重建）"""
+        return self.get_memory_center_index_dir() / "note_chunks.db"
+
     # === 对外路径方法（提示词路径） ===
 
     @classmethod

@@ -120,19 +120,6 @@
       }
     }
   },
-  "note_topk": {
-    "type": "object",
-    "description": "[笔记Top-K] 笔记注入数量限制",
-    "hint": "top_k 控制实际注入LLM的笔记数量。候选检索数量固定为 top_k 的 7 倍。",
-    "items": {
-      "top_k": {
-        "type": "int",
-        "description": "注入LLM的笔记数量上限",
-        "default": 8,
-        "hint": "控制实际注入给应答模型的笔记条数。建议 3-20。"
-      }
-    }
-  },
   "enable_soul_system": {
     "type": "object",
     "description": "[灵魂系统] 灵魂状态系统配置",
@@ -185,7 +172,13 @@
         "type": "bool",
         "description": "允许 AI 自主生成笔记",
         "default": true,
-        "hint": "开启后会向 LLM 注册 note_create 工具，AI 可在学习或交流中主动整理并归档笔记；关闭则不注册该工具。"
+        "hint": "开启后会向 LLM 注册 angel_note_create 工具，AI 可在学习或交流中主动整理并归档笔记；关闭则不注册该工具。"
+      },
+      "top_k": {
+        "type": "int",
+        "description": "注入LLM的笔记数量上限",
+        "default": 3,
+        "hint": "控制实际注入给应答模型的笔记条数。建议 3-20。"
       }
     }
   }

@@ -41,21 +41,13 @@ class MemorySqlManager:
         self._lock = threading.RLock()
         self._fts_lock = threading.Lock()
         self._tag_names: set[str] = set()
-        self._jieba_dict_ready = False
-        self._jieba_pending_tags: set[str] = set()
-        self._jieba_new_tags_since_rebuild = 0
         self._fts_rebuild_required = False
-        self._jieba_rebuild_added_threshold = 50
-        self._jieba_rebuild_ratio_threshold = 0.10
         self.decay_policy = MemoryDecayPolicy(decay_config)
         self._rerank_provider = rerank_provider
         self._fts_retriever = TantivyBM25Retriever(
             db_path=str(self.db_path),
-            tokenizer_mode="jieba_cut",
             memory_threshold=0.5,
-            note_threshold=0.6,
             memory_default_vector_score=0.5,
-            note_default_vector_score=0.6,
         )
         self._hybrid_engine = HybridRetrievalEngine(
             retriever=self._fts_retriever,
@@ -109,12 +101,6 @@ class MemorySqlManager:
                     UNIQUE(memory_id, tag_id)
                 );
 
-                CREATE TABLE IF NOT EXISTS note_tag_rel (
-                    source_id TEXT NOT NULL,
-                    tag_id INTEGER NOT NULL,
-                    UNIQUE(source_id, tag_id)
-                );
-                
                 CREATE TABLE IF NOT EXISTS note_index_records (
                     source_id TEXT PRIMARY KEY,
                     note_short_id INTEGER UNIQUE,
@@ -138,8 +124,6 @@ class MemorySqlManager:
                     ON memory_records(judgment);
                 CREATE INDEX IF NOT EXISTS idx_memory_tag_rel_tag_memory
                     ON memory_tag_rel(tag_id, memory_id);
-                CREATE INDEX IF NOT EXISTS idx_note_tag_rel_tag_source
-                    ON note_tag_rel(tag_id, source_id);
                 CREATE INDEX IF NOT EXISTS idx_note_index_file_id
                     ON note_index_records(file_id);
                 CREATE INDEX IF NOT EXISTS idx_note_index_path
@@ -292,6 +276,30 @@ class MemorySqlManager:
                 mapping[short_id] = full_id
         return mapping
 
+    def get_short_ids_by_paths_sync(self, paths: List[str]) -> Dict[str, int]:
+        """根据 source_file_path 列表查询对应的 note_short_id。
+
+        Returns:
+            {source_file_path: note_short_id} 映射
+        """
+        if not paths:
+            return {}
+        with self._connect() as conn:
+            placeholders = ",".join(["?" for _ in paths])
+            rows = conn.execute(
+                f"SELECT source_file_path, note_short_id FROM note_index_records "
+                f"WHERE source_file_path IN ({placeholders}) AND note_short_id IS NOT NULL "
+                f"ORDER BY note_short_id ASC",
+                tuple(paths),
+            ).fetchall()
+        result: Dict[str, int] = {}
+        for row in rows:
+            path = str(row["source_file_path"] or "")
+            short_id = row["note_short_id"]
+            if path and short_id is not None and path not in result:
+                result[path] = int(short_id)
+        return result
+
     def _list_global_tag_names_sync(self) -> List[str]:
         with self._connect() as conn:
             rows = conn.execute("SELECT name FROM global_tags").fetchall()
@@ -314,60 +322,6 @@ class MemorySqlManager:
             if not new_tags:
                 return
             self._tag_names.update(new_tags)
-            self._jieba_pending_tags.update(new_tags)
-            self._jieba_new_tags_since_rebuild += len(new_tags)
-            # 新词加入后标记词典待刷新，查询路径会懒加载注词。
-            self._jieba_dict_ready = False
-
-    def _load_jieba_tags_dict_locked_sync(self, trigger: str) -> Dict[str, int]:
-        """
-        加载并注入 tags 词表到 jieba（需在 _fts_lock 保护下调用）。
-        - 数据源：global_tags（统一不区分 memory/note）
-        - 注词：jieba.add_word(word)，不设 freq/tag
-        """
-        start_ts = time.time()
-        with self._lock:
-            pending = list(self._jieba_pending_tags)
-        if pending:
-            target_words = pending
-        else:
-            target_words = self._list_global_tag_names_sync()
-
-        stats = self._fts_retriever.add_jieba_words(target_words)
-        tags_total = len(target_words)
-        elapsed_ms = int((time.time() - start_ts) * 1000)
-
-        with self._lock:
-            if pending:
-                self._jieba_pending_tags.difference_update(set(target_words))
-            self._jieba_dict_ready = True
-
-        self.logger.info(
-            "[FTS5词表] 完成 "
-            f"trigger={trigger} tags_total={tags_total} "
-            f"added={int(stats.get('added', 0))} skipped={int(stats.get('skipped', 0))} "
-            f"cost_ms={elapsed_ms}"
-        )
-        return {
-            "tags_total": tags_total,
-            "added": int(stats.get("added", 0)),
-            "skipped": int(stats.get("skipped", 0)),
-            "cost_ms": elapsed_ms,
-        }
-
-    def _ensure_jieba_tags_ready_sync(self, trigger: str) -> None:
-        with self._fts_lock:
-            with self._lock:
-                pending_exists = bool(self._jieba_pending_tags)
-                dict_ready = bool(self._jieba_dict_ready)
-            if dict_ready and not pending_exists:
-                return
-            try:
-                self._load_jieba_tags_dict_locked_sync(trigger=trigger)
-            except Exception as e:
-                self._jieba_dict_ready = False
-                self.logger.error(f"[FTS5词表] 失败 trigger={trigger} 异常={e}", exc_info=True)
-                raise
 
     def _list_memory_rows_for_fts_sync(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -400,73 +354,17 @@ class MemorySqlManager:
             )
         return [r for r in result if r["id"]]
 
-    def _list_note_rows_for_fts_sync(self) -> List[Dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    nir.source_id,
-                    IFNULL(tags.tags_text, '') AS tags_text
-                FROM note_index_records nir
-                LEFT JOIN (
-                    SELECT
-                        ntr.source_id AS source_id,
-                        GROUP_CONCAT(gt.name, ', ') AS tags_text
-                    FROM note_tag_rel ntr
-                    JOIN global_tags gt ON gt.id = ntr.tag_id
-                    GROUP BY ntr.source_id
-                ) tags ON tags.source_id = nir.source_id
-                """
-            ).fetchall()
-        result: List[Dict[str, Any]] = []
-        for row in rows:
-            tags = [t.strip() for t in str(row["tags_text"] or "").split(",") if t.strip()]
-            result.append({"id": str(row["source_id"] or ""), "tags": tags})
-        return [r for r in result if r["id"]]
-
     def _ensure_fts_ready_sync(self, force_rebuild: bool = False) -> None:
         rebuilt = False
         with self._fts_lock:
-            with self._lock:
-                pending_exists = bool(self._jieba_pending_tags)
-                dict_ready = bool(self._jieba_dict_ready)
-            if force_rebuild or pending_exists or not dict_ready:
-                try:
-                    self._load_jieba_tags_dict_locked_sync(
-                        trigger="rebuild" if force_rebuild else "query-lazy"
-                    )
-                except Exception as e:
-                    self._jieba_dict_ready = False
-                    self.logger.error(
-                        f"[FTS5词表] 失败 trigger={'rebuild' if force_rebuild else 'query-lazy'} 异常={e}",
-                        exc_info=True,
-                    )
-                    raise
-
-            with self._lock:
-                total_tags = max(1, len(self._tag_names))
-                added_since_rebuild = int(self._jieba_new_tags_since_rebuild)
-            threshold_reached = (
-                added_since_rebuild >= int(self._jieba_rebuild_added_threshold)
-                or (added_since_rebuild / float(total_tags)) >= float(self._jieba_rebuild_ratio_threshold)
-            )
-            if threshold_reached and self._fts_ready and not force_rebuild:
-                self._fts_rebuild_required = True
-                self.logger.info(
-                    "[FTS5重建] 触发阈值达到，准备执行全量重建 "
-                    f"added={added_since_rebuild} total_tags={total_tags}"
-                )
-
             effective_force_rebuild = bool(force_rebuild or self._fts_rebuild_required)
             if self._fts_ready and not effective_force_rebuild:
                 return
             previous_ready = self._fts_ready
             try:
                 self._fts_retriever.rebuild_memory(self._list_memory_rows_for_fts_sync())
-                self._fts_retriever.rebuild_note(self._list_note_rows_for_fts_sync())
                 self._fts_ready = True
                 self._fts_rebuild_required = False
-                self._jieba_new_tags_since_rebuild = 0
                 rebuilt = True
             except Exception as e:
                 self._fts_ready = previous_ready
@@ -491,7 +389,6 @@ class MemorySqlManager:
     def _sync_memory_fts_by_id_sync(self, memory_id: str) -> None:
         if not self._fts_ready:
             return
-        self._ensure_jieba_tags_ready_sync(trigger="incremental")
         mid = str(memory_id or "").strip()
         if not mid:
             return
@@ -521,22 +418,6 @@ class MemorySqlManager:
         for memory_id in upsert_list:
             self._sync_memory_fts_by_id_sync(memory_id)
 
-    def _sync_note_fts_by_source_id_sync(self, source_id: str) -> None:
-        if not self._fts_ready:
-            return
-        self._ensure_jieba_tags_ready_sync(trigger="incremental")
-        sid = str(source_id or "").strip()
-        if not sid:
-            return
-        rows = self._get_note_index_by_source_ids_sync([sid])
-        if not rows:
-            self._fts_retriever.delete_note(sid)
-            return
-        row = rows[0]
-        tags_text = str(row.get("tags_text") or "")
-        tags = [t.strip() for t in tags_text.split(",") if t.strip()]
-        self._fts_retriever.upsert_note(item_id=sid, tags=tags)
-
     async def audit_and_repair_fts_indexes(self, sample_size: int = 50) -> Dict[str, Any]:
         return await asyncio.to_thread(self._audit_and_repair_fts_indexes_sync, sample_size)
 
@@ -545,17 +426,13 @@ class MemorySqlManager:
         self._ensure_fts_ready_sync(force_rebuild=True)
         with self._connect() as conn:
             sql_memory_count = int(conn.execute("SELECT COUNT(1) FROM memory_records").fetchone()[0] or 0)
-            sql_note_count = int(conn.execute("SELECT COUNT(1) FROM note_index_records").fetchone()[0] or 0)
-        # Tantivy 模式下无法直接通过 SQL 查询索引行数，这里仅保留 SQL 侧计数。
         self.logger.info(
             "[检索巡检] 完成 "
-            f"memory_sql={sql_memory_count} note_sql={sql_note_count} auto_repaired=是"
+            f"memory_sql={sql_memory_count} auto_repaired=是"
         )
         return {
             "memory_sql_count": sql_memory_count,
             "memory_fts_count": -1,
-            "note_sql_count": sql_note_count,
-            "note_fts_count": -1,
             "auto_repaired": True,
         }
 
@@ -727,51 +604,6 @@ class MemorySqlManager:
     async def get_or_create_tag_ids(self, tag_names: List[str]) -> List[int]:
         return await asyncio.to_thread(self._get_or_create_tag_ids_sync, tag_names)
 
-    async def bind_note_tags(self, source_id: str, tag_names: List[str]) -> None:
-        await asyncio.to_thread(self._bind_note_tags_sync, source_id, tag_names)
-
-    def bind_note_tags_sync(self, source_id: str, tag_names: List[str]) -> None:
-        self._bind_note_tags_sync(source_id, tag_names)
-
-    def _bind_note_tags_sync(self, source_id: str, tag_names: List[str]) -> None:
-        sid = str(source_id or "").strip()
-        if not sid:
-            return
-        tag_ids = self._get_or_create_tag_ids_sync(tag_names)
-        with self._connect() as conn:
-            conn.execute("DELETE FROM note_tag_rel WHERE source_id = ?", (sid,))
-            if tag_ids:
-                conn.executemany(
-                    "INSERT OR IGNORE INTO note_tag_rel(source_id, tag_id) VALUES (?, ?)",
-                    [(sid, tid) for tid in tag_ids],
-                )
-            conn.commit()
-
-    def _bind_note_tags_with_conn(
-        self, conn: sqlite3.Connection, source_id: str, tag_names: List[str]
-    ) -> None:
-        sid = str(source_id or "").strip()
-        if not sid:
-            return
-        tag_ids = self._get_or_create_tag_ids_with_conn(conn, tag_names)
-        conn.execute("DELETE FROM note_tag_rel WHERE source_id = ?", (sid,))
-        if tag_ids:
-            conn.executemany(
-                "INSERT OR IGNORE INTO note_tag_rel(source_id, tag_id) VALUES (?, ?)",
-                [(sid, tid) for tid in tag_ids],
-            )
-
-    @staticmethod
-    def _safe_heading(value: Any) -> str:
-        text = str(value or "").strip()
-        return text[:500] if text else ""
-
-    @staticmethod
-    def _build_note_vector_text(tags: List[str]) -> str:
-        # notes_index 仅使用 tags 生成向量文本，避免正文/路径语义噪声
-        deduped = list(dict.fromkeys([str(t).strip() for t in tags if str(t).strip()]))
-        return " ".join(deduped).strip()
-
     @staticmethod
     def _alloc_next_note_short_id(conn: sqlite3.Connection) -> int:
         row = conn.execute(
@@ -784,84 +616,107 @@ class MemorySqlManager:
         )
         return next_id
 
-    async def upsert_note_index_entries(self, entries: List[Dict[str, Any]]) -> Dict[str, int]:
-        return await asyncio.to_thread(self._upsert_note_index_entries_sync, entries)
+    async def clear_note_file_registry(self) -> Dict[str, int]:
+        return await asyncio.to_thread(self._clear_note_file_registry_sync)
 
-    def _upsert_note_index_entries_sync(self, entries: List[Dict[str, Any]]) -> Dict[str, int]:
-        scanned = len(entries or [])
-        upserted = 0
-        failed = 0
-        synced_source_ids: List[str] = []
+    def _clear_note_file_registry_sync(self) -> Dict[str, int]:
         with self._connect() as conn:
-            for item in entries or []:
-                try:
-                    source_id = str(item.get("source_id") or "").strip()
-                    file_id = str(item.get("file_id") or "").strip()
-                    source_file_path = str(item.get("source_file_path") or "").strip()
-                    if not source_id or not file_id or not source_file_path:
-                        continue
-                    existing = conn.execute(
-                        "SELECT note_short_id FROM note_index_records WHERE source_id = ?",
-                        (source_id,),
-                    ).fetchone()
-                    if existing and existing["note_short_id"] is not None:
-                        note_short_id = int(existing["note_short_id"])
-                    else:
-                        note_short_id = self._alloc_next_note_short_id(conn)
-
-                    headings = [self._safe_heading(item.get(f"h{i}", "")) for i in range(1, 7)]
-                    tags = self._normalize_tags(item.get("tags") or [])
-                    total_lines = int(item.get("total_lines") or 0)
-                    updated_at = float(item.get("updated_at") or time.time())
-
-                    conn.execute(
-                        """
-                        INSERT INTO note_index_records(
-                            source_id, note_short_id, file_id, source_file_path,
-                            heading_h1, heading_h2, heading_h3,
-                            heading_h4, heading_h5, heading_h6,
-                            total_lines, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id) DO UPDATE SET
-                            note_short_id=excluded.note_short_id,
-                            file_id=excluded.file_id,
-                            source_file_path=excluded.source_file_path,
-                            heading_h1=excluded.heading_h1,
-                            heading_h2=excluded.heading_h2,
-                            heading_h3=excluded.heading_h3,
-                            heading_h4=excluded.heading_h4,
-                            heading_h5=excluded.heading_h5,
-                            heading_h6=excluded.heading_h6,
-                            total_lines=excluded.total_lines,
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            source_id,
-                            note_short_id,
-                            file_id,
-                            source_file_path,
-                            headings[0],
-                            headings[1],
-                            headings[2],
-                            headings[3],
-                            headings[4],
-                            headings[5],
-                            total_lines,
-                            updated_at,
-                        ),
-                    )
-                    # 使用同一连接写入 tags，避免事务内嵌套连接导致 SQLite 锁冲突
-                    self._bind_note_tags_with_conn(conn, source_id, tags)
-                    upserted += 1
-                    synced_source_ids.append(source_id)
-                except Exception:
-                    failed += 1
-                    self.logger.exception("笔记索引写入失败")
+            count = int(conn.execute("SELECT COUNT(1) FROM note_index_records").fetchone()[0] or 0)
+            conn.execute("DELETE FROM note_index_records")
+            conn.execute("UPDATE note_short_id_seq SET next_id = 0 WHERE id = 1")
             conn.commit()
-        if self._fts_ready and synced_source_ids:
-            for source_id in synced_source_ids:
-                self._sync_note_fts_by_source_id_sync(source_id)
-        return {"scanned": scanned, "upserted": upserted, "failed": failed}
+        return {"deleted": count}
+
+    async def upsert_note_file_entry(
+        self,
+        file_id: str,
+        source_file_path: str,
+        total_lines: int = 0,
+        updated_at: Optional[float] = None,
+    ) -> Dict[str, int]:
+        return await asyncio.to_thread(
+            self._upsert_note_file_entry_sync,
+            file_id,
+            source_file_path,
+            total_lines,
+            updated_at,
+        )
+
+    def _upsert_note_file_entry_sync(
+        self,
+        file_id: str,
+        source_file_path: str,
+        total_lines: int = 0,
+        updated_at: Optional[float] = None,
+    ) -> Dict[str, int]:
+        fid = str(file_id or "").strip()
+        rel_path = str(source_file_path or "").replace("\\", "/").strip().lstrip("/")
+        if not fid or not rel_path:
+            return {"scanned": 1, "upserted": 0, "failed": 1}
+
+        source_id = f"note_file_{fid}"
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT note_short_id FROM note_index_records WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+            if existing and existing["note_short_id"] is not None:
+                note_short_id = int(existing["note_short_id"])
+            else:
+                legacy = conn.execute(
+                    """
+                    SELECT note_short_id
+                    FROM note_index_records
+                    WHERE source_file_path = ? AND note_short_id IS NOT NULL
+                    ORDER BY note_short_id ASC
+                    LIMIT 1
+                    """,
+                    (rel_path,),
+                ).fetchone()
+                if legacy and legacy["note_short_id"] is not None:
+                    note_short_id = int(legacy["note_short_id"])
+                else:
+                    note_short_id = self._alloc_next_note_short_id(conn)
+
+            conn.execute(
+                """
+                DELETE FROM note_index_records
+                WHERE (file_id = ? OR source_file_path = ?) AND source_id <> ?
+                """,
+                (fid, rel_path, source_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO note_index_records(
+                    source_id, note_short_id, file_id, source_file_path,
+                    heading_h1, heading_h2, heading_h3,
+                    heading_h4, heading_h5, heading_h6,
+                    total_lines, updated_at
+                ) VALUES (?, ?, ?, ?, '', '', '', '', '', '', ?, ?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    note_short_id=excluded.note_short_id,
+                    file_id=excluded.file_id,
+                    source_file_path=excluded.source_file_path,
+                    heading_h1='',
+                    heading_h2='',
+                    heading_h3='',
+                    heading_h4='',
+                    heading_h5='',
+                    heading_h6='',
+                    total_lines=excluded.total_lines,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    source_id,
+                    note_short_id,
+                    fid,
+                    rel_path,
+                    int(total_lines or 0),
+                    float(updated_at or time.time()),
+                ),
+            )
+            conn.commit()
+        return {"scanned": 1, "upserted": 1, "failed": 0}
 
     async def delete_note_index_by_file_id(self, file_id: str) -> List[str]:
         return await asyncio.to_thread(self._delete_note_index_by_file_id_sync, file_id)
@@ -876,71 +731,9 @@ class MemorySqlManager:
                 (fid,),
             ).fetchall()
             source_ids = [str(row["source_id"]) for row in rows]
-            if source_ids:
-                placeholders = ",".join(["?" for _ in source_ids])
-                conn.execute(
-                    f"DELETE FROM note_tag_rel WHERE source_id IN ({placeholders})",
-                    tuple(source_ids),
-                )
             conn.execute("DELETE FROM note_index_records WHERE file_id = ?", (fid,))
             conn.commit()
-        if self._fts_ready and source_ids:
-            for source_id in source_ids:
-                self._fts_retriever.delete_note(source_id)
         return source_ids
-
-    async def get_note_index_by_source_ids(self, source_ids: List[str]) -> List[Dict[str, Any]]:
-        return await asyncio.to_thread(self._get_note_index_by_source_ids_sync, source_ids)
-
-    def _get_note_index_by_source_ids_sync(self, source_ids: List[str]) -> List[Dict[str, Any]]:
-        ids = [str(sid).strip() for sid in (source_ids or []) if str(sid).strip()]
-        if not ids:
-            return []
-        placeholders = ",".join(["?" for _ in ids])
-        sql = f"""
-            SELECT
-                nir.source_id,
-                nir.note_short_id,
-                nir.file_id,
-                nir.source_file_path,
-                nir.heading_h1,
-                nir.heading_h2,
-                nir.heading_h3,
-                nir.heading_h4,
-                nir.heading_h5,
-                nir.heading_h6,
-                nir.total_lines,
-                nir.updated_at,
-                IFNULL(tags.tags_text, '') AS tags_text
-            FROM note_index_records nir
-            LEFT JOIN (
-                SELECT
-                    ntr.source_id AS source_id,
-                    GROUP_CONCAT(gt.name, ', ') AS tags_text
-                FROM note_tag_rel ntr
-                JOIN global_tags gt ON gt.id = ntr.tag_id
-                GROUP BY ntr.source_id
-            ) tags ON tags.source_id = nir.source_id
-            WHERE nir.source_id IN ({placeholders})
-        """
-        with self._connect() as conn:
-            rows = conn.execute(sql, tuple(ids)).fetchall()
-        return [dict(row) for row in rows]
-
-    def _build_note_doc_text_map_by_ids(self, source_ids: List[str]) -> Dict[str, str]:
-        rows = self._get_note_index_by_source_ids_sync(source_ids)
-        row_map = {str(row.get("source_id") or ""): row for row in rows}
-        doc_text_map: Dict[str, str] = {}
-        for sid in source_ids:
-            row = row_map.get(str(sid))
-            if row is None:
-                continue
-            tags_text = str(row.get("tags_text") or "")
-            h_values = [str(row.get(f"heading_h{i}") or "").strip() for i in range(1, 7)]
-            heading_text = " / ".join([h for h in h_values if h])
-            source_file_path = str(row.get("source_file_path") or "")
-            doc_text_map[str(sid)] = f"{source_file_path}\n{heading_text}\n{tags_text}".strip()
-        return doc_text_map
 
     def _build_memory_doc_text_map_by_ids(self, memory_ids: List[str]) -> Dict[str, str]:
         memories = self._get_memories_by_ids_sync(memory_ids)
@@ -957,133 +750,6 @@ class MemorySqlManager:
                 f"{getattr(mem, 'judgment', '')}\n{getattr(mem, 'reasoning', '')}\n{tags}"
             ).strip()
         return doc_text_map
-
-    async def search_note_index_by_tags(
-        self,
-        query: str,
-        limit: int = 20,
-        vector_scores: Optional[Dict[str, float]] = None,
-    ) -> List[Dict[str, Any]]:
-        text = str(query or "").strip()
-        if not text:
-            return []
-
-        await asyncio.to_thread(self._ensure_fts_ready_sync)
-        candidate_limit = max(10, int(limit) * 6)
-        # rerank 依赖当前事件循环任务上下文，不能在线程里 asyncio.run。
-        if self._hybrid_engine.has_rerank():
-            hits = await self._hybrid_engine.search_with_strategy(
-                query=text,
-                limit=max(1, int(limit)),
-                candidate_limit=candidate_limit,
-                bm25_limit=candidate_limit,
-                vector_scores=vector_scores,
-                bm25_only_search=lambda q, k: self._fts_retriever.search_note_bm25_only(query=q, limit=k),
-                fusion_search=lambda q, k, bk, scores: self._fts_retriever.search_note(
-                    query=q,
-                    limit=k,
-                    fts_limit=bk,
-                    fts_weight=0.3,
-                    vector_weight=0.7,
-                    vector_scores=scores,
-                    min_final_score=0.0,
-                ),
-                build_doc_text_map=self._build_note_doc_text_map_by_ids,
-            )
-        else:
-            hits = await asyncio.to_thread(
-                self._search_note_index_by_tags_without_rerank_sync,
-                text,
-                limit,
-                vector_scores,
-            )
-
-        if not hits:
-            return []
-
-        source_ids = [
-            str(item.get("id") or "").strip()
-            for item in hits
-            if str(item.get("id") or "").strip()
-        ]
-        rows = await asyncio.to_thread(self._get_note_index_by_source_ids_sync, source_ids)
-        row_map = {str(row.get("source_id") or ""): row for row in rows}
-
-        result: List[Dict[str, Any]] = []
-        for item in hits:
-            source_id = str(item.get("id") or "").strip()
-            row = row_map.get(source_id)
-            if row is None:
-                continue
-            row = dict(row)
-            row["similarity"] = float(item.get("final_score", 0.0))
-            result.append(row)
-        return result[: max(0, int(limit))]
-
-    def _search_note_index_by_tags_without_rerank_sync(
-        self,
-        query: str,
-        limit: int,
-        vector_scores: Optional[Dict[str, float]],
-    ) -> List[Dict[str, Any]]:
-        text = str(query or "").strip()
-        if not text:
-            return []
-        self._ensure_fts_ready_sync()
-        candidate_limit = max(10, int(limit) * 6)
-        if vector_scores:
-            return self._fts_retriever.search_note(
-                query=text,
-                limit=max(1, int(limit)),
-                fts_limit=candidate_limit,
-                fts_weight=0.3,
-                vector_weight=0.7,
-                vector_scores=vector_scores,
-                min_final_score=0.0,
-            )
-        return self._fts_retriever.search_note_bm25_only(
-            query=text,
-            limit=max(1, int(limit)),
-        )
-
-    async def list_note_index_vector_rows(self) -> List[Dict[str, str]]:
-        return await asyncio.to_thread(self._list_note_index_vector_rows_sync)
-
-    def _list_note_index_vector_rows_sync(self) -> List[Dict[str, str]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    nir.source_id,
-                    nir.note_short_id,
-                    nir.source_file_path,
-                    nir.heading_h1,
-                    nir.heading_h2,
-                    nir.heading_h3,
-                    nir.heading_h4,
-                    nir.heading_h5,
-                    nir.heading_h6,
-                    nir.total_lines,
-                    IFNULL(tags.tags_text, '') AS tags_text
-                FROM note_index_records nir
-                LEFT JOIN (
-                    SELECT
-                        ntr.source_id AS source_id,
-                        GROUP_CONCAT(gt.name, ' ') AS tags_text
-                    FROM note_tag_rel ntr
-                    JOIN global_tags gt ON gt.id = ntr.tag_id
-                    GROUP BY ntr.source_id
-                ) tags ON tags.source_id = nir.source_id
-                """
-            ).fetchall()
-        result: List[Dict[str, str]] = []
-        for row in rows:
-            tags = [t for t in str(row["tags_text"] or "").split(" ") if t]
-            vector_text = self._build_note_vector_text(tags=tags)
-            if not vector_text:
-                continue
-            result.append({"id": str(row["source_id"] or ""), "vector_text": vector_text})
-        return [r for r in result if r["id"]]
 
     async def get_note_index_by_short_id(self, note_short_id: int) -> Optional[Dict[str, Any]]:
         return await asyncio.to_thread(self._get_note_index_by_short_id_sync, note_short_id)
@@ -1154,41 +820,19 @@ class MemorySqlManager:
             ).fetchall()
         return [str(row["memory_id"]) for row in rows]
 
-    async def search_note_source_ids_by_tag_ids(self, tag_ids: List[int]) -> List[str]:
-        return await asyncio.to_thread(self._search_note_source_ids_by_tag_ids_sync, tag_ids)
-
-    def _search_note_source_ids_by_tag_ids_sync(self, tag_ids: List[int]) -> List[str]:
-        ids = [int(tid) for tid in (tag_ids or [])]
-        if not ids:
-            return []
-        placeholders = ",".join(["?" for _ in ids])
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT source_id
-                FROM note_tag_rel
-                WHERE tag_id IN ({placeholders})
-                GROUP BY source_id
-                ORDER BY COUNT(DISTINCT tag_id) DESC
-                """,
-                tuple(ids),
-            ).fetchall()
-        return [str(row["source_id"]) for row in rows]
-
     async def unified_tag_hit_search(self, query_text: str) -> Dict[str, Any]:
         """
-        统一 tags 命中入口：一次解析，返回命中 tag_ids + 记忆ID + 笔记source_id。
+        统一 tags 命中入口：一次解析，返回命中 tag_ids + 记忆ID。
         """
         return await asyncio.to_thread(self._unified_tag_hit_search_sync, query_text)
 
     def _unified_tag_hit_search_sync(self, query_text: str) -> Dict[str, Any]:
         tag_ids = self._find_matched_tag_ids_sync(query_text)
         memory_ids = self._search_memory_ids_by_tag_ids_sync(tag_ids)
-        note_source_ids = self._search_note_source_ids_by_tag_ids_sync(tag_ids)
         return {
             "tag_ids": tag_ids,
             "memory_ids": memory_ids,
-            "note_source_ids": note_source_ids,
+            "note_source_ids": [],
         }
 
     async def remember(
@@ -1663,7 +1307,6 @@ class MemorySqlManager:
                 fts_weight=0.3,
                 vector_weight=0.7,
                 vector_scores=scores,
-                min_final_score=0.0,
             ),
             build_doc_text_map=self._build_memory_doc_text_map_by_ids,
         )
@@ -1680,6 +1323,11 @@ class MemorySqlManager:
             for item in hits
             if str(item.get("id") or "").strip()
         }
+        score_kind_map = {
+            str(item.get("id") or "").strip(): str(item.get("score_kind") or "normalized")
+            for item in hits
+            if str(item.get("id") or "").strip()
+        }
         memories = self._get_memories_by_ids_sync(ordered_ids)
         memory_map = {mem.id: mem for mem in memories}
 
@@ -1691,7 +1339,8 @@ class MemorySqlManager:
             if not self._is_scope_allowed(getattr(mem, "memory_scope", "public"), memory_scope):
                 continue
             final_score = float(score_map.get(memory_id, 0.0))
-            if final_score < 0.5:
+            score_kind = score_kind_map.get(memory_id, "normalized")
+            if score_kind != "rrf" and final_score < 0.5:
                 continue
             mem.similarity = final_score
             ordered.append(mem)

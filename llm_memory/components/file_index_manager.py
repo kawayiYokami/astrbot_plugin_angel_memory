@@ -13,6 +13,8 @@ from .sqlite_database_manager import SQLiteDatabaseManager
 class FileIndexManager(SQLiteDatabaseManager):
     """文件索引管理器 - 将文件路径映射为整数ID"""
 
+    SCHEMA_VERSION = "note_chunks_md_txt_v1"
+
     def __init__(self, data_directory: str, provider_id: str = "default"):
         """
         初始化文件索引管理器
@@ -35,9 +37,13 @@ class FileIndexManager(SQLiteDatabaseManager):
         """获取文件索引表名"""
         return f"file_index_{self.safe_table_provider_id}"
 
+    def _get_meta_table_name(self) -> str:
+        return f"{self._get_table_name()}_meta"
+
     def _init_database(self) -> None:
         """初始化文件索引数据库表结构"""
         table_name = self._get_table_name()
+        meta_table_name = self._get_meta_table_name()
         query = f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +52,56 @@ class FileIndexManager(SQLiteDatabaseManager):
             )
         """
         self._execute_single(query, caller="初始化文件索引表")
+        self._execute_single(
+            f"""
+            CREATE TABLE IF NOT EXISTS {meta_table_name} (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """,
+            caller="初始化文件索引元数据表",
+        )
+        self.was_version_reset = self._ensure_schema_version()
         self.logger.debug(f"文件索引表初始化完成: {table_name}")
+
+    def _ensure_schema_version(self) -> bool:
+        table_name = self._get_table_name()
+        meta_table_name = self._get_meta_table_name()
+        cursor = self._execute_query(
+            f"SELECT value FROM {meta_table_name} WHERE key = ?",
+            ("schema_version",),
+            caller="读取文件索引版本",
+        )
+        row = cursor.fetchone()
+        current_version = str(row[0]) if row else ""
+        if current_version == self.SCHEMA_VERSION:
+            return False
+
+        self.logger.info(
+            "[文件索引] 版本不匹配，开始重建 "
+            f"旧版本={current_version or '空'} 新版本={self.SCHEMA_VERSION}"
+        )
+        self._execute_single(
+            f"DELETE FROM {table_name}",
+            caller="清空旧文件索引",
+            auto_commit=False,
+        )
+        self._execute_single(
+            "DELETE FROM sqlite_sequence WHERE name = ?",
+            (table_name,),
+            caller="重置文件索引自增序列",
+            auto_commit=False,
+        )
+        self._execute_single(
+            f"""
+            INSERT INTO {meta_table_name}(key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            ("schema_version", self.SCHEMA_VERSION),
+            caller="写入文件索引版本",
+        )
+        return True
 
     def _load_all_files(self) -> None:
         """

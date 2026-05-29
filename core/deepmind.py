@@ -114,11 +114,11 @@ class DeepMind:
         self.sleep_interval = memory_behavior.get("sleep_interval") if isinstance(memory_behavior, dict) else getattr(config, "sleep_interval", 3600)
 
         # 笔记 Top-K 参数（候选固定为注入的 7 倍）
-        note_topk = getattr(config, "note_topk", {})
+        note_assistant = getattr(config, "note_assistant", {})
         note_top_k = (
-            int(note_topk.get("top_k", 8))
-            if isinstance(note_topk, dict)
-            else int(getattr(config, "note_top_k", 8))
+            int(note_assistant.get("top_k", 3))
+            if isinstance(note_assistant, dict)
+            else int(getattr(config, "note_top_k", 3))
         )
         if note_top_k < 0:
             note_top_k = 0

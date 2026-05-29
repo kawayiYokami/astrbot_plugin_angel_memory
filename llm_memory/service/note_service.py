@@ -1,17 +1,16 @@
-"""
-笔记服务（重构版）
+"""笔记服务。
 
-仅保留中央 SQL 索引 + notes_index 轻量向量索引链路。
-不再支持“正文全量向量化”旧链路，也不提供回退。
+当前笔记检索只走切片 SQLite + Tantivy 搜索；中央 SQL 仅保留文件级
+note_short_id 注册表，用于 angel_note_read 定位原始文件。
 """
 
 import asyncio
-import hashlib
-import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from .id_service import IDService
+from ..parser.note_chunker import chunk_file
+from ..components.note_chunk_search import NoteChunkSearchEngine
 
 try:
     from astrbot.api import logger
@@ -34,35 +33,15 @@ class NoteOperationError(NoteServiceError):
 
 
 class NoteService:
-    def __init__(self, plugin_context=None, vector_store=None):
+    def __init__(self, plugin_context=None):
         self.logger = logger
         self.plugin_context = plugin_context
-        self.vector_store = vector_store
-        self.notes_index_collection = None
-        self.collections_initialized = False
 
         if plugin_context:
             self.id_service = IDService.from_plugin_context(plugin_context)
             self.logger.info("笔记服务初始化完成（PluginContext模式）")
-        elif vector_store:
-            self.id_service = IDService()
-            self._initialize_collections()
-            self.logger.info("笔记服务初始化完成（兼容模式）")
         else:
-            raise ValueError("必须提供 plugin_context 或 vector_store 参数")
-
-    def _initialize_collections(self):
-        if not self.vector_store:
-            return
-        self.notes_index_collection = (
-            self.vector_store.get_or_create_collection_with_dimension_check("notes_index")
-        )
-        self.collections_initialized = True
-
-    def set_vector_store(self, vector_store):
-        self.vector_store = vector_store
-        self._initialize_collections()
-        self.logger.info("FAISS向量索引已设置，notes_index集合初始化完成")
+            raise ValueError("必须提供 plugin_context 参数")
 
     def _get_memory_sql_manager(self):
         if self.plugin_context is None:
@@ -84,8 +63,12 @@ class NoteService:
         threshold: float = 0.5,
     ) -> List[Dict]:
         del tag_filter, threshold
-        rows = await self._search_notes_v2(query=query, recall_count=max_results)
-        return rows[:max_results]
+        search_engine = self._get_chunk_search_engine()
+        if search_engine is None:
+            return []
+        raw_results = await search_engine.search_async(query=query, limit=max_results)
+        results = self._format_chunk_results(raw_results)
+        return self._enrich_with_short_ids(results)
 
     async def search_notes_by_top_k(
         self,
@@ -95,9 +78,64 @@ class NoteService:
         tag_filter: List[str] = None,
         vector: Optional[List[float]] = None,
     ) -> List[Dict]:
-        del tag_filter
-        candidates = await self._search_notes_v2(query=query, recall_count=recall_count, vector=vector)
-        return candidates[: max(0, int(top_k))]
+        del tag_filter, vector
+        search_engine = self._get_chunk_search_engine()
+        if search_engine is None:
+            return []
+        raw_results = await search_engine.search_async(query=query, limit=max(0, int(top_k)))
+        results = self._format_chunk_results(raw_results)
+        return self._enrich_with_short_ids(results)
+
+    def _get_chunk_search_engine(self) -> Optional[NoteChunkSearchEngine]:
+        """获取切片搜索引擎实例"""
+        if self.plugin_context is None:
+            return None
+        engine = self.plugin_context.get_component("note_chunk_search")
+        return engine
+
+    @staticmethod
+    def _format_chunk_results(raw_results: List[Dict]) -> List[Dict]:
+        """将切片搜索结果格式化为统一的笔记结果格式"""
+        formatted: List[Dict] = []
+        for r in raw_results:
+            source_file_path = str(r.get("source_file_path") or "")
+            content = str(r.get("content") or "").strip()
+            line_start = int(r.get("line_start", 0))
+            line_end = int(r.get("line_end", 0))
+            formatted.append({
+                "id": f"{r.get('file_id', '')}#{r.get('chunk_index', 0)}",
+                "content": content,
+                "metadata": {
+                    "source_file_path": source_file_path,
+                    "file_id": str(r.get("file_id") or ""),
+                    "line_start": line_start,
+                    "line_end": line_end,
+                    "chunk_index": int(r.get("chunk_index", 0)),
+                    "note_short_id": -1,
+                },
+                "tags": [],
+                "similarity": float(r.get("score", 0.0)),
+            })
+        return formatted
+
+    def _enrich_with_short_ids(self, results: List[Dict]) -> List[Dict]:
+        """为结果补充 note_short_id"""
+        if not results:
+            return results
+        memory_sql_manager = None
+        try:
+            memory_sql_manager = self._get_memory_sql_manager()
+        except Exception:
+            return results
+        paths = list({r.get("metadata", {}).get("source_file_path", "") for r in results if r.get("metadata", {}).get("source_file_path")})
+        if not paths:
+            return results
+        path_to_short_id = memory_sql_manager.get_short_ids_by_paths_sync(paths)
+        for r in results:
+            path = r.get("metadata", {}).get("source_file_path", "")
+            if path in path_to_short_id:
+                r["metadata"]["note_short_id"] = path_to_short_id[path]
+        return results
 
     async def _search_notes_v2(
         self,
@@ -105,96 +143,22 @@ class NoteService:
         recall_count: int = 100,
         vector: Optional[List[float]] = None,
     ) -> List[Dict]:
-        memory_sql_manager = self._get_memory_sql_manager()
-
-        rows: List[Dict] = []
-        if self.vector_store is not None and self.notes_index_collection is not None:
-            try:
-                recalled = await self.vector_store.recall_note_source_ids(
-                    collection=self.notes_index_collection,
-                    query=query,
-                    limit=recall_count,
-                    vector=vector,
-                    similarity_threshold=0.5,
-                )
-            except Exception as e:
-                # notes_index 在睡眠维护中可能被重建，旧句柄会失效；此处自动刷新并重试一次。
-                msg = str(e)
-                if "does not exist" in msg or "Error getting collection" in msg:
-                    self.logger.warning("notes_index 集合句柄已失效，正在自动刷新并重试。")
-                    self.notes_index_collection = (
-                        self.vector_store.get_or_create_collection_with_dimension_check("notes_index")
-                    )
-                    recalled = await self.vector_store.recall_note_source_ids(
-                        collection=self.notes_index_collection,
-                        query=query,
-                        limit=recall_count,
-                        vector=vector,
-                        similarity_threshold=0.5,
-                    )
-                else:
-                    raise
-            source_ids = [sid for sid, _ in recalled]
-            score_map = {sid: score for sid, score in recalled}
-            rows = await memory_sql_manager.search_note_index_by_tags(
-                query=query,
-                limit=recall_count,
-                vector_scores=score_map if source_ids else None,
-            )
-        else:
-            rows = await memory_sql_manager.search_note_index_by_tags(query=query, limit=recall_count)
-            for row in rows:
-                raw_similarity = row.get("similarity", None)
-                if raw_similarity is None:
-                    raw_similarity = row.get("hit_count", 0)
-                try:
-                    row["similarity"] = float(raw_similarity)
-                except (TypeError, ValueError):
-                    fallback = row.get("hit_count", 0)
-                    try:
-                        row["similarity"] = float(fallback)
-                    except (TypeError, ValueError):
-                        row["similarity"] = 0.0
-
-        return [self._format_note_index_row(row) for row in rows]
-
-    @staticmethod
-    def _format_note_index_row(row: Dict) -> Dict:
-        tags_text = str(row.get("tags_text") or "")
-        tags = [t.strip() for t in tags_text.split(",") if t.strip()]
-        h_values = [str(row.get(f"heading_h{i}") or "").strip() for i in range(1, 7)]
-        heading_text = " / ".join([h for h in h_values if h]) or "(无标题)"
-        source_file_path = str(row.get("source_file_path") or "")
-        preview = f"{source_file_path} | {heading_text}"
-        return {
-            "id": str(row.get("source_id") or ""),
-            "content": preview,
-            "metadata": {
-                "source_id": str(row.get("source_id") or ""),
-                "note_short_id": int(row.get("note_short_id") or -1),
-                "source_file_path": source_file_path,
-                "file_id": str(row.get("file_id") or ""),
-                "heading_h1": h_values[0],
-                "heading_h2": h_values[1],
-                "heading_h3": h_values[2],
-                "heading_h4": h_values[3],
-                "heading_h5": h_values[4],
-                "heading_h6": h_values[5],
-                "total_lines": int(row.get("total_lines") or 0),
-                "tags": tags_text,
-                "updated_at": float(row.get("updated_at") or 0),
-            },
-            "tags": tags,
-            "similarity": float(row.get("similarity", 0.0)),
-        }
+        del recall_count, vector
+        return await self.search_notes(query=query)
 
     def get_note(self, note_id: str) -> Dict:
         raise NoteOperationError(
             f"已废弃按 note_id 读取正文接口（note_id={note_id}）。"
-            "请改用 note_recall(note_short_id + 行范围)。"
+            "请改用 angel_note_read(note_short_id + offset/limit)。"
         )
 
-    def parse_and_store_file_sync(self, file_path: str, relative_path: str = None) -> tuple:
+    def parse_and_store_file_sync(
+        self,
+        file_path: str,
+        relative_path: str = None,
+        *,
+        update_search_index: bool = True,
+    ) -> tuple:
         import time
 
         timings: Dict[str, float] = {}
@@ -207,6 +171,10 @@ class NoteService:
         if relative_path is None:
             relative_path = file_obj.name
 
+        if file_obj.suffix.lower() not in {".md", ".txt"}:
+            self.logger.info(f"跳过不支持的笔记文件类型: {relative_path}")
+            return 0, timings
+
         t0 = time.time()
         file_id = self.id_service.file_to_id(relative_path, file_timestamp)
         timings["id_lookup"] = (time.time() - t0) * 1000
@@ -214,115 +182,91 @@ class NoteService:
         memory_sql_manager = self._get_memory_sql_manager()
 
         t0 = time.time()
-        asyncio.run(memory_sql_manager.delete_note_index_by_file_id(str(file_id)))
-        timings["delete_old_index"] = (time.time() - t0) * 1000
-
-        t0 = time.time()
-        entries = self._build_note_index_entries(file_path, relative_path, str(file_id), file_timestamp)
+        total_lines = self._count_total_lines(file_path)
         timings["parse"] = (time.time() - t0) * 1000
 
         t0 = time.time()
-        asyncio.run(memory_sql_manager.upsert_note_index_entries(entries))
+        asyncio.run(
+            memory_sql_manager.upsert_note_file_entry(
+                file_id=str(file_id),
+                source_file_path=relative_path,
+                total_lines=total_lines,
+                updated_at=file_timestamp,
+            )
+        )
         timings["store_total"] = (time.time() - t0) * 1000
 
-        return len(entries), timings
+        # 切片生成与持久化；批量重建时搜索索引由调用方统一重建。
+        t0 = time.time()
+        chunk_count = self._build_and_store_chunks(
+            file_path,
+            relative_path,
+            str(file_id),
+            update_search_index=update_search_index,
+            timings=timings,
+        )
+        timings["chunk_total"] = (time.time() - t0) * 1000
+        timings["chunk_count"] = chunk_count
 
-    @staticmethod
-    def _entry_to_vector_row(entry: Dict) -> Optional[Dict[str, str]]:
-        source_id = str(entry.get("source_id") or "").strip()
-        tags = [str(x).strip() for x in (entry.get("tags") or []) if str(x).strip()]
-        if not source_id or not tags:
-            return None
-        return {"id": source_id, "vector_text": " ".join(dict.fromkeys(tags))}
+        return chunk_count, timings
 
-    @staticmethod
-    def _extract_path_tags(relative_path: str) -> List[str]:
-        normalized = str(relative_path or "").replace("\\", "/").strip("/")
-        if not normalized:
-            return []
-        return [part.strip() for part in normalized.split("/") if part.strip()]
-
-    @staticmethod
-    def _safe_text(text: str) -> str:
-        return re.sub(r"\s+", " ", str(text or "").strip())
-
-    def _build_source_id(self, relative_path: str, h_values: List[str], section_index: int) -> str:
-        raw = f"{relative_path}|{'|'.join(h_values)}|{section_index}"
-        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-        return f"note_{digest[:32]}"
-
-    def _build_markdown_entries(
+    def _build_and_store_chunks(
         self,
-        content: str,
+        file_path: str,
         relative_path: str,
         file_id: str,
-        updated_at: int,
-        total_lines: int,
-    ) -> List[Dict]:
-        lines = content.split("\n")
-        header_re = re.compile(r"^(#{1,6})\s+(.+)$")
-        headings: List[Tuple[int, str, int]] = []
-        for idx, line in enumerate(lines):
-            match = header_re.match(line)
-            if not match:
-                continue
-            level = len(match.group(1))
-            text = self._safe_text(match.group(2))
-            headings.append((level, text, idx))
+        *,
+        update_search_index: bool = True,
+        timings: Optional[Dict[str, float]] = None,
+    ) -> int:
+        """对文件执行切片，写入切片库，并可选更新搜索索引。"""
+        if Path(file_path).suffix.lower() not in {".md", ".txt"}:
+            return 0
+        try:
+            import time
 
-        path_tags = self._extract_path_tags(relative_path)
-        if not headings:
-            return [
-                {
-                    "source_id": self._build_source_id(relative_path, ["", "", "", "", "", ""], 0),
-                    "file_id": file_id,
-                    "source_file_path": relative_path,
-                    "h1": "",
-                    "h2": "",
-                    "h3": "",
-                    "h4": "",
-                    "h5": "",
-                    "h6": "",
-                    "total_lines": int(total_lines),
-                    "tags": list(dict.fromkeys(path_tags)),
-                    "updated_at": updated_at,
-                }
-            ]
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            if not content.strip():
+                return 0
+            t0 = time.time()
+            chunks = chunk_file(content, relative_path)
+            if timings is not None:
+                timings["chunk_generate"] = (time.time() - t0) * 1000
+            if not chunks:
+                return 0
 
-        # 叶子节点索引：仅为“没有子标题”的标题节点建索引
-        entries: List[Dict] = []
-        current_h = ["", "", "", "", "", ""]
-        leaf_index = 0
-        for idx, (level, text, _) in enumerate(headings):
-            current_h[level - 1] = text
-            for j in range(level, 6):
-                current_h[j] = ""
+            count = len(chunks)
+            if self.plugin_context is not None:
+                chunk_store = self.plugin_context.get_component("note_chunk_store")
+                if chunk_store is not None:
+                    try:
+                        t0 = time.time()
+                        count = chunk_store.upsert_chunks(
+                            file_id=file_id,
+                            source_file_path=relative_path,
+                            chunks=chunks,
+                        )
+                        if timings is not None:
+                            timings["chunk_store"] = (time.time() - t0) * 1000
+                    except Exception as e:
+                        self.logger.warning(f"切片存储写入失败（不影响主流程）: {e}")
 
-            next_level = headings[idx + 1][0] if idx + 1 < len(headings) else 0
-            is_leaf = (idx + 1 >= len(headings)) or (next_level <= level)
-            if not is_leaf:
-                continue
-
-            leaf_index += 1
-            tags = list(dict.fromkeys(path_tags + [h for h in current_h if h]))
-            entries.append(
-                {
-                    "source_id": self._build_source_id(relative_path, current_h, leaf_index),
-                    "file_id": file_id,
-                    "source_file_path": relative_path,
-                    "h1": current_h[0],
-                    "h2": current_h[1],
-                    "h3": current_h[2],
-                    "h4": current_h[3],
-                    "h5": current_h[4],
-                    "h6": current_h[5],
-                    "total_lines": int(total_lines),
-                    "tags": tags,
-                    "updated_at": updated_at,
-                }
-            )
-
-        return entries
+            if update_search_index:
+                search_engine = self._get_chunk_search_engine()
+                if search_engine is not None:
+                    t0 = time.time()
+                    count = search_engine.index_chunks(
+                        file_id=file_id,
+                        source_file_path=relative_path,
+                        chunks=chunks,
+                    )
+                    if timings is not None:
+                        timings["chunk_search_index"] = (time.time() - t0) * 1000
+            return count
+        except Exception as e:
+            self.logger.warning(f"切片处理失败（不影响主流程）: {e}")
+            return 0
 
     @staticmethod
     def _count_total_lines(file_path: str) -> int:
@@ -334,44 +278,6 @@ class NoteService:
         if not text:
             return 0
         return len(text.splitlines())
-
-    def _build_note_index_entries(
-        self,
-        file_path: str,
-        relative_path: str,
-        file_id: str,
-        updated_at: int,
-    ) -> List[Dict]:
-        total_lines = self._count_total_lines(file_path)
-        extension = Path(file_path).suffix.lower()
-        if extension in [".md", ".txt"]:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except UnicodeDecodeError:
-                content = ""
-            if extension == ".md":
-                return self._build_markdown_entries(
-                    content, relative_path, file_id, updated_at, total_lines
-                )
-
-        path_tags = self._extract_path_tags(relative_path)
-        return [
-            {
-                "source_id": self._build_source_id(relative_path, ["", "", "", "", "", ""], 0),
-                "file_id": file_id,
-                "source_file_path": relative_path,
-                "h1": "",
-                "h2": "",
-                "h3": "",
-                "h4": "",
-                "h5": "",
-                "h6": "",
-                "total_lines": int(total_lines),
-                "tags": path_tags,
-                "updated_at": updated_at,
-            }
-        ]
 
     def remove_file_data(self, file_path: str) -> bool:
         try:
@@ -387,12 +293,22 @@ class NoteService:
     def remove_file_data_by_file_id(self, file_id: int) -> bool:
         try:
             memory_sql_manager = self._get_memory_sql_manager()
-            source_ids = asyncio.run(memory_sql_manager.delete_note_index_by_file_id(str(file_id)))
-            if self.vector_store is not None and self.notes_index_collection is not None and source_ids:
+            asyncio.run(memory_sql_manager.delete_note_index_by_file_id(str(file_id)))
+
+            if self.plugin_context is not None:
+                chunk_store = self.plugin_context.get_component("note_chunk_store")
+                if chunk_store is not None:
+                    try:
+                        chunk_store.delete_by_file_id(str(file_id))
+                    except Exception as e:
+                        self.logger.warning(f"删除切片存储失败（不影响主流程）: {e}")
+
+            search_engine = self._get_chunk_search_engine()
+            if search_engine is not None:
                 try:
-                    self.notes_index_collection.delete(ids=source_ids)
+                    search_engine.delete_by_file_id(str(file_id))
                 except Exception as e:
-                    self.logger.warning(f"删除 notes_index 缓存失败（不影响主流程）: {e}")
+                    self.logger.warning(f"删除切片索引失败（不影响主流程）: {e}")
             return True
         except Exception as e:
             self.logger.error(f"根据file_id删除文件数据失败: {file_id}, 错误: {e}")
@@ -418,8 +334,8 @@ class NoteService:
 
     def get_status(self):
         return {
-            "ready": self.collections_initialized,
-            "has_vector_store": self.vector_store is not None,
+            "ready": self.plugin_context is not None,
+            "has_vector_store": False,
             "has_plugin_context": self.plugin_context is not None,
             "provider_id": self.id_service.provider_id if hasattr(self, "id_service") else None,
         }

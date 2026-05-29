@@ -81,7 +81,7 @@ class MemoryConstants:
     SHORT_TERM_MEMORY_CAPACITY = 1.0
     SLEEP_INTERVAL = 3600  # 默认睡眠间隔（秒）
     DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
-    NOTE_TOP_K = 8  # 默认注入笔记数量（候选固定为 7 倍）
+    NOTE_TOP_K = 3  # 默认注入笔记数量（候选固定为 7 倍）
 
     # 时间常量（秒）
     TIME_SECOND = 1
@@ -175,10 +175,17 @@ class MemoryConfig:
         )
 
         # 笔记 Top-K 配置（候选固定为注入的 7 倍）
-        note_topk = config_get("note_topk", {})
+        note_assistant = config_get("note_assistant", {})
+        if not isinstance(note_assistant, dict):
+            note_assistant = {}
+        note_topk_raw = note_assistant.get("top_k", None)
+        if note_topk_raw is None:
+            # 兼容旧格式
+            note_topk = config_get("note_topk", {})
+            note_topk_raw = note_topk.get("top_k", MemoryConstants.NOTE_TOP_K) if isinstance(note_topk, dict) else MemoryConstants.NOTE_TOP_K
         self._note_top_k = ConfigValidator.validate_non_negative_int(
-            note_topk.get("top_k", MemoryConstants.NOTE_TOP_K),
-            "note_topk.top_k",
+            note_topk_raw,
+            "note_assistant.top_k",
             max_value=1000,
         )
         self._note_candidate_top_k = self._note_top_k * 7

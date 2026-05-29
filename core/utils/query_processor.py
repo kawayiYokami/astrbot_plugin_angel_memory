@@ -315,22 +315,6 @@ class QueryProcessor:
         vector = await self._precompute_rag_vector(processed_query, event)
         return processed_query, vector
 
-    async def process_query_for_notes_with_vector(self, query: str, event: AstrMessageEvent) -> Tuple[str, Optional[List[float]]]:
-        """
-        笔记检索的查询词处理（带向量预计算）
-
-        Args:
-            query: 原始查询字符串
-            event: 消息事件
-
-        Returns:
-            (处理后的查询词, 预计算的向量)
-        """
-        processed_query = self.process_query_for_notes(query, event)
-        vector = await self._precompute_rag_vector(processed_query, event)
-        return processed_query, vector
-
-
 # 全局单例实例
 _query_processor_instance = None
 

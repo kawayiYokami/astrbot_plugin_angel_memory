@@ -2,7 +2,7 @@
 SQLite数据库管理器 - 提供基础的连接管理和CRUD操作
 
 这个模块提供SQLite数据库的通用管理功能，包括连接池、
-批量操作、安全验证等，为FileIndexManager和TagManager提供
+批量操作、安全验证等，为FileIndexManager提供
 统一的技术基础设施。
 """
 

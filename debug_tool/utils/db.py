@@ -424,9 +424,7 @@ class DBManager:
                     (
                         SELECT COUNT(*) FROM memory_tag_rel mtr WHERE mtr.tag_id = gt.id
                     ) AS memory_refs,
-                    (
-                        SELECT COUNT(*) FROM note_tag_rel ntr WHERE ntr.tag_id = gt.id
-                    ) AS note_refs
+                    0 AS note_refs
                 FROM global_tags gt
                 {where_sql}
                 ORDER BY (memory_refs + note_refs) DESC, gt.id ASC
@@ -528,25 +526,20 @@ class DBManager:
             logger.error("[调试工具] 统一标签命中搜索失败: %s", e, exc_info=True)
             return {"matched_tags": [], "matched_tag_ids": [], "memory_hits": [], "error": str(e)}
 
-    # ===== notes index =====
+    # ===== note file registry =====
 
     def get_note_index_stats(self) -> Dict[str, int]:
-        """获取笔记索引统计：笔记记录总数、笔记标签关联总数"""
+        """获取笔记文件注册表统计。"""
         if not self.central_conn:
-            return {"note_index_count": 0, "note_tag_rel_count": 0}
+            return {"note_index_count": 0}
         try:
             cur = self.central_conn.cursor()
             cur.execute("SELECT COUNT(*) AS cnt FROM note_index_records")
             note_index_count = int((cur.fetchone() or {"cnt": 0})["cnt"])
-            cur.execute("SELECT COUNT(*) AS cnt FROM note_tag_rel")
-            note_tag_rel_count = int((cur.fetchone() or {"cnt": 0})["cnt"])
-            return {
-                "note_index_count": note_index_count,
-                "note_tag_rel_count": note_tag_rel_count,
-            }
+            return {"note_index_count": note_index_count}
         except Exception as e:
             logger.error("[调试工具] 笔记索引统计查询失败: %s", e, exc_info=True)
-            return {"note_index_count": 0, "note_tag_rel_count": 0}
+            return {"note_index_count": 0}
 
     def browse_note_index_records(
         self,
@@ -568,30 +561,15 @@ class DBManager:
                     .replace("%", "\\%")
                     .replace("_", "\\_")
                 )
-                where_sql = (
-                    "WHERE (nir.source_file_path LIKE ? ESCAPE '\\' "
-                    "OR IFNULL(nir.heading_h1,'') LIKE ? ESCAPE '\\' "
-                    "OR IFNULL(nir.heading_h2,'') LIKE ? ESCAPE '\\' "
-                    "OR IFNULL(nir.heading_h3,'') LIKE ? ESCAPE '\\' "
-                    "OR IFNULL(nir.heading_h4,'') LIKE ? ESCAPE '\\' "
-                    "OR IFNULL(nir.heading_h5,'') LIKE ? ESCAPE '\\' "
-                    "OR IFNULL(nir.heading_h6,'') LIKE ? ESCAPE '\\' "
-                    "OR IFNULL(tags.tags_text, '') LIKE ? ESCAPE '\\')"
-                )
+                where_sql = "WHERE nir.source_file_path LIKE ? ESCAPE '\\'"
                 like = f"%{kw}%"
-                params.extend([like, like, like, like, like, like, like, like])
+                params.append(like)
 
             total = 0
             if return_total:
                 sql_count = f"""
                     SELECT COUNT(*) AS cnt
                     FROM note_index_records nir
-                    LEFT JOIN (
-                        SELECT ntr.source_id, GROUP_CONCAT(gt.name, ', ') AS tags_text
-                        FROM note_tag_rel ntr
-                        JOIN global_tags gt ON gt.id = ntr.tag_id
-                        GROUP BY ntr.source_id
-                    ) tags ON tags.source_id = nir.source_id
                     {where_sql}
                 """
                 cur = self.central_conn.cursor()
@@ -609,14 +587,8 @@ class DBManager:
                     IFNULL(nir.heading_h6, '') AS heading_h6,
                     IFNULL(nir.total_lines, 0) AS total_lines,
                     nir.updated_at,
-                    IFNULL(tags.tags_text, '') AS tags_text
+                    '' AS tags_text
                 FROM note_index_records nir
-                LEFT JOIN (
-                    SELECT ntr.source_id, GROUP_CONCAT(gt.name, ', ') AS tags_text
-                    FROM note_tag_rel ntr
-                    JOIN global_tags gt ON gt.id = ntr.tag_id
-                    GROUP BY ntr.source_id
-                ) tags ON tags.source_id = nir.source_id
                 {where_sql}
                 ORDER BY nir.updated_at DESC, nir.source_file_path ASC
                 LIMIT ? OFFSET ?

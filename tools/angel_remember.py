@@ -12,7 +12,7 @@ except ImportError:
 
 @dataclass
 class CoreMemoryRememberTool(FunctionTool):
-    name: str = "core_memory_remember"
+    name: str = "angel_remember"
     description: str = (
         "保存与用户相关、长期有价值的记忆。"
         "支持新增(create)、更新(update)、合并(merge)三种动作。"

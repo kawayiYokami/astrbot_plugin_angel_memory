@@ -15,7 +15,7 @@ except ImportError:
 
 @dataclass
 class NoteCreateTool(FunctionTool):
-    name: str = "note_create"
+    name: str = "angel_note_create"
     description: str = (
         "把成体系的知识整理成一篇 Markdown 笔记并永久存档（自动纳入知识库，之后可检索）。"
         "两种时机会想写笔记：一是用户明确要求你记笔记、整理资料、写总结时（必须写）；"
@@ -108,4 +108,4 @@ class NoteCreateTool(FunctionTool):
             return f"笔记《{title}》已保存为 {filename}，但索引同步稍有延迟，稍后即可检索。"
 
         self.logger.info(f"{self.name}: 完成 笔记={filename} 标题={title}")
-        return f"学习笔记《{title}》已保存并归档为 {filename}，已纳入知识库索引，之后可通过检索或 note_recall 查看。"
+        return f"学习笔记《{title}》已保存并归档为 {filename}，已纳入知识库索引，之后可通过检索或 angel_note_read 查看。"
