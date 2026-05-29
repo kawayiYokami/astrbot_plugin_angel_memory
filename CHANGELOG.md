@@ -2,6 +2,19 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.3.40] - 2026-05-29
+
+### Highlights
+- 新增 `note_create` 笔记工具：AI 可在学习或交流中自主整理并归档 Markdown 笔记，写入后立即纳入知识库索引。
+- 移除研究子代理（`transfer_to_researcher` / Handoff）相关能力，自主学习能力由笔记工具承接。
+- 配置项 `research_assistant` 改名为 `note_assistant`，仅保留「检索笔记」与「生成笔记」两个开关。
+
+### Core Changes
+- `feat(tools)`: 新增 `tools/note_create.py`，写入笔记后主动调用 `note_service.parse_and_store_file_sync` 同步索引。
+- `feat(config)`: 新增 `note_assistant.enable_recall`（增强检索是否检索笔记）与 `note_assistant.enable_create`（是否注册 note_create 工具）。
+- `refactor(retrieval)`: 检索服务按 `enable_recall` 短路笔记检索与笔记 query 预处理。
+- `chore(cleanup)`: 删除 `tools/research_subagent.py`、`tools/research_fellow_prompt.md` 及对应测试，移除 `main.py` 中研究子代理注册逻辑。
+
 ## [1.3.37] - 2026-05-27
 
 ### Highlights

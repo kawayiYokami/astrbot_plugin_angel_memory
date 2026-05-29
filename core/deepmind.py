@@ -125,6 +125,13 @@ class DeepMind:
         self.note_inject_top_k = note_top_k
         self.note_candidate_top_k = note_top_k * 7
 
+        # 笔记检索开关（note_assistant.enable_recall）
+        note_assistant = getattr(config, "note_assistant", {})
+        if isinstance(note_assistant, dict):
+            self.note_recall_enabled = bool(note_assistant.get("enable_recall", True))
+        else:
+            self.note_recall_enabled = True
+
         # 初始化会话工作记忆缓存
         self.session_memory_manager = SessionMemoryManager(
             capacity_multiplier=self.short_term_memory_capacity
