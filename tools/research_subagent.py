@@ -14,6 +14,13 @@ except ImportError:
 
 def build_research_handoff_tool(context: Any, plugin_context: Any):
     """Build the upstream HandoffTool for the research assistant."""
+    # 检查是否启用
+    research_config = _get_research_config(plugin_context)
+    enabled = research_config.get("enabled", True)
+    if enabled is False or str(enabled).lower() in ("false", "0", "no"):
+        logger.info("[研究子代理] 跳过 注册原因=配置已关闭 (enabled=false)")
+        return None
+
     try:
         from astrbot.core.agent.agent import Agent
         from astrbot.core.agent.handoff import HandoffTool
@@ -26,7 +33,6 @@ def build_research_handoff_tool(context: Any, plugin_context: Any):
         logger.warning("[研究子代理] 跳过 注册原因=研究员提示词为空")
         return None
 
-    research_config = _get_research_config(plugin_context)
     persona_id = str(research_config.get("persona_id", "") or "").strip()
     provider_id = str(research_config.get("provider_id", "") or "").strip()
 
@@ -47,7 +53,7 @@ def build_research_handoff_tool(context: Any, plugin_context: Any):
             logger.warning(f"[研究子代理] 研究人格不存在，将使用所有激活工具 人格={persona_id}")
 
     agent = Agent(
-        name="researcher",
+        name="angel_researcher",
         instructions=prompt,
         tools=tools,
     )
@@ -56,15 +62,16 @@ def build_research_handoff_tool(context: Any, plugin_context: Any):
     handoff = HandoffTool(
         agent=agent,
         tool_description=(
+            "[angel_memory 插件研究助手] "
             "将复杂研究、资料查找、长链路分析和需要多步工具调用的任务委派给研究员子代理，"
-            "由它完成调查并返回研究报告。"
+            "由它完成调查并返回研究报告。注意：这是 angel_memory 插件提供的研究能力，非系统内置子代理。"
         ),
     )
     handoff.provider_id = provider_id or None
 
     provider_desc = provider_id if provider_id else "跟随当前会话"
     logger.info(
-        f"[研究子代理] 完成 注册工具=transfer_to_researcher 模型={provider_desc}"
+        f"[研究子代理] 完成 注册工具=transfer_to_angel_researcher 模型={provider_desc}"
     )
     return handoff
 
