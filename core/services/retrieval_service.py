@@ -124,9 +124,15 @@ class DeepMindRetrievalService:
 
         memory_id_mapping = {}
         if long_term_memories:
-            memory_id_mapping = MemoryIDResolver.generate_id_mapping(
-                [memory.to_dict() for memory in long_term_memories], "id"
-            )
+            memory_sql_manager = deepmind.plugin_context.get_component("memory_sql_manager")
+            if memory_sql_manager:
+                memory_id_mapping = memory_sql_manager.build_id_mapping(
+                    [memory.id for memory in long_term_memories]
+                )
+            else:
+                memory_id_mapping = MemoryIDResolver.generate_id_mapping(
+                    [memory.to_dict() for memory in long_term_memories], "id"
+                )
 
         return {
             "long_term_memories": long_term_memories,

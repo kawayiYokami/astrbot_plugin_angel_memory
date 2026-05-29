@@ -158,7 +158,7 @@ class UserProfileService:
             filtered.append(memory)
         return filtered
 
-    def format_session_profiles(self, session_id: str) -> str:
+    def format_session_profiles(self, session_id: str, short_id_registry=None) -> str:
         profiles = self.get_session_profile_memories(session_id)
         if not profiles:
             return ""
@@ -181,7 +181,12 @@ class UserProfileService:
             header = f"{nickname}（{user_id}）" if nickname else user_id
             lines.append(f"\n[{header}]")
             for memory in grouped[user_id]:
-                lines.append(f"\n{MemoryFormatter.format_single_memory(memory)}")
+                short_id = ""
+                if short_id_registry is not None:
+                    mem_id = str(getattr(memory, "id", "") or "").strip()
+                    if mem_id:
+                        short_id = short_id_registry.get_short_id(mem_id)
+                lines.append(f"\n{MemoryFormatter.format_single_memory(memory, short_id=short_id)}")
         return "".join(lines)
 
     @staticmethod

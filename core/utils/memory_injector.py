@@ -47,17 +47,22 @@ class MemoryInjector:
         )
 
     @staticmethod
-    def format_session_memories_for_prompt(session_memories: List[MemoryItem]) -> str:
+    def format_session_memories_for_prompt(
+        session_memories: List[MemoryItem], short_id_registry=None
+    ) -> str:
         """
         格式化会话工作记忆用于LLM提示词
 
         Args:
             session_memories: 会话工作记忆列表
+            short_id_registry: 全局短 ID 注册表（可选）
 
         Returns:
             格式化后的记忆上下文
         """
-        return MemoryFormatter.format_session_memories(memories=session_memories)
+        return MemoryFormatter.format_session_memories(
+            memories=session_memories, short_id_registry=short_id_registry
+        )
 
     @staticmethod
     def inject_into_system_prompt(system_prompt: str, memory_context: str) -> str:

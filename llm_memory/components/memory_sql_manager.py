@@ -65,6 +65,7 @@ class MemorySqlManager:
 
         self._init_db()
         self._load_tag_cache()
+        self._init_short_id_registry()
         # 启动阶段主动完成一次 FTS5 索引构建，避免首次查询触发冷启动延迟。
         start_ts = time.time()
         self._ensure_fts_ready_sync(force_rebuild=True)
@@ -233,6 +234,63 @@ class MemorySqlManager:
             with self._lock:
                 self._tag_names = {str(row["name"]) for row in rows if row["name"]}
         self.logger.info(f"SimpleMemory 标签缓存加载完成: {len(self._tag_names)} 个")
+
+    # ===== 全局短 ID 注册表（内存态） =====
+
+    def _init_short_id_registry(self) -> None:
+        """启动时加载全部记忆 ID，分配纯数字短 ID（从 10000 开始递增）。"""
+        self._short_to_full: Dict[str, str] = {}
+        self._full_to_short: Dict[str, str] = {}
+        self._next_short_id: int = 10000
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM memory_records ORDER BY created_at ASC"
+            ).fetchall()
+
+        for row in rows:
+            full_id = str(row["id"]).strip()
+            if full_id and full_id not in self._full_to_short:
+                short_id = str(self._next_short_id)
+                self._short_to_full[short_id] = full_id
+                self._full_to_short[full_id] = short_id
+                self._next_short_id += 1
+
+        self.logger.info(
+            f"[短ID注册表] 初始化完成 记忆数={len(self._full_to_short)} "
+            f"下一个短ID={self._next_short_id}"
+        )
+
+    def register_short_id(self, full_id: str) -> str:
+        """为新记忆分配短 ID 并注册。如果已存在则直接返回。"""
+        full_id = str(full_id or "").strip()
+        if not full_id:
+            return ""
+        with self._lock:
+            if full_id in self._full_to_short:
+                return self._full_to_short[full_id]
+            short_id = str(self._next_short_id)
+            self._short_to_full[short_id] = full_id
+            self._full_to_short[full_id] = short_id
+            self._next_short_id += 1
+        return short_id
+
+    def get_short_id(self, full_id: str) -> str:
+        """根据完整 ID 获取短 ID，未注册则返回空字符串。"""
+        return self._full_to_short.get(str(full_id or "").strip(), "")
+
+    def get_full_id(self, short_id: str) -> str:
+        """根据短 ID 获取完整 ID，未注册则返回空字符串。"""
+        return self._short_to_full.get(str(short_id or "").strip(), "")
+
+    def build_id_mapping(self, full_ids: List[str]) -> Dict[str, str]:
+        """为一组完整 ID 构建 {短ID: 完整ID} 映射（用于反思等场景）。"""
+        mapping: Dict[str, str] = {}
+        for full_id in full_ids:
+            short_id = self.get_short_id(full_id)
+            if short_id:
+                mapping[short_id] = full_id
+        return mapping
 
     def _list_global_tag_names_sync(self) -> List[str]:
         with self._connect() as conn:
@@ -1219,6 +1277,7 @@ class MemorySqlManager:
             self._upsert_tags_and_bind(conn, memory.id, normalized_tags)
             conn.commit()
         self._sync_memory_fts_by_id_sync(memory.id)
+        self.register_short_id(memory.id)
 
         return memory
 
@@ -1271,6 +1330,7 @@ class MemorySqlManager:
             self._replace_memory_tags(conn, memory_id, normalized_tags)
             conn.commit()
         self._sync_memory_fts_by_id_sync(memory_id)
+        self.register_short_id(memory_id)
         return memory
 
     async def upsert_memories_by_judgment(self, memories: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -1441,6 +1501,12 @@ class MemorySqlManager:
     async def list_all_memories_for_vector_sync(self) -> List[Dict[str, Any]]:
         """导出 simple 库全部记忆（含 tags）用于向量回灌。"""
         return await asyncio.to_thread(self._list_all_memories_for_vector_sync_sync)
+
+    def list_all_memory_ids_sync(self) -> List[str]:
+        """同步获取全库所有记忆 ID（用于启动时构建短 ID 注册表）。"""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id FROM memory_records ORDER BY created_at ASC").fetchall()
+        return [str(row["id"]) for row in rows if row["id"]]
 
     def _list_all_memories_for_vector_sync_sync(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:

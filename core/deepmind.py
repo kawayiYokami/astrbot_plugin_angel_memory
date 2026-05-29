@@ -457,7 +457,12 @@ class DeepMind:
 
         # 10. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
         try:
-            memory_id_mapping = MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in long_term_memories], "id")
+            memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
+            memory_id_mapping = (
+                memory_sql_manager.build_id_mapping([mem.id for mem in long_term_memories])
+                if memory_sql_manager
+                else MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in long_term_memories], "id")
+            )
             angelmemory_context = {
                 "memories": self._memories_to_json(self.session_memory_manager.get_session_memories(session_id)),
                 "recall_query": query,
