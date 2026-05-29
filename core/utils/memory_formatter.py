@@ -19,18 +19,17 @@ class MemoryFormatter:
     MEMORY_TYPE_NAMES = MemoryConstants.MEMORY_TYPE_NAMES
 
     @staticmethod
-    def format_single_memory(memory: MemoryItem) -> str:
+    def format_single_memory(memory: MemoryItem, short_id: str = "") -> str:
         """
         格式化单条记忆
 
         Args:
             memory: 记忆对象
+            short_id: 短 ID 字符串（如果提供则前置显示）
 
         Returns:
             格式化后的记忆文本
         """
-        # 处理 MemoryItem 对象的 memory_type 属性
-
         # 格式化论点
         judgment = str(getattr(memory, "judgment", "") or "").strip()
 
@@ -56,7 +55,8 @@ class MemoryFormatter:
             else:
                 time_suffix = f"（{int(elapsed // 2592000)}个月前）"
 
-        return f"{judgment}{reasoning}{time_suffix}"
+        id_prefix = f"[{short_id}] " if short_id else ""
+        return f"{id_prefix}{judgment}{reasoning}{time_suffix}"
 
     @staticmethod
     def format_memories_by_type(memories: List[MemoryItem]) -> Dict[str, List[str]]:
@@ -172,12 +172,13 @@ class MemoryFormatter:
         return deduplicated
 
     @staticmethod
-    def format_session_memories(memories: List[MemoryItem]) -> str:
+    def format_session_memories(memories: List[MemoryItem], short_id_registry=None) -> str:
         """
-        格式化会话工作记忆列表，无过滤，但会去重。
+        格式化会话工作记忆列表，无过滤，但会去重。每条记忆带全局短 ID。
 
         Args:
             memories: 记忆列表
+            short_id_registry: 全局短 ID 注册表（可选，提供时输出短 ID）
 
         Returns:
             格式化后的记忆文本
@@ -188,16 +189,33 @@ class MemoryFormatter:
         # 去重处理
         deduplicated_memories = MemoryFormatter._deduplicate_memories(memories)
 
-        # 按类型分组并格式化
-        grouped_memories = MemoryFormatter.format_memories_by_type(deduplicated_memories)
+        # 按类型分组（保留原始对象以便获取 ID）
+        grouped = {}
+        for memory in deduplicated_memories:
+            type_value = (
+                memory.memory_type.value
+                if hasattr(memory.memory_type, "value")
+                else memory.memory_type
+            )
+            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(
+                type_value, str(type_value or "").lower()
+            )
+            type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
+            grouped.setdefault(type_name, []).append(memory)
 
         # 构建最终文本
         formatted_lines = ["[相关记忆]"]
-        for memory_type, formatted_memories in grouped_memories.items():
+        for memory_type, memory_list in grouped.items():
             formatted_lines.append(f"\n[{memory_type}]")
-            formatted_lines.extend(
-                f"\n{memory_text}" for memory_text in formatted_memories
-            )
+            for memory in memory_list:
+                short_id = ""
+                if short_id_registry is not None:
+                    mem_id = str(getattr(memory, "id", "") or "").strip()
+                    if mem_id:
+                        short_id = short_id_registry.get_short_id(mem_id)
+                formatted_lines.append(
+                    f"\n{MemoryFormatter.format_single_memory(memory, short_id=short_id)}"
+                )
 
         return "".join(formatted_lines)
 
@@ -218,8 +236,6 @@ class MemoryFormatter:
             return "暂无记忆"
 
         # 按类型分组（保留原始对象）
-        from .memory_id_resolver import MemoryIDResolver
-
         grouped = {}
         for memory in memories:
             # 处理 MemoryItem 对象的 memory_type 属性
@@ -234,12 +250,14 @@ class MemoryFormatter:
             type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
             grouped.setdefault(type_name, []).append(memory)
 
+        # 使用自增序号作为短 ID
         display_lines = []
+        counter = 0
         for memory_type, memory_list in grouped.items():
             display_lines.append(f"\n=== {memory_type} ===")
             for i, memory in enumerate(memory_list, 1):
-                # 生成短ID并格式化记忆
-                short_id = MemoryIDResolver.generate_short_id(memory.id)
+                short_id = f"m{counter}"
+                counter += 1
                 judgment = str(getattr(memory, "judgment", "") or "").strip()
                 reasoning = (
                     f"\n   ——因为{str(getattr(memory, 'reasoning', '') or '').strip()}"

@@ -6,8 +6,17 @@
 {
   "soul_state_code": "0110",
   "feedback_data": {
-    "useful_memory_ids": ["id1", "id2"],
+    "useful_memory_ids": ["m0", "m2"],
     "memory_actions": [
+      {
+        "action": "create",
+        "memory": {
+          "type": "knowledge",
+          "judgment": "小明（123456）是原神深度玩家，关注角色配队和深渊攻略。",
+          "reasoning": "小明在多轮对话中反复讨论原神角色机制、圣遗物搭配和深渊阵容。",
+          "tags": ["小明", "123456", "事实属性"]
+        }
+      },
       {
         "action": "create",
         "memory": {
@@ -19,22 +28,22 @@
       },
       {
         "action": "merge",
-        "source_memory_ids": ["31", "44"],
+        "source_memory_ids": ["m1", "m3"],
         "memory": {
-          "type": "skill",
-          "judgment": "用户偏好把复杂任务拆成可验证的小步骤执行。",
-          "reasoning": "多轮对话都体现出用户偏好阶段性确认与逐步推进。",
-          "tags": ["任务偏好", "执行方式"]
+          "type": "event",
+          "judgment": "群里讨论过用「分步确认」方式推进复杂任务，大家普遍认同这种做法。",
+          "reasoning": "多轮对话中多位群友都体现出偏好阶段性确认与逐步推进。",
+          "tags": ["任务偏好", "执行方式", "群共识"]
         }
       },
       {
         "action": "updata",
-        "source_memory_ids": ["52"],
+        "source_memory_ids": ["m4"],
         "memory": {
           "type": "knowledge",
-          "judgment": "用户要求所有记忆反馈统一采用 memory_actions 协议。",
-          "reasoning": "用户本轮明确否定旧结构，并确认只保留新的动作式协议。",
-          "tags": ["memory_actions", "反馈协议", "结构约束"]
+          "judgment": "小明（123456）要求所有记忆反馈统一采用 memory_actions 协议。",
+          "reasoning": "小明本轮明确否定旧结构，并确认只保留新的动作式协议。",
+          "tags": ["小明", "123456", "事实属性"]
         }
       }
     ]

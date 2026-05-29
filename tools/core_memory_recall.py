@@ -138,7 +138,9 @@ class CoreMemoryRecallTool(FunctionTool):
                         del remaining_weights[selected_idx]
 
             self.logger.info(f"{self.name}: 成功抽取 {len(sampled_memories)} 条核心记忆。")
-            return MemoryFormatter.format_session_memories(sampled_memories)
+            return MemoryFormatter.format_session_memories(
+                sampled_memories, short_id_registry=plugin_context.get_component("memory_sql_manager")
+            )
 
         except Exception as e:
             self.logger.error(f"{self.name}: 执行主动回忆失败: {e}", exc_info=True)

@@ -18,21 +18,23 @@ class MemoryIDResolver:
         items: List[Dict[str, Any]], id_field: str = "id"
     ) -> Dict[str, str]:
         """
-        通用的ID映射生成方法
+        生成内存态自增短 ID 映射（每次调用从 m0 开始递增）。
 
         Args:
             items: 包含ID字段的对象列表
             id_field: ID字段名，默认为'id'
 
         Returns:
-            短ID到完整ID的映射字典
+            短ID到完整ID的映射字典，如 {"m0": "uuid-...", "m1": "uuid-..."}
         """
         mapping = {}
+        counter = 0
         for item in items:
             full_id = item.get(id_field)
             if full_id:
-                short_id = MemoryIDResolver.generate_short_id(full_id)
+                short_id = f"m{counter}"
                 mapping[short_id] = full_id
+                counter += 1
         return mapping
 
     @staticmethod
@@ -166,14 +168,16 @@ class MemoryIDResolver:
     @staticmethod
     def generate_short_id(memory_id: str, length: int = 8) -> str:
         """
-        生成记忆的短ID（使用哈希算法确保唯一性）
+        生成记忆的短ID（基于 MD5 哈希，仅用于无映射表的展示场景）。
+
+        优先使用 generate_id_mapping 的自增短 ID；本方法仅作为兼容后备。
 
         Args:
             memory_id: 完整记忆ID
-            length: 短ID长度（默认8位，更可靠）
+            length: 短ID长度（默认8位）
 
         Returns:
-            短ID（基于哈希的无冲突标识符）
+            短ID字符串
         """
         import hashlib
 
