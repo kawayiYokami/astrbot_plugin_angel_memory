@@ -762,6 +762,13 @@ class APIEmbeddingProvider(EmbeddingProvider):
         """
         full_embeddings = [None] * original_count
 
+        if len(unique_embeddings) != len(unique_to_original):
+            raise RuntimeError(
+                "嵌入提供商返回数量不匹配: "
+                f"provider_id={self.provider_id} 请求去重后数量={len(unique_to_original)} "
+                f"返回数量={len(unique_embeddings)}"
+            )
+
         for unique_idx, original_indices in enumerate(unique_to_original):
             embedding = unique_embeddings[unique_idx]
             for original_idx in original_indices:
@@ -779,6 +786,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 if batch_size >= len(texts):
                     # 单批次处理
                     result = await self.provider.get_embeddings(texts)
+                    result = self._expand_aggregated_embedding(result, texts)
+                    self._validate_embedding_count(result, texts)
                     return result
                 else:
                     # 分批并发处理
@@ -793,7 +802,12 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
                     # 按顺序拼接结果
                     result = []
-                    for batch_embeddings in batch_results:
+                    batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+                    for batch, batch_embeddings in zip(batches, batch_results):
+                        batch_embeddings = self._expand_aggregated_embedding(
+                            batch_embeddings, batch
+                        )
+                        self._validate_embedding_count(batch_embeddings, batch)
                         result.extend(batch_embeddings)
 
                     return result
@@ -809,6 +823,50 @@ class APIEmbeddingProvider(EmbeddingProvider):
                     # 继续循环用新的batch_size重试
                 else:
                     raise
+
+    def _expand_aggregated_embedding(
+        self, embeddings: List[List[float]], texts: List[str]
+    ) -> List[List[float]]:
+        """
+        兼容上游对多输入返回单个聚合向量的行为。
+
+        上游 provider 仍负责请求与解析；这里仅把符合结构特征的聚合结果
+        扩展为本批次所需的向量数量，避免后续 FAISS 回填因数量不一致失败。
+        """
+        if self._is_aggregated_embedding_result(embeddings, texts):
+            self.logger.warning(
+                "嵌入提供商返回聚合向量，已扩展到批次内所有文本: "
+                f"provider_id={self.provider_id} 请求数量={len(texts)} 返回数量=1"
+            )
+            return [list(embeddings[0]) for _ in texts]
+        return embeddings
+
+    @staticmethod
+    def _is_aggregated_embedding_result(
+        embeddings: List[List[float]], texts: List[str]
+    ) -> bool:
+        """判断是否符合“多输入返回单条聚合向量”的结构特征。"""
+        return (
+            len(texts) > 1
+            and len(embeddings) == 1
+            and isinstance(embeddings[0], list)
+            and len(embeddings[0]) > 0
+        )
+
+    def _validate_embedding_count(
+        self, embeddings: List[List[float]], texts: List[str]
+    ) -> None:
+        """校验上游返回数量，避免不完整向量结果写入索引。"""
+        if len(embeddings) == len(texts):
+            return
+        preview = str(texts[len(embeddings)] if len(embeddings) < len(texts) else texts[-1])
+        if len(preview) > 80:
+            preview = preview[:77] + "..."
+        raise RuntimeError(
+            "嵌入提供商返回数量不匹配: "
+            f"provider_id={self.provider_id} 请求数量={len(texts)} 返回数量={len(embeddings)} "
+            f"首个缺失文本={preview!r}"
+        )
 
     @staticmethod
     def _is_batch_too_large_error(e: Exception) -> bool:
