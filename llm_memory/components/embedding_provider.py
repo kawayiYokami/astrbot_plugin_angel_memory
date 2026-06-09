@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import asyncio
 import importlib
+import re
 import subprocess
 import threading
 import time
@@ -886,12 +887,52 @@ class APIEmbeddingProvider(EmbeddingProvider):
             return True
         return False
 
+    @staticmethod
+    def _meta_get(meta: Any, key: str, default: Any = None) -> Any:
+        if isinstance(meta, dict):
+            return meta.get(key, default)
+        return getattr(meta, key, default)
+
+    @classmethod
+    def _extract_api_model_name(cls, meta: Any) -> str:
+        """从上游 provider meta 中提取模型名。"""
+        direct_keys = ("model_name", "model", "embedding_model")
+        for key in direct_keys:
+            value = cls._meta_get(meta, key)
+            if value:
+                return cls._clean_model_name(value)
+
+        nested_keys = ("model_config", "config", "embedding_config")
+        for nested_key in nested_keys:
+            nested = cls._meta_get(meta, nested_key)
+            if not nested:
+                continue
+            for key in direct_keys:
+                value = cls._meta_get(nested, key)
+                if value:
+                    return cls._clean_model_name(value)
+
+        return ""
+
+    @staticmethod
+    def _clean_model_name(value: Any) -> str:
+        """清洗模型名，确保可稳定写入索引元数据。"""
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"\s+", "_", text)
+        text = re.sub(r'[<>:"/\\|?*]+', "_", text)
+        text = re.sub(r"_+", "_", text)
+        return text.strip("._ ")
+
     def get_model_info(self) -> Dict[str, Any]:
         """获取模型信息"""
         if self._model_info is None:
             meta = self.provider.meta() if hasattr(self.provider, "meta") else {}
+            model_name = self._extract_api_model_name(meta)
             self._model_info = {
                 "provider_id": self.provider_id,
+                "model_name": model_name,
                 "provider_type": "api",
                 "status": "available" if self._available else "unavailable",
                 "meta": meta,
@@ -1033,7 +1074,8 @@ class EmbeddingProviderFactory:
                     try:
                         meta = provider.meta() if hasattr(provider, "meta") else {}
                         provider_info = {
-                            "provider_id": meta.get("id", "unknown"),
+                            "provider_id": APIEmbeddingProvider._meta_get(meta, "id", "unknown"),
+                            "model_name": APIEmbeddingProvider._extract_api_model_name(meta),
                             "provider_type": "api",
                             "status": "available",
                             "meta": meta,
