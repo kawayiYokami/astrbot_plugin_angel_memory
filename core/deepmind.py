@@ -497,6 +497,52 @@ class DeepMind:
             self.logger.error(f"潜意识: 调用 event.get_message_outline() 失败: {e}")
             return None
 
+    @staticmethod
+    def _is_missing_user_identity(sender_id: str, sender_name: str) -> bool:
+        invalid_ids = {"", "0", "user", "unknown", "none", "null", "assistant"}
+        invalid_names = {"", "用户", "成员", "未知", "未知用户", "user", "unknown", "none", "null"}
+        sid = str(sender_id or "").strip()
+        name = str(sender_name or "").strip()
+        return sid.lower() in invalid_ids or name.lower() in invalid_names
+
+    def _get_event_sender_identity(self, event: AstrMessageEvent) -> tuple[str, str]:
+        sender_id = ""
+        sender_name = ""
+
+        get_sender_id = getattr(event, "get_sender_id", None)
+        if callable(get_sender_id):
+            try:
+                sender_id = str(get_sender_id() or "").strip()
+            except Exception as e:
+                self.logger.error(f"[反思调度] 获取事件发送者ID失败: {e}")
+        if not sender_id:
+            sender_id = str(getattr(event, "sender_id", "") or "").strip()
+
+        get_sender_name = getattr(event, "get_sender_name", None)
+        if callable(get_sender_name):
+            try:
+                sender_name = str(get_sender_name() or "").strip()
+            except Exception as e:
+                self.logger.error(f"[反思调度] 获取事件发送者昵称失败: {e}")
+        if not sender_name:
+            sender_name = str(getattr(event, "sender_name", "") or "").strip()
+
+        return sender_id, sender_name
+
+    def _log_missing_user_identity(
+        self,
+        source: str,
+        sender_id: str,
+        sender_name: str,
+        content: Any = "",
+    ) -> None:
+        content_text = self.prompt_builder.extract_text_from_content(content)
+        self.logger.error(
+            f"[反思调度] 跳过 检测到异常消息，该消息不存在用户和ID "
+            f"来源={source} sender_id={sender_id or '(空)'} "
+            f"sender_name={sender_name or '(空)'} content_len={len(content_text)}"
+        )
+
     def _get_session_id(self, event: AstrMessageEvent) -> str:
         """获取会话ID，统一使用 event.unified_msg_origin"""
         try:
@@ -679,7 +725,10 @@ class DeepMind:
                         f"[反思调度] 使用天使之心聊天记录: processed={len(processed)} "
                         f"+ latest_unprocessed_user={1 if latest_user_unprocessed else 0}"
                     )
-                    return self._dedupe_and_sort_chat_records(combined)
+                    return self._dedupe_and_sort_chat_records(
+                        combined,
+                        source="天使之心聊天记录",
+                    )
             except (json.JSONDecodeError, TypeError, KeyError) as e:
                 self.logger.warning(f"反思聊天记录解析失败，降级到原生分支: {e}")
 
@@ -687,12 +736,13 @@ class DeepMind:
         user_text = self._extract_message_text(event) or ""
         records: List[Dict[str, Any]] = []
         if user_text.strip():
+            sender_id, sender_name = self._get_event_sender_identity(event)
             records.append(
                 {
                     "role": "user",
                     "content": user_text,
-                    "sender_id": str(getattr(event, "sender_id", "") or "user"),
-                    "sender_name": str(getattr(event, "sender_name", "") or "用户"),
+                    "sender_id": sender_id,
+                    "sender_name": sender_name,
                     "timestamp": float(now_ts),
                     "is_processed": False,
                     "is_structured_toolcall": False,
@@ -711,7 +761,7 @@ class DeepMind:
                 }
             )
         self.logger.debug(f"[反思调度] 使用原生分支构建本轮记录: count={len(records)}")
-        return records
+        return self._dedupe_and_sort_chat_records(records, source="原生事件消息")
 
     async def _build_reflection_input(
         self,
@@ -786,8 +836,11 @@ class DeepMind:
             memory_context=memory_context,
         )
 
-    @staticmethod
-    def _dedupe_and_sort_chat_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _dedupe_and_sort_chat_records(
+        self,
+        records: List[Dict[str, Any]],
+        source: str = "聊天记录",
+    ) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = []
         seen = set()
         for msg in records or []:
@@ -799,6 +852,14 @@ class DeepMind:
             sender_name = str(msg.get("sender_name", "") or "").strip()
             timestamp = float(msg.get("timestamp", 0.0) or 0.0)
             if not role:
+                continue
+            if role == "user" and self._is_missing_user_identity(sender_id, sender_name):
+                self._log_missing_user_identity(
+                    source,
+                    sender_id,
+                    sender_name,
+                    content,
+                )
                 continue
             # 去重键：角色+发送者+时间戳+内容
             dedupe_key = (role, sender_id, round(timestamp, 6), str(content))
@@ -823,6 +884,9 @@ class DeepMind:
     async def _buffer_reflection_turn(self, event: AstrMessageEvent, response, session_id: str) -> None:
         reflection_input = await self._build_reflection_input(event, response, session_id)
         turn_records = list(reflection_input.chat_records)
+        if not turn_records:
+            self.logger.debug(f"[反思调度] 本轮无消息入池 session={session_id}")
+            return
         now = time.time()
 
         async with self._reflection_state_lock:
@@ -837,7 +901,10 @@ class DeepMind:
                 },
             )
             merged = list(state.get("records", [])) + list(turn_records)
-            state["records"] = self._dedupe_and_sort_chat_records(merged)
+            state["records"] = self._dedupe_and_sort_chat_records(
+                merged,
+                source="反思缓冲记录",
+            )
             state["pending_turns"] = int(state.get("pending_turns", 0)) + 1
             state["last_activity_at"] = now
             state["latest_input"] = reflection_input
