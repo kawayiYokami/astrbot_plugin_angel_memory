@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+pytest.importorskip("faiss")
+
 from llm_memory.components.faiss_memory_index import FaissVectorStore
 
 

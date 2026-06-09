@@ -45,7 +45,7 @@ class CognitiveService:
         初始化认知服务。
 
         Args:
-            vector_store: 一个已经初始化好的、共享的 FAISS 向量索引实例。
+            vector_store: 一个已经初始化好的、共享的向量索引实例。
         """
         # 设置日志记录器
         self.logger = logger
@@ -55,7 +55,7 @@ class CognitiveService:
         self.vector_store = vector_store
         self.memory_sql_manager = memory_sql_manager
 
-        # 当前中央库为真相源，FAISS 仅维护轻量召回索引；旧主集合不再创建。
+        # 当前中央库为真相源，向量后端仅维护轻量召回索引；旧主集合不再创建。
         self.main_collection = None
         # 轻量记忆索引集合（仅 id + vector_text + embedding）
         self.memory_index_collection = (

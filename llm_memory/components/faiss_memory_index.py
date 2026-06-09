@@ -501,6 +501,8 @@ class FaissTextIndex:
 class FaissVectorStore:
     """Small FAISS-backed vector store for the memory_index collection."""
 
+    backend_name = "faiss"
+
     def __init__(
         self,
         *,
