@@ -5,6 +5,8 @@ ComponentFactory - 组件工厂
 避免后台线程和主线程之间的实例不一致问题。
 """
 
+import subprocess
+import sys
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -18,7 +20,6 @@ except ImportError:
 # 导入核心组件
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager
-from ..llm_memory.components.faiss_memory_index import FaissVectorStore
 from ..llm_memory.components.note_chunk_store import NoteChunkStore
 from ..llm_memory.components.note_chunk_search import NoteChunkSearchEngine
 from ..llm_memory import CognitiveService
@@ -48,6 +49,7 @@ class ComponentFactory:
         self._components: Dict[str, Any] = {}
         self._initialized = False
         self.init_manager = init_manager
+        self._faiss_probe_result: Optional[tuple[bool, str]] = None
 
         # 从PluginContext获取数据目录
         self.data_directory = str(plugin_context.get_index_dir())
@@ -96,45 +98,19 @@ class ComponentFactory:
             vector_enabled = bool(str(embedding_provider_id or "").strip() or enable_local_embedding)
 
             if not vector_enabled:
-                self.logger.info("🧩 未启用向量化能力，使用 BM25-only 运行模式")
-                memory_runtime = self._create_memory_runtime(
-                    cognitive_service=None,
-                    memory_sql_manager=memory_sql_manager,
+                return await self._finish_simple_memory_initialization(
+                    memory_sql_manager,
+                    reason="未启用向量化能力",
                 )
-                self._components["memory_runtime"] = memory_runtime
 
-                note_service = self._create_note_service()
-                self._components["note_service"] = note_service
-
-                deepmind = await self._create_deepmind(
-                    vector_store=None,
-                    note_service=note_service,
-                    memory_runtime=memory_runtime,
-                )
-                self._components["deepmind"] = deepmind
-
-                file_monitor = self._create_file_monitor(note_service)
-                self._components["file_monitor"] = file_monitor
-
-                self._initialized = True
-                self.logger.info("✅ 所有核心组件创建完成")
-                self.logger.info("✅ 记忆运行时: BM25-only Runtime")
-
-                if self.init_manager:
-                    self.init_manager.mark_ready()
-                    self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
-
-                await self._start_file_monitor(file_monitor)
-                return self._components
-
-            # 1. 创建嵌入提供商（若不可用则自动降级为 BM25-only）
+            # 1. 创建嵌入提供商
             embedding_provider = None
             try:
                 embedding_provider = await self._create_embedding_provider()
                 self._components["embedding_provider"] = embedding_provider
                 self.plugin_context.set_embedding_provider(embedding_provider)
             except Exception as e:
-                self.logger.warning(f"嵌入提供商初始化失败，自动降级为 BM25-only: {e}")
+                self.logger.warning(f"嵌入提供商初始化失败，无法创建向量运行时: {e}")
                 embedding_provider = None
 
             # 检查嵌入提供商真实可用性（不存在则视为无向量能力）
@@ -151,44 +127,19 @@ class ComponentFactory:
                 else:
                     if not provider_available:
                         self.logger.warning(
-                            "上游嵌入提供商不可用（模型不存在或配置异常），自动降级为 BM25-only。"
+                            "上游嵌入提供商不可用（模型不存在或配置异常），无法创建向量运行时。"
                         )
                         vector_enabled = False
                     else:
                         vector_enabled = True
 
             if not vector_enabled:
-                memory_runtime = self._create_memory_runtime(
-                    cognitive_service=None,
-                    memory_sql_manager=memory_sql_manager,
+                return await self._finish_simple_memory_initialization(
+                    memory_sql_manager,
+                    reason="向量化能力不可用",
                 )
-                self._components["memory_runtime"] = memory_runtime
 
-                note_service = self._create_note_service()
-                self._components["note_service"] = note_service
-
-                deepmind = await self._create_deepmind(
-                    vector_store=None,
-                    note_service=note_service,
-                    memory_runtime=memory_runtime,
-                )
-                self._components["deepmind"] = deepmind
-
-                file_monitor = self._create_file_monitor(note_service)
-                self._components["file_monitor"] = file_monitor
-
-                self._initialized = True
-                self.logger.info("✅ 所有核心组件创建完成")
-                self.logger.info("✅ 记忆运行时: BM25-only Runtime")
-
-                if self.init_manager:
-                    self.init_manager.mark_ready()
-                    self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
-
-                await self._start_file_monitor(file_monitor)
-                return self._components
-
-            # 2. 创建 FAISS 向量索引 (只有在 embedding_provider 可用时才会执行)
+            # 2. 创建向量索引。FAISS 不可用时切换到 SQLite 向量后端。
             vector_store = self._create_vector_store(
                 embedding_provider,
                 rerank_provider=rerank_provider,
@@ -215,7 +166,7 @@ class ComponentFactory:
             note_service = self._create_note_service()
             self._components["note_service"] = note_service
 
-            await self._run_startup_faiss_consistency_check(
+            await self._run_startup_vector_consistency_check(
                 memory_sql_manager=memory_sql_manager,
                 cognitive_service=cognitive_service,
             )
@@ -233,7 +184,9 @@ class ComponentFactory:
             # 核心组件已就绪，立即标记初始化完成
             self._initialized = True
             self.logger.info("✅ 所有核心组件创建完成")
-            self.logger.info("✅ 记忆运行时: Vector+BM25 Runtime")
+            self.logger.info(
+                f"✅ 记忆运行时: Vector+BM25 Runtime backend={getattr(vector_store, 'backend_name', 'vector')}"
+            )
 
             # 如果有初始化管理器，立即标记系统准备就绪
             # 此时"电脑已开机"，用户可以开始使用，不需要等待"硬盘整理"（文件监控）
@@ -253,6 +206,48 @@ class ComponentFactory:
             self.logger.error(f"错误详情: {traceback.format_exc()}")
             raise
 
+    async def _finish_simple_memory_initialization(
+        self,
+        memory_sql_manager: MemorySqlManager,
+        *,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """完成简单记忆初始化。"""
+        self.logger.info(f"🧩 {reason}，使用简单记忆运行模式")
+        self._components.pop("vector_store", None)
+        self._components.pop("cognitive_service", None)
+        self.plugin_context.set_vector_store(None)
+
+        memory_runtime = self._create_memory_runtime(
+            cognitive_service=None,
+            memory_sql_manager=memory_sql_manager,
+        )
+        self._components["memory_runtime"] = memory_runtime
+
+        note_service = self._create_note_service()
+        self._components["note_service"] = note_service
+
+        deepmind = await self._create_deepmind(
+            vector_store=None,
+            note_service=note_service,
+            memory_runtime=memory_runtime,
+        )
+        self._components["deepmind"] = deepmind
+
+        file_monitor = self._create_file_monitor(note_service)
+        self._components["file_monitor"] = file_monitor
+
+        self._initialized = True
+        self.logger.info("✅ 所有核心组件创建完成")
+        self.logger.info("✅ 记忆运行时: SimpleMemory Runtime")
+
+        if self.init_manager:
+            self.init_manager.mark_ready()
+            self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
+
+        await self._start_file_monitor(file_monitor)
+        return self._components
+
     async def _create_embedding_provider(self):
         """创建嵌入提供商"""
         self.logger.info("📚 创建嵌入提供商...")
@@ -271,14 +266,91 @@ class ComponentFactory:
 
         return embedding_provider
 
+    def _probe_faiss_available(self) -> tuple[bool, str]:
+        """在子进程中探测 FAISS，避免 SIGILL 直接打崩主进程。"""
+        if self._faiss_probe_result is not None:
+            return self._faiss_probe_result
+
+        self.logger.info("[向量索引] 开始 任务名=FAISS可用性探测 触发条件=创建向量索引")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", "import faiss"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            )
+        except Exception as e:
+            detail = f"探测子进程启动失败: {e}"
+            self._faiss_probe_result = (False, detail)
+            self.logger.warning(
+                f"[向量索引] 失败 任务名=FAISS可用性探测 触发条件=创建向量索引 "
+                f"处理=切换SQLite向量模式 异常={detail}"
+            )
+            return self._faiss_probe_result
+
+        stderr = (result.stderr or "").strip().replace("\n", " ")[:500]
+        stdout = (result.stdout or "").strip().replace("\n", " ")[:200]
+        if result.returncode == 0:
+            self._faiss_probe_result = (True, "可用")
+            self.logger.info("[向量索引] 完成 任务名=FAISS可用性探测 结果=可用")
+            return self._faiss_probe_result
+
+        detail = (
+            f"returncode={result.returncode} "
+            f"stderr={stderr or '(空)'} stdout={stdout or '(空)'}"
+        )
+        self._faiss_probe_result = (False, detail)
+        self.logger.warning(
+            f"[向量索引] 失败 任务名=FAISS可用性探测 触发条件=创建向量索引 "
+            f"处理=切换SQLite向量模式 {detail}"
+        )
+        return self._faiss_probe_result
+
+    def _load_faiss_vector_store_class(self):
+        available, detail = self._probe_faiss_available()
+        if not available:
+            raise RuntimeError(f"FAISS不可用: {detail}")
+
+        from ..llm_memory.components.faiss_memory_index import FaissVectorStore
+
+        return FaissVectorStore
+
+    @staticmethod
+    def _load_sqlite_vector_store_class():
+        from ..llm_memory.components.sqlite_vector_index import SqliteVectorStore
+
+        return SqliteVectorStore
+
+    def _select_vector_store_backend(self):
+        available, detail = self._probe_faiss_available()
+        if available:
+            return (
+                "faiss",
+                self._load_faiss_vector_store_class(),
+                self.plugin_context.get_faiss_index_dir(),
+                "FAISS",
+            )
+
+        self.logger.info(
+            "[向量索引] 开始 任务名=后端选择 结果=SQLite向量模式 "
+            f"原因=FAISS不可用 detail={detail}"
+        )
+        return (
+            "sqlite",
+            self._load_sqlite_vector_store_class(),
+            self.plugin_context.get_sqlite_vector_index_dir(),
+            "SQLite",
+        )
+
     def _create_vector_store(self, embedding_provider, rerank_provider=None):
-        """创建 FAISS 向量索引。"""
-        self.logger.info("🗄️ 创建FAISS向量索引...")
+        """创建向量索引。"""
+        backend_name, VectorStoreClass, index_dir, backend_label = self._select_vector_store_backend()
+        self.logger.info(f"🗄️ 创建{backend_label}向量索引...")
 
-        index_dir = self.plugin_context.get_faiss_index_dir()
-        self.logger.info(f"📁 使用FAISS索引路径: {index_dir}")
+        self.logger.info(f"📁 使用{backend_label}索引路径: {index_dir}")
 
-        vector_store = FaissVectorStore(
+        vector_store = VectorStoreClass(
             embedding_provider=embedding_provider,
             index_dir=index_dir,
             provider_id=self.plugin_context.get_current_provider(),
@@ -291,10 +363,15 @@ class ComponentFactory:
 
         if provider_type == "api":
             provider_id = provider_info.get("provider_id", "unknown")
-            self.logger.info(f"✅ FAISS向量索引创建完成 (使用API提供商: {provider_id})")
+            self.logger.info(
+                f"✅ {backend_label}向量索引创建完成 (使用API提供商: {provider_id})"
+            )
         else:
             model_name = provider_info.get("model_name", "unknown")
-            self.logger.info(f"✅ FAISS向量索引创建完成 (使用本地模型: {model_name})")
+            self.logger.info(
+                f"✅ {backend_label}向量索引创建完成 (使用本地模型: {model_name})"
+            )
+        self.logger.info(f"[向量索引] 完成 任务名=后端选择 backend={backend_name}")
 
         return vector_store
 
@@ -432,7 +509,7 @@ class ComponentFactory:
 
         if cognitive_service is None:
             runtime = SimpleMemoryRuntime(memory_sql_manager)
-            self.logger.info("✅ 统一记忆运行时创建完成 (BM25-only)")
+            self.logger.info("✅ 统一记忆运行时创建完成 (SimpleMemory)")
             return runtime
 
         runtime = VectorMemoryRuntime(cognitive_service)
@@ -515,23 +592,24 @@ class ComponentFactory:
             self.logger.error(f"启动文件监控服务失败: {e}")
             # 文件监控失败不应该中断整个初始化流程
 
-    async def _run_startup_faiss_consistency_check(
+    async def _run_startup_vector_consistency_check(
         self,
         *,
         memory_sql_manager: MemorySqlManager,
         cognitive_service,
     ) -> None:
-        """启动时检查记忆 SQL 真相层与当前 provider 的 FAISS 向量层是否一致。"""
+        """启动时检查记忆 SQL 真相层与当前 provider 的向量层是否一致。"""
         import time
 
         provider_id = self.plugin_context.get_current_provider()
+        backend_name = getattr(cognitive_service.vector_store, "backend_name", "vector")
 
         async def _sync_index(index_name: str, index, rows):
             start = time.time()
             self.logger.info(
-                "[FAISS向量索引] 开始 "
+                "[向量索引] 开始 "
                 f"任务名=启动一致性检查 index={index_name} "
-                f"provider_id={provider_id} 真相层条数={len(rows)}"
+                f"backend={backend_name} provider_id={provider_id} 真相层条数={len(rows)}"
             )
             result = await index.sync_rows(rows)
             cost_ms = int((time.time() - start) * 1000)
@@ -543,9 +621,9 @@ class ComponentFactory:
             rebuilt = int(result.get("rebuilt", 0) or 0)
             action = "重建" if rebuilt else ("同步" if (migrated or deleted or changed or missing or orphan) else "跳过")
             self.logger.info(
-                "[FAISS向量索引] 完成 "
+                "[向量索引] 完成 "
                 f"任务名=启动一致性检查 index={index_name} action={action} "
-                f"provider_id={provider_id} 真相层条数={result.get('sql_total', len(rows))} "
+                f"backend={backend_name} provider_id={provider_id} 真相层条数={result.get('sql_total', len(rows))} "
                 f"向量层原条数={result.get('vector_total_before', result.get('vector_total', 0))} "
                 f"缺失={missing} 孤儿={orphan} 文本变化={changed} "
                 f"写入={migrated} 删除={deleted} 重建={rebuilt} 耗时毫秒={cost_ms}"
@@ -561,7 +639,7 @@ class ComponentFactory:
             )
         except Exception as e:
             self.logger.warning(
-                f"[FAISS向量索引] 失败 任务名=启动一致性检查 index=memory_index 异常={e}",
+                f"[向量索引] 失败 任务名=启动一致性检查 index=memory_index backend={backend_name} 异常={e}",
                 exc_info=True,
             )
 

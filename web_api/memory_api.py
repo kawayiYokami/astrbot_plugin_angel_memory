@@ -45,6 +45,46 @@ class MemoryAPI:
         except (ValueError, AttributeError):
             return ""
 
+    def _get_sqlite_vector_path(self) -> str:
+        """获取 SQLite 向量索引目录路径"""
+        try:
+            path_manager = self.plugin_context.get_path_manager()
+            if not path_manager.is_provider_set():
+                return ""
+            sqlite_dir = str(path_manager.get_sqlite_vector_index_dir())
+            return sqlite_dir if os.path.isdir(sqlite_dir) else ""
+        except (ValueError, AttributeError):
+            return ""
+
+    def _get_vector_store(self):
+        try:
+            return self.plugin_context.get_component("vector_store")
+        except Exception:
+            return None
+
+    def _get_vector_backend_name(self) -> str:
+        vector_store = self._get_vector_store()
+        return str(getattr(vector_store, "backend_name", "") or "").strip()
+
+    def _get_vector_storage_path(self) -> str:
+        backend = self._get_vector_backend_name()
+        if backend == "sqlite":
+            return self._get_sqlite_vector_path()
+        if backend == "faiss":
+            return self._get_faiss_path()
+        return self._get_sqlite_vector_path() or self._get_faiss_path()
+
+    @staticmethod
+    def _count_vector_rows(db_path: str, backend: str) -> int:
+        table = "vector_rows" if backend == "sqlite" else "index_rows"
+        try:
+            conn = sqlite3.connect(db_path)
+            row = conn.execute(f"SELECT COUNT(1) FROM {table}").fetchone()
+            conn.close()
+            return int(row[0]) if row else 0
+        except Exception:
+            return 0
+
     async def get_overview(self):
         """总览统计"""
         conn = self._get_central_conn()
@@ -76,17 +116,21 @@ class MemoryAPI:
                 conn.close()
 
         # 向量索引状态
-        faiss_path = self._get_faiss_path()
-        result["has_vector_db"] = bool(faiss_path)
-        if faiss_path:
+        vector_backend = self._get_vector_backend_name()
+        vector_path = self._get_vector_storage_path()
+        result["vector_backend"] = vector_backend or "(未初始化)"
+        result["has_vector_db"] = bool(vector_path)
+        if vector_path:
             collections = []
             try:
-                for name in os.listdir(faiss_path):
+                for name in os.listdir(vector_path):
                     if name.endswith(".sqlite"):
                         col_name = name[:-len(".sqlite")]
-                        idx_path = os.path.join(faiss_path, f"{col_name}.index")
-                        if os.path.exists(idx_path):
-                            collections.append(col_name)
+                        if vector_backend == "faiss":
+                            idx_path = os.path.join(vector_path, f"{col_name}.index")
+                            if not os.path.exists(idx_path):
+                                continue
+                        collections.append(col_name)
             except Exception:
                 pass
             result["vector_collections"] = sorted(collections)
@@ -209,28 +253,26 @@ class MemoryAPI:
 
     async def vector_collections(self):
         """获取向量集合列表"""
-        faiss_path = self._get_faiss_path()
-        if not faiss_path:
+        backend = self._get_vector_backend_name()
+        vector_path = self._get_vector_storage_path()
+        if not vector_path:
             return jsonify({"collections": []})
 
         collections = []
         try:
-            for name in os.listdir(faiss_path):
+            for name in os.listdir(vector_path):
                 if name.endswith(".sqlite"):
                     col_name = name[:-len(".sqlite")]
-                    idx_path = os.path.join(faiss_path, f"{col_name}.index")
-                    if os.path.exists(idx_path):
-                        # 获取记录数
-                        sidecar = os.path.join(faiss_path, name)
-                        count = 0
-                        try:
-                            sc = sqlite3.connect(sidecar)
-                            row = sc.execute("SELECT COUNT(1) FROM index_rows").fetchone()
-                            count = int(row[0]) if row else 0
-                            sc.close()
-                        except Exception:
-                            pass
-                        collections.append({"name": col_name, "count": count})
+                    if backend == "faiss":
+                        idx_path = os.path.join(vector_path, f"{col_name}.index")
+                        if not os.path.exists(idx_path):
+                            continue
+                    sidecar = os.path.join(vector_path, name)
+                    collections.append({
+                        "name": col_name,
+                        "count": self._count_vector_rows(sidecar, backend),
+                        "backend": backend or "unknown",
+                    })
         except Exception as e:
             return jsonify({"collections": [], "error": str(e)})
 
@@ -245,78 +287,58 @@ class MemoryAPI:
         if not query_text:
             return jsonify({"results": [], "error": "查询文本不能为空"}), 400
 
-        faiss_path = self._get_faiss_path()
-        if not faiss_path:
-            return jsonify({"results": [], "error": "向量索引不可用"})
-
-        sidecar_path = os.path.join(faiss_path, f"{collection}.sqlite")
-        index_path = os.path.join(faiss_path, f"{collection}.index")
-        if not os.path.exists(sidecar_path) or not os.path.exists(index_path):
-            return jsonify({"results": [], "error": f"集合 {collection} 不存在"})
-
-        # 尝试获取 embedding provider 进行向量化
         try:
-            vector_store = self.plugin_context.get_component("vector_store")
+            vector_store = self._get_vector_store()
             if vector_store is None:
                 return jsonify({"results": [], "error": "向量存储组件不可用，系统可能仍在启动中"})
 
-            # 使用 vector_store 的 embedding provider 进行查询
-            import faiss as faiss_lib
-            import numpy as np
+            backend = str(getattr(vector_store, "backend_name", "") or "").strip()
+            vector_path = self._get_vector_storage_path()
+            if not vector_path:
+                return jsonify({"results": [], "error": "向量索引不可用"})
 
-            embedding_provider = getattr(vector_store, "embedding_provider", None)
-            if embedding_provider is None:
-                return jsonify({"results": [], "error": "嵌入提供商不可用"})
+            sidecar_path = os.path.join(vector_path, f"{collection}.sqlite")
+            if not os.path.exists(sidecar_path):
+                return jsonify({"results": [], "error": f"集合 {collection} 不存在"})
+            if backend == "faiss":
+                index_path = os.path.join(vector_path, f"{collection}.index")
+                if not os.path.exists(index_path):
+                    return jsonify({"results": [], "error": f"集合 {collection} 不存在"})
 
-            # 向量化查询
-            vectors = await embedding_provider.embed_documents([query_text])
-            if not vectors or not vectors[0]:
-                return jsonify({"results": [], "error": "查询向量化失败"})
-            query_vector = vectors[0]
-
-            # FAISS 检索
-            index = faiss_lib.read_index(index_path)
-            arr = np.asarray(query_vector, dtype="float32").reshape(1, -1)
-            norm = np.linalg.norm(arr, axis=1, keepdims=True)
-            norm[norm == 0] = 1.0
-            arr = arr / norm
-
-            actual_k = min(top_k, int(index.ntotal))
-            if actual_k <= 0:
+            index_collection = vector_store.get_or_create_collection_with_dimension_check(collection)
+            hits = await vector_store.recall_memory_ids(
+                index_collection,
+                query=query_text,
+                limit=top_k,
+                similarity_threshold=-1.0,
+            )
+            if not hits:
                 return jsonify({"results": []})
 
-            scores, ids = index.search(arr, actual_k)
-
-            # 从 sidecar 获取元数据
-            vector_ids = [int(x) for x in ids[0].tolist() if int(x) >= 0]
-            if not vector_ids:
-                return jsonify({"results": []})
-
+            hit_ids = [item_id for item_id, _ in hits]
+            table = "vector_rows" if backend == "sqlite" else "index_rows"
             sc = sqlite3.connect(sidecar_path)
             sc.row_factory = sqlite3.Row
-            placeholders = ",".join(["?" for _ in vector_ids])
+            placeholders = ",".join(["?" for _ in hit_ids])
             rows = sc.execute(
-                f"SELECT item_id, vector_id, vector_text FROM index_rows WHERE vector_id IN ({placeholders})",
-                tuple(vector_ids),
+                f"SELECT item_id, vector_text FROM {table} WHERE item_id IN ({placeholders})",
+                tuple(hit_ids),
             ).fetchall()
             sc.close()
 
-            row_map = {int(r["vector_id"]): dict(r) for r in rows}
+            row_map = {str(r["item_id"]): dict(r) for r in rows}
             results = []
-            for pos, vid in enumerate(ids[0].tolist()):
-                vid = int(vid)
-                if vid < 0:
-                    continue
-                row = row_map.get(vid)
+            for item_id, score in hits:
+                row = row_map.get(str(item_id))
                 if not row:
                     continue
                 results.append({
                     "id": row["item_id"],
                     "document": row["vector_text"],
-                    "score": float(scores[0][pos]),
+                    "score": float(score),
                 })
 
-            return jsonify({"results": results})
+            return jsonify({"results": results, "backend": backend or "unknown"})
 
         except Exception as e:
             logger.error(f"[WebUI] 向量检索失败: {e}", exc_info=True)
@@ -329,34 +351,45 @@ class MemoryAPI:
         page_size = min(100, max(1, int(request.args.get("page_size", 20))))
         offset = (page - 1) * page_size
 
-        faiss_path = self._get_faiss_path()
-        if not faiss_path:
+        backend = self._get_vector_backend_name()
+        vector_path = self._get_vector_storage_path()
+        if not vector_path:
             return jsonify({"items": [], "total": 0})
 
-        sidecar_path = os.path.join(faiss_path, f"{collection}.sqlite")
+        sidecar_path = os.path.join(vector_path, f"{collection}.sqlite")
         if not os.path.exists(sidecar_path):
             return jsonify({"items": [], "total": 0})
 
         try:
             sc = sqlite3.connect(sidecar_path)
             sc.row_factory = sqlite3.Row
-            total_row = sc.execute("SELECT COUNT(1) AS cnt FROM index_rows").fetchone()
+            table = "vector_rows" if backend == "sqlite" else "index_rows"
+            total_row = sc.execute(f"SELECT COUNT(1) AS cnt FROM {table}").fetchone()
             total = int(total_row["cnt"]) if total_row else 0
-
-            rows = sc.execute(
-                "SELECT item_id, vector_id, vector_text, dimension, updated_at "
-                "FROM index_rows ORDER BY vector_id ASC LIMIT ? OFFSET ?",
-                (page_size, offset),
-            ).fetchall()
+            if backend == "sqlite":
+                rows = sc.execute(
+                    "SELECT item_id, vector_text, dimension, updated_at "
+                    "FROM vector_rows ORDER BY updated_at ASC, item_id ASC LIMIT ? OFFSET ?",
+                    (page_size, offset),
+                ).fetchall()
+            else:
+                rows = sc.execute(
+                    "SELECT item_id, vector_id, vector_text, dimension, updated_at "
+                    "FROM index_rows ORDER BY vector_id ASC LIMIT ? OFFSET ?",
+                    (page_size, offset),
+                ).fetchall()
             sc.close()
 
-            items = [{
-                "id": row["item_id"],
-                "vector_id": int(row["vector_id"]),
-                "document": row["vector_text"],
-                "dimension": int(row["dimension"]),
-                "updated_at": float(row["updated_at"] or 0),
-            } for row in rows]
+            items = []
+            for index, row in enumerate(rows):
+                items.append({
+                    "id": row["item_id"],
+                    "vector_id": int(row["vector_id"]) if "vector_id" in row.keys() else offset + index + 1,
+                    "document": row["vector_text"],
+                    "dimension": int(row["dimension"]),
+                    "updated_at": float(row["updated_at"] or 0),
+                    "backend": backend or "unknown",
+                })
 
             return jsonify({
                 "items": items,

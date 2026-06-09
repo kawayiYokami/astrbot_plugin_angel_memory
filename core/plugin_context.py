@@ -407,6 +407,10 @@ class PluginContext:
         """获取当前供应商的FAISS索引目录"""
         return self.path_manager.get_faiss_index_dir()
 
+    def get_sqlite_vector_index_dir(self) -> Path:
+        """获取当前供应商的SQLite向量索引目录"""
+        return self.path_manager.get_sqlite_vector_index_dir()
+
     def get_memory_center_dir(self) -> Path:
         """获取中央记忆目录（与provider无关）"""
         return self.path_manager.get_memory_center_dir()

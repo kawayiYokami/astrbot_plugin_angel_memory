@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
-import pytest
-
-pytest.importorskip("faiss")
-
-from llm_memory.components.faiss_memory_index import FaissVectorStore
+from llm_memory.components.sqlite_vector_index import SqliteVectorStore
 
 
 class FakeEmbeddingProvider:
@@ -41,11 +38,12 @@ class FakeEmbeddingProvider:
         return True
 
 
-def test_faiss_upsert_search_delete_and_reload(tmp_path):
+def test_sqlite_upsert_search_delete_and_reload(tmp_path):
     async def run():
-        store = FaissVectorStore(
+        index_dir = tmp_path / "memory_provider_a" / "index" / "sqlite"
+        store = SqliteVectorStore(
             embedding_provider=FakeEmbeddingProvider(),
-            index_dir=tmp_path / "memory_provider_a" / "index" / "faiss",
+            index_dir=index_dir,
             provider_id="provider_a",
         )
         index = store.get_or_create_collection_with_dimension_check("memory_index")
@@ -61,6 +59,15 @@ def test_faiss_upsert_search_delete_and_reload(tmp_path):
         assert hits[0][0] == "m_alpha"
         assert hits[0][1] > hits[1][1]
 
+        db_path = index_dir / "memory_index.sqlite"
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT embedding_blob, dimension FROM vector_rows WHERE item_id = ?",
+                ("m_alpha",),
+            ).fetchone()
+        assert row is not None
+        assert len(row[0]) == int(row[1]) * 4
+
         deleted = index.delete(ids=["m_alpha"])
         assert deleted == 1
         hits_after_delete = await store.recall_memory_ids(
@@ -71,9 +78,9 @@ def test_faiss_upsert_search_delete_and_reload(tmp_path):
         )
         assert "m_alpha" not in [item_id for item_id, _ in hits_after_delete]
 
-        reloaded_store = FaissVectorStore(
+        reloaded_store = SqliteVectorStore(
             embedding_provider=FakeEmbeddingProvider(),
-            index_dir=tmp_path / "memory_provider_a" / "index" / "faiss",
+            index_dir=index_dir,
             provider_id="provider_a",
         )
         reloaded_index = reloaded_store.get_or_create_collection_with_dimension_check("memory_index")
@@ -88,34 +95,10 @@ def test_faiss_upsert_search_delete_and_reload(tmp_path):
     asyncio.run(run())
 
 
-def test_faiss_provider_dirs_are_isolated(tmp_path):
+def test_sqlite_model_change_clears_stale_vector_space(tmp_path):
     async def run():
-        provider_a = FaissVectorStore(
-            embedding_provider=FakeEmbeddingProvider(),
-            index_dir=tmp_path / "memory_provider_a" / "index" / "faiss",
-            provider_id="provider_a",
-        )
-        provider_b = FaissVectorStore(
-            embedding_provider=FakeEmbeddingProvider(),
-            index_dir=tmp_path / "memory_provider_b" / "index" / "faiss",
-            provider_id="provider_b",
-        )
-        index_a = provider_a.get_or_create_collection_with_dimension_check("memory_index")
-        index_b = provider_b.get_or_create_collection_with_dimension_check("memory_index")
-
-        await provider_a.upsert_memory_index_rows(index_a, [{"id": "m_alpha", "vector_text": "alpha"}])
-        await provider_b.upsert_memory_index_rows(index_b, [{"id": "m_beta", "vector_text": "beta"}])
-
-        assert index_a.list_ids() == ["m_alpha"]
-        assert index_b.list_ids() == ["m_beta"]
-
-    asyncio.run(run())
-
-
-def test_faiss_model_change_clears_stale_vector_space(tmp_path):
-    async def run():
-        index_dir = tmp_path / "memory_provider_a" / "index" / "faiss"
-        old_store = FaissVectorStore(
+        index_dir = tmp_path / "memory_provider_a" / "index" / "sqlite"
+        old_store = SqliteVectorStore(
             embedding_provider=FakeEmbeddingProvider(model_name="fake-v1"),
             index_dir=index_dir,
             provider_id="provider_a",
@@ -124,7 +107,7 @@ def test_faiss_model_change_clears_stale_vector_space(tmp_path):
         await old_store.upsert_memory_index_rows(old_index, [{"id": "old_alpha", "vector_text": "alpha"}])
         assert old_index.list_ids() == ["old_alpha"]
 
-        new_store = FaissVectorStore(
+        new_store = SqliteVectorStore(
             embedding_provider=FakeEmbeddingProvider(model_name="fake-v2"),
             index_dir=index_dir,
             provider_id="provider_a",
@@ -144,11 +127,11 @@ def test_faiss_model_change_clears_stale_vector_space(tmp_path):
     asyncio.run(run())
 
 
-def test_faiss_sync_rows_checks_truth_layer_consistency(tmp_path):
+def test_sqlite_sync_rows_checks_truth_layer_consistency(tmp_path):
     async def run():
-        store = FaissVectorStore(
+        store = SqliteVectorStore(
             embedding_provider=FakeEmbeddingProvider(),
-            index_dir=tmp_path / "memory_provider_a" / "index" / "faiss",
+            index_dir=tmp_path / "memory_provider_a" / "index" / "sqlite",
             provider_id="provider_a",
         )
         index = store.get_or_create_collection_with_dimension_check("memory_index")

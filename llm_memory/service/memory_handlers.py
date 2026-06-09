@@ -156,7 +156,7 @@ class MemoryHandler:
                     if id_scores:
                         vector_scores = {mid: score for mid, score in id_scores}
                 except Exception as e:
-                    self.logger.warning(f"记忆 recall 读取向量分失败，降级为 FTS-only: {e}")
+                    self.logger.warning(f"记忆 recall 读取向量分失败，仅使用 FTS 候选: {e}")
             recalled = await self.memory_sql_manager.recall_by_tags(
                 query=query,
                 limit=limit,

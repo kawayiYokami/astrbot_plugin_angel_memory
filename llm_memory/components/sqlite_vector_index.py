@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import faiss
 import numpy as np
 
 try:
@@ -19,17 +17,16 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 
-class FaissTextIndex:
-    """Provider-local FAISS text index with SQLite id mapping."""
+class SqliteTextIndex:
+    """Provider-local flat cosine vector index backed by SQLite."""
 
-    INDEX_VERSION = "faiss_flat_ip_v1"
+    INDEX_VERSION = "sqlite_flat_cosine_v1"
 
     def __init__(
         self,
         *,
         name: str,
-        index_path: Path,
-        meta_db_path: Path,
+        db_path: Path,
         embedding_provider: Any,
         provider_id: str,
         model_key: str,
@@ -37,23 +34,20 @@ class FaissTextIndex:
     ):
         self.name = str(name or "").strip()
         if not self.name:
-            raise ValueError("FAISS索引名称不能为空")
-        self.index_path = Path(index_path)
-        self.meta_db_path = Path(meta_db_path)
+            raise ValueError("SQLite向量索引名称不能为空")
+        self.db_path = Path(db_path)
         self.embedding_provider = embedding_provider
         self.provider_id = str(provider_id or "unknown").strip() or "unknown"
         self.model_key = str(model_key or "unknown").strip() or "unknown"
         self.logger = log or logger
         self._lock = threading.RLock()
-        self._index = None
+        self._matrix_cache: Optional[Tuple[List[str], np.ndarray]] = None
 
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        self.meta_db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
-        self._load_index()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.meta_db_path), check_same_thread=False, timeout=30.0)
+        conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -61,10 +55,10 @@ class FaissTextIndex:
         with self._connect() as conn:
             conn.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS index_rows (
+                CREATE TABLE IF NOT EXISTS vector_rows (
                     item_id TEXT PRIMARY KEY,
-                    vector_id INTEGER NOT NULL UNIQUE,
                     vector_text TEXT NOT NULL,
+                    embedding_blob BLOB NOT NULL,
                     dimension INTEGER NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -74,28 +68,11 @@ class FaissTextIndex:
                     value TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS vector_id_seq (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    next_id INTEGER NOT NULL
-                );
-
-                INSERT OR IGNORE INTO vector_id_seq(id, next_id) VALUES (1, 1);
+                CREATE INDEX IF NOT EXISTS idx_vector_rows_updated_at
+                    ON vector_rows(updated_at);
                 """
             )
             conn.commit()
-
-    def _load_index(self) -> None:
-        with self._lock:
-            if not self.index_path.exists():
-                self._index = None
-                return
-            try:
-                self._index = faiss.read_index(str(self.index_path))
-            except Exception as e:
-                self.logger.warning(
-                    f"[FAISS向量索引] 读取失败 index={self.name} 文件={self.index_path} 异常={e}"
-                )
-                self._index = None
 
     @staticmethod
     def _normalize(vectors: np.ndarray) -> np.ndarray:
@@ -106,20 +83,22 @@ class FaissTextIndex:
         norms[norms == 0] = 1.0
         return arr / norms
 
-    def _new_index(self, dimension: int):
-        base = faiss.IndexFlatIP(int(dimension))
-        return faiss.IndexIDMap(base)
+    @staticmethod
+    def _encode_vector(vector: np.ndarray) -> bytes:
+        arr = np.asarray(vector, dtype="float32").reshape(-1)
+        return arr.tobytes(order="C")
 
-    def _save_index_locked(self) -> None:
-        if self._index is None:
-            try:
-                self.index_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-            return
-        tmp_path = self.index_path.with_suffix(self.index_path.suffix + ".tmp")
-        faiss.write_index(self._index, str(tmp_path))
-        os.replace(str(tmp_path), str(self.index_path))
+    @staticmethod
+    def _decode_vector(blob: bytes, dimension: int) -> Optional[np.ndarray]:
+        if not blob or int(dimension or 0) <= 0:
+            return None
+        arr = np.frombuffer(blob, dtype="float32")
+        if int(arr.size) != int(dimension):
+            return None
+        return arr
+
+    def _invalidate_cache_locked(self) -> None:
+        self._matrix_cache = None
 
     def _get_meta_locked(self) -> Dict[str, str]:
         with self._connect() as conn:
@@ -131,7 +110,7 @@ class FaissTextIndex:
             "provider_id": self.provider_id,
             "embedding_model": self.model_key,
             "dimension": str(int(dimension)),
-            "index_path": str(self.index_path),
+            "index_path": str(self.db_path),
             "index_version": self.INDEX_VERSION,
             "updated_at": str(time.time()),
         }
@@ -161,52 +140,15 @@ class FaissTextIndex:
         return True
 
     def _clear_locked(self) -> None:
-        self._index = None
         with self._connect() as conn:
-            conn.execute("DELETE FROM index_rows")
+            conn.execute("DELETE FROM vector_rows")
             conn.execute("DELETE FROM index_meta")
-            conn.execute("UPDATE vector_id_seq SET next_id = 1 WHERE id = 1")
             conn.commit()
-        try:
-            self.index_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        self._invalidate_cache_locked()
 
     def clear(self) -> None:
         with self._lock:
             self._clear_locked()
-
-    def _allocate_vector_ids_locked(self, item_ids: List[str]) -> Dict[str, int]:
-        existing: Dict[str, int] = {}
-        with self._connect() as conn:
-            placeholders = ",".join("?" for _ in item_ids)
-            if placeholders:
-                rows = conn.execute(
-                    f"SELECT item_id, vector_id FROM index_rows WHERE item_id IN ({placeholders})",
-                    tuple(item_ids),
-                ).fetchall()
-                existing = {str(row["item_id"]): int(row["vector_id"]) for row in rows}
-
-            missing = [item_id for item_id in item_ids if item_id not in existing]
-            if missing:
-                seq_row = conn.execute("SELECT next_id FROM vector_id_seq WHERE id = 1").fetchone()
-                next_id = int(seq_row["next_id"] if seq_row else 1)
-                for item_id in missing:
-                    existing[item_id] = next_id
-                    next_id += 1
-                conn.execute("UPDATE vector_id_seq SET next_id = ? WHERE id = 1", (next_id,))
-                conn.commit()
-        return existing
-
-    def _remove_vector_ids_locked(self, vector_ids: List[int]) -> None:
-        if self._index is None or not vector_ids:
-            return
-        ids_arr = np.asarray(vector_ids, dtype="int64")
-        try:
-            self._index.remove_ids(ids_arr)
-        except Exception:
-            selector = faiss.IDSelectorArray(len(ids_arr), faiss.swig_ptr(ids_arr))
-            self._index.remove_ids(selector)
 
     async def _embed_documents(
         self,
@@ -225,11 +167,11 @@ class FaissTextIndex:
                 )
             except asyncio.TimeoutError:
                 self.logger.warning(
-                    f"[FAISS向量索引] 查询向量化超时 index={self.name} timeout={timeout}s"
+                    f"[SQLite向量索引] 查询向量化超时 index={self.name} timeout={timeout}s"
                 )
                 return None
             except Exception as e:
-                self.logger.warning(f"[FAISS向量索引] 查询向量化失败 index={self.name} 异常={e}")
+                self.logger.warning(f"[SQLite向量索引] 查询向量化失败 index={self.name} 异常={e}")
                 return None
         return await self.embedding_provider.embed_documents(texts)
 
@@ -248,14 +190,14 @@ class FaissTextIndex:
 
         embed_start = time.time()
         self.logger.info(
-            "[FAISS向量索引] 开始 "
+            "[SQLite向量索引] 开始 "
             f"任务名=批量向量化 index={self.name} provider_id={self.provider_id} "
             f"embedding_model={self.model_key} 条数={len(clean_rows)}"
         )
         embeddings = await self._embed_documents([row["vector_text"] for row in clean_rows])
         if not embeddings:
             self.logger.warning(
-                "[FAISS向量索引] 失败 "
+                "[SQLite向量索引] 失败 "
                 f"任务名=批量向量化 index={self.name} provider_id={self.provider_id} "
                 f"原因=嵌入结果为空 条数={len(clean_rows)}"
             )
@@ -265,57 +207,43 @@ class FaissTextIndex:
         dimension = int(vectors.shape[1])
         embed_ms = int((time.time() - embed_start) * 1000)
         self.logger.info(
-            "[FAISS向量索引] 完成 "
+            "[SQLite向量索引] 完成 "
             f"任务名=批量向量化 index={self.name} provider_id={self.provider_id} "
             f"embedding_model={self.model_key} 条数={len(clean_rows)} "
             f"dimension={dimension} 耗时毫秒={embed_ms}"
         )
-        now = time.time()
-        item_ids = [row["id"] for row in clean_rows]
 
+        now = time.time()
         with self._lock:
             if not self._is_meta_compatible_locked(dimension):
                 self.logger.info(
-                    "[FAISS向量索引] 检测到模型或维度变化，清空当前索引 "
-                    f"index={self.name} provider_id={self.provider_id} embedding_model={self.model_key} dimension={dimension}"
+                    "[SQLite向量索引] 检测到模型或维度变化，清空当前索引 "
+                    f"index={self.name} provider_id={self.provider_id} "
+                    f"embedding_model={self.model_key} dimension={dimension}"
                 )
                 self._clear_locked()
-            if self._index is None:
-                self._index = self._new_index(dimension)
-            elif int(self._index.d) != dimension:
-                self.logger.info(
-                    "[FAISS向量索引] 检测到维度变化，清空当前索引 "
-                    f"index={self.name} old_dimension={self._index.d} new_dimension={dimension}"
-                )
-                self._clear_locked()
-                self._index = self._new_index(dimension)
-
-            vector_ids_map = self._allocate_vector_ids_locked(item_ids)
-            vector_ids = [int(vector_ids_map[item_id]) for item_id in item_ids]
-            self._remove_vector_ids_locked(vector_ids)
-            self._index.add_with_ids(vectors, np.asarray(vector_ids, dtype="int64"))
 
             with self._connect() as conn:
                 conn.executemany(
                     """
-                    INSERT OR REPLACE INTO index_rows(
-                        item_id, vector_id, vector_text, dimension, updated_at
+                    INSERT OR REPLACE INTO vector_rows(
+                        item_id, vector_text, embedding_blob, dimension, updated_at
                     ) VALUES (?, ?, ?, ?, ?)
                     """,
                     [
                         (
                             row["id"],
-                            int(vector_ids_map[row["id"]]),
                             row["vector_text"],
+                            sqlite3.Binary(self._encode_vector(vectors[idx])),
                             dimension,
                             now,
                         )
-                        for row in clean_rows
+                        for idx, row in enumerate(clean_rows)
                     ],
                 )
                 conn.commit()
             self._write_meta_locked(dimension)
-            self._save_index_locked()
+            self._invalidate_cache_locked()
 
     async def rebuild(self, rows: List[Dict[str, str]]) -> Dict[str, int]:
         start = time.time()
@@ -346,10 +274,9 @@ class FaissTextIndex:
 
         with self._lock:
             meta_compatible = self._is_meta_compatible_locked()
-            vector_total_before = int(getattr(self._index, "ntotal", 0) or 0) if self._index is not None else 0
+            vector_total_before = self._count_rows_locked()
         vector_ids = set(self.list_ids())
-        index_count_mismatch = vector_total_before != len(vector_ids)
-        needs_rebuild = bool(force_rebuild or not meta_compatible or index_count_mismatch)
+        needs_rebuild = bool(force_rebuild or not meta_compatible)
 
         if needs_rebuild:
             result = await self.rebuild(clean_rows)
@@ -371,7 +298,7 @@ class FaissTextIndex:
         changed_rows = []
         text_map = {row["id"]: row["vector_text"] for row in clean_rows}
         with self._connect() as conn:
-            existing_rows = conn.execute("SELECT item_id, vector_text FROM index_rows").fetchall()
+            existing_rows = conn.execute("SELECT item_id, vector_text FROM vector_rows").fetchall()
         for row in existing_rows:
             item_id = str(row["item_id"])
             if item_id in sql_ids and str(row["vector_text"] or "") != text_map.get(item_id, ""):
@@ -386,7 +313,7 @@ class FaissTextIndex:
         return {
             "sql_total": len(clean_rows),
             "vector_total_before": vector_total_before,
-            "vector_total": len(vector_ids),
+            "vector_total": self._count_rows_locked(),
             "missing": len(missing_ids),
             "orphan": len(orphan_ids),
             "changed": len(changed_rows),
@@ -396,35 +323,36 @@ class FaissTextIndex:
             "failed": 0,
         }
 
+    def _count_rows_locked(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(1) FROM vector_rows").fetchone()
+        return int(row[0] if row else 0)
+
     def delete(self, ids: List[str], **_: Any) -> int:
         clean_ids = [str(item_id).strip() for item_id in (ids or []) if str(item_id).strip()]
         if not clean_ids:
             return 0
+        placeholders = ",".join("?" for _ in clean_ids)
         with self._lock:
-            placeholders = ",".join("?" for _ in clean_ids)
             with self._connect() as conn:
-                rows = conn.execute(
-                    f"SELECT vector_id FROM index_rows WHERE item_id IN ({placeholders})",
-                    tuple(clean_ids),
-                ).fetchall()
-                vector_ids = [int(row["vector_id"]) for row in rows]
-                conn.execute(
-                    f"DELETE FROM index_rows WHERE item_id IN ({placeholders})",
+                cur = conn.execute(
+                    f"DELETE FROM vector_rows WHERE item_id IN ({placeholders})",
                     tuple(clean_ids),
                 )
                 conn.commit()
-            self._remove_vector_ids_locked(vector_ids)
-            self._save_index_locked()
-        return len(vector_ids)
+            self._invalidate_cache_locked()
+        return int(cur.rowcount or 0)
 
     def list_ids(self) -> List[str]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT item_id FROM index_rows ORDER BY vector_id ASC").fetchall()
+            rows = conn.execute(
+                "SELECT item_id FROM vector_rows ORDER BY updated_at ASC, item_id ASC"
+            ).fetchall()
         return [str(row["item_id"]) for row in rows]
 
     def get(self, limit: Optional[int] = None, offset: int = 0, include: Optional[List[str]] = None) -> Dict[str, Any]:
         del include
-        sql = "SELECT item_id FROM index_rows ORDER BY vector_id ASC"
+        sql = "SELECT item_id FROM vector_rows ORDER BY updated_at ASC, item_id ASC"
         params: Tuple[Any, ...] = ()
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"
@@ -432,6 +360,41 @@ class FaissTextIndex:
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return {"ids": [str(row["item_id"]) for row in rows]}
+
+    def _load_matrix_locked(self) -> Tuple[List[str], np.ndarray]:
+        if self._matrix_cache is not None:
+            return self._matrix_cache
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT item_id, embedding_blob, dimension
+                FROM vector_rows
+                ORDER BY updated_at ASC, item_id ASC
+                """
+            ).fetchall()
+
+        ids: List[str] = []
+        vectors: List[np.ndarray] = []
+        expected_dimension: Optional[int] = None
+        for row in rows:
+            dimension = int(row["dimension"] or 0)
+            vector = self._decode_vector(row["embedding_blob"], dimension)
+            if vector is None:
+                continue
+            if expected_dimension is None:
+                expected_dimension = int(vector.size)
+            if int(vector.size) != expected_dimension:
+                continue
+            ids.append(str(row["item_id"]))
+            vectors.append(vector)
+
+        if not vectors:
+            matrix = np.empty((0, 0), dtype="float32")
+        else:
+            matrix = np.vstack(vectors).astype("float32", copy=False)
+        self._matrix_cache = (ids, matrix)
+        return self._matrix_cache
 
     async def search(
         self,
@@ -450,58 +413,44 @@ class FaissTextIndex:
         if query_vector is None:
             return []
 
+        vector_arr = self._normalize(np.asarray(query_vector, dtype="float32")).reshape(-1)
         with self._lock:
-            if self._index is None or int(getattr(self._index, "ntotal", 0)) <= 0:
-                return []
-            dim = int(self._index.d)
-            if not self._is_meta_compatible_locked(dim):
+            if not self._is_meta_compatible_locked(int(vector_arr.size)):
                 self.logger.warning(
-                    "[FAISS向量索引] 查询跳过：索引模型或维度与当前配置不一致 "
+                    "[SQLite向量索引] 查询跳过：索引模型或维度与当前配置不一致 "
                     f"index={self.name} provider_id={self.provider_id} embedding_model={self.model_key}"
                 )
                 return []
-            vector_arr = self._normalize(np.asarray(query_vector, dtype="float32"))
-            if int(vector_arr.shape[1]) != dim:
-                self.logger.warning(
-                    f"[FAISS向量索引] 查询跳过：向量维度不匹配 index={self.name} query_dim={vector_arr.shape[1]} index_dim={dim}"
-                )
-                return []
-            top_k = min(max(1, int(limit)), int(self._index.ntotal))
-            scores, vector_ids = self._index.search(vector_arr, top_k)
+            ids, matrix = self._load_matrix_locked()
 
-        flat_scores = scores[0].tolist() if len(scores) else []
-        flat_vector_ids = vector_ids[0].tolist() if len(vector_ids) else []
-        valid_vector_ids = [int(vid) for vid in flat_vector_ids if int(vid) >= 0]
-        if not valid_vector_ids:
+        if not ids or matrix.size == 0:
+            return []
+        if int(matrix.shape[1]) != int(vector_arr.size):
+            self.logger.warning(
+                f"[SQLite向量索引] 查询跳过：向量维度不匹配 index={self.name} "
+                f"query_dim={vector_arr.size} index_dim={matrix.shape[1]}"
+            )
             return []
 
-        placeholders = ",".join("?" for _ in valid_vector_ids)
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT item_id, vector_id FROM index_rows WHERE vector_id IN ({placeholders})",
-                tuple(valid_vector_ids),
-            ).fetchall()
-        id_map = {int(row["vector_id"]): str(row["item_id"]) for row in rows}
+        scores = matrix @ vector_arr
+        if scores.size == 0:
+            return []
+        top_k = min(max(1, int(limit)), int(scores.size))
+        order = np.argsort(scores)[::-1][:top_k]
 
         recalled: List[Tuple[str, float]] = []
-        for idx, vector_id in enumerate(flat_vector_ids):
-            vector_id = int(vector_id)
-            if vector_id < 0:
-                continue
-            item_id = id_map.get(vector_id)
-            if not item_id:
-                continue
-            score = float(flat_scores[idx] if idx < len(flat_scores) else 0.0)
+        for idx in order.tolist():
+            score = float(scores[idx])
             if score < float(similarity_threshold):
                 continue
-            recalled.append((item_id, score))
+            recalled.append((ids[idx], score))
         return recalled
 
 
-class FaissVectorStore:
-    """Small FAISS-backed vector store for the memory_index collection."""
+class SqliteVectorStore:
+    """SQLite-backed exact cosine vector store for memory_index."""
 
-    backend_name = "faiss"
+    backend_name = "sqlite"
 
     def __init__(
         self,
@@ -512,19 +461,19 @@ class FaissVectorStore:
         rerank_provider: Optional[Any] = None,
     ):
         if embedding_provider is None:
-            raise ValueError("FaissVectorStore需要有效的embedding_provider")
+            raise ValueError("SqliteVectorStore需要有效的embedding_provider")
         self.embedding_provider = embedding_provider
         self.index_dir = Path(index_dir)
         self.provider_id = str(provider_id or "unknown").strip() or "unknown"
         self.rerank_provider = rerank_provider
         self.logger = logger
-        self.client = f"faiss:{self.index_dir}"
-        self._collections: Dict[str, FaissTextIndex] = {}
+        self.client = f"sqlite-vector:{self.index_dir}"
+        self._collections: Dict[str, SqliteTextIndex] = {}
         self._lock = threading.RLock()
         self.index_dir.mkdir(parents=True, exist_ok=True)
         self.model_key = self._build_model_key()
         self.logger.info(
-            "[FAISS向量索引] 完成 "
+            "[SQLite向量索引] 完成 "
             f"provider_id={self.provider_id} embedding_model={self.model_key} index_dir={self.index_dir}"
         )
 
@@ -541,18 +490,17 @@ class FaissVectorStore:
         key = "|".join([part for part in parts if part])
         return key or self.provider_id
 
-    def get_or_create_collection_with_dimension_check(self, name: str) -> FaissTextIndex:
+    def get_or_create_collection_with_dimension_check(self, name: str) -> SqliteTextIndex:
         safe_name = str(name or "").strip()
         if not safe_name:
-            raise ValueError("FAISS集合名称不能为空")
+            raise ValueError("SQLite向量集合名称不能为空")
         with self._lock:
             existing = self._collections.get(safe_name)
             if existing is not None:
                 return existing
-            collection = FaissTextIndex(
+            collection = SqliteTextIndex(
                 name=safe_name,
-                index_path=self.index_dir / f"{safe_name}.index",
-                meta_db_path=self.index_dir / f"{safe_name}.sqlite",
+                db_path=self.index_dir / f"{safe_name}.sqlite",
                 embedding_provider=self.embedding_provider,
                 provider_id=self.provider_id,
                 model_key=self.model_key,
@@ -561,7 +509,7 @@ class FaissVectorStore:
             self._collections[safe_name] = collection
             return collection
 
-    def clear_collection(self, collection: FaissTextIndex) -> None:
+    def clear_collection(self, collection: SqliteTextIndex) -> None:
         collection.clear()
 
     async def embed_documents(
@@ -582,10 +530,10 @@ class FaissVectorStore:
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
-                self.logger.warning(f"[FAISS向量索引] 查询向量化超时 timeout={timeout}s")
+                self.logger.warning(f"[SQLite向量索引] 查询向量化超时 timeout={timeout}s")
                 return None
             except Exception as e:
-                self.logger.warning(f"[FAISS向量索引] 查询向量化失败 异常={e}")
+                self.logger.warning(f"[SQLite向量索引] 查询向量化失败 异常={e}")
                 return None
         return await self.embedding_provider.embed_documents(texts)
 
@@ -605,14 +553,14 @@ class FaissVectorStore:
 
     async def upsert_memory_index_rows(
         self,
-        collection: FaissTextIndex,
+        collection: SqliteTextIndex,
         rows: List[Dict[str, str]],
     ) -> None:
         await collection.upsert_rows(rows)
 
     async def recall_memory_ids(
         self,
-        collection: FaissTextIndex,
+        collection: SqliteTextIndex,
         query: str,
         limit: int = 10,
         vector: Optional[List[float]] = None,
