@@ -26,10 +26,7 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
-try:
-    import tantivy
-except Exception:
-    tantivy = None
+import tantivy
 
 
 # ============================================================
@@ -171,9 +168,6 @@ class NoteChunkSearchEngine:
         index_dir: str,
         rerank_provider: Optional[Any] = None,
     ):
-        if tantivy is None:
-            raise RuntimeError("Tantivy 依赖不可用，请先安装: pip install tantivy")
-
         self._index_dir = Path(index_dir) / "tantivy_note_chunks"
         self._index_dir.mkdir(parents=True, exist_ok=True)
         self._rerank_provider = rerank_provider

@@ -24,10 +24,7 @@ except ImportError:
 
 from .note_chunk_search import iter_cjk_fragments, normalize_search_text, tokenize_for_index
 
-try:
-    import tantivy
-except Exception:  # pragma: no cover - 依赖缺失时由运行时显式报错
-    tantivy = None
+import tantivy
 
 
 class TantivyBM25Retriever:
@@ -39,11 +36,6 @@ class TantivyBM25Retriever:
         memory_threshold: float = 0.5,
         memory_default_vector_score: float = 0.5,
     ):
-        if tantivy is None:
-            raise RuntimeError(
-                "Tantivy 依赖不可用，请先安装依赖后再启动（例如: pip install tantivy）"
-            )
-
         self.db_path = str(db_path)
         self.memory_threshold = float(memory_threshold)
         self.memory_default_vector_score = float(memory_default_vector_score)
