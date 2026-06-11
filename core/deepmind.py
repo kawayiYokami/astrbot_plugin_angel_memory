@@ -503,7 +503,13 @@ class DeepMind:
         invalid_names = {"", "用户", "成员", "未知", "未知用户", "user", "unknown", "none", "null"}
         sid = str(sender_id or "").strip()
         name = str(sender_name or "").strip()
-        return sid.lower() in invalid_ids or name.lower() in invalid_names
+        
+        # 核心逻辑改进: 只要有合法的 ID, 就认为身份有效。
+        if sid and sid.lower() not in invalid_ids:
+            return False
+            
+        # 只有当 ID 无效且名字也无效时, 才判定为缺失身份。
+        return sid.lower() in invalid_ids and name.lower() in invalid_names
 
     def _get_event_sender_identity(self, event: AstrMessageEvent) -> tuple[str, str]:
         sender_id = ""
