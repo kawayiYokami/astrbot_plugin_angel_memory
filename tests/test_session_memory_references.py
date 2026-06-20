@@ -178,7 +178,30 @@ async def test_injection_hydrates_latest_memory_and_removes_missing_refs():
     assert "小明（123456）现在主要使用 Python 写工具。" in injected
     assert "旧文本。" not in injected
     assert "已经失效的旧记忆。" not in injected
+    assert request.contexts[0]["_no_save"] is True
+    assert request.extra_user_content_parts == []
     assert deepmind.session_memory_manager.get_session_memory_ids("s1") == ["m1"]
+
+
+@pytest.mark.asyncio
+async def test_injection_always_uses_no_save_contexts_even_with_secretary_decision():
+    latest = _memory("m1", "这是最新记忆。", ["测试"])
+    deepmind = _DeepMind(_Runtime([latest]))
+    deepmind.session_memory_manager.add_memories_to_session("s1", [latest])
+
+    request = types.SimpleNamespace(contexts=[], extra_user_content_parts=[])
+    await DeepMindInjectionService(deepmind).inject_memories_to_request(
+        request=request,
+        session_id="s1",
+        note_context="",
+        has_secretary_decision=True,
+        memory_scope="public",
+    )
+
+    assert len(request.contexts) == 1
+    assert request.contexts[0]["_no_save"] is True
+    assert "这是最新记忆。" in request.contexts[0]["content"]
+    assert request.extra_user_content_parts == []
 
 
 def test_capacity_cleanup_still_uses_reference_metadata():

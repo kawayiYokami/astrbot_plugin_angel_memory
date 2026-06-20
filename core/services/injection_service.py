@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Optional
 
 from astrbot.api.provider import ProviderRequest
-from astrbot.core.agent.message import TextPart
 
 from ...llm_memory.models.data_models import BaseMemory
 
@@ -177,16 +176,10 @@ class DeepMindInjectionService:
                 + "\n\n".join(system_context_parts)
                 + "\n</system_context>"
             )
-
-            # 只有拿不到天使之心决策时，才使用 _no_save 的上下文注入方式，避免污染历史。
-            if not has_secretary_decision:
-                request.contexts.append(
-                    {
-                        "role": "user",
-                        "content": full_system_context,
-                        "_no_save": True,
-                    }
-                )
-            else:
-                text_part = TextPart(text=full_system_context)
-                request.extra_user_content_parts.append(text_part)
+            request.contexts.append(
+                {
+                    "role": "user",
+                    "content": full_system_context,
+                    "_no_save": True,
+                }
+            )
