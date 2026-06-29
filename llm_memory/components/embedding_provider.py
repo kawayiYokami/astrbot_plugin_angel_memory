@@ -609,7 +609,13 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 class APIEmbeddingProvider(EmbeddingProvider):
     """API嵌入模型提供商"""
 
-    def __init__(self, provider, provider_id: str, cache_size_mb: float = 100.0):
+    def __init__(
+        self,
+        provider,
+        provider_id: str,
+        cache_size_mb: float = 100.0,
+        context=None,
+    ):
         """
         初始化API嵌入提供商
 
@@ -620,6 +626,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         """
         self.provider = provider
         self.provider_id = provider_id
+        self.context = context
         self.logger = logger
         self._model_info = None
         self._available = None  # None表示未测试，True/False表示测试结果
@@ -632,6 +639,26 @@ class APIEmbeddingProvider(EmbeddingProvider):
             f"API嵌入提供商已初始化: {self.provider_id}, "
             f"批量大小: {self.batch_size} (纯异步模式)"
         )
+
+    def _refresh_provider_reference(self):
+        """热重载后重新绑定 AstrBot 当前 provider 实例。"""
+        if not self.context or not hasattr(self.context, "get_provider_by_id"):
+            return self.provider
+        try:
+            current_provider = self.context.get_provider_by_id(self.provider_id)
+        except Exception as e:
+            self.logger.debug(
+                f"[简单记忆回灌] 刷新API嵌入提供商引用失败 provider_id={self.provider_id}: {e}",
+                exc_info=True,
+            )
+            return self.provider
+        if current_provider and current_provider is not self.provider:
+            self.provider = current_provider
+            self._model_info = None
+            self.logger.info(
+                f"[简单记忆回灌] API嵌入提供商已刷新当前实例 provider_id={self.provider_id}"
+            )
+        return self.provider
 
     async def check_availability(self) -> bool:
         """异步检查可用性"""
@@ -653,7 +680,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
     async def _perform_embedding_test(self, text: str):
         """执行嵌入测试"""
         try:
-            await self.provider.get_embedding(text)
+            provider = self._refresh_provider_reference()
+            await provider.get_embedding(text)
         except Exception as e:
             raise e
 
@@ -784,9 +812,10 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         while True:
             try:
+                provider = self._refresh_provider_reference()
                 if batch_size >= len(texts):
                     # 单批次处理
-                    result = await self.provider.get_embeddings(texts)
+                    result = await provider.get_embeddings(texts)
                     result = self._expand_aggregated_embedding(result, texts)
                     self._validate_embedding_count(result, texts)
                     return result
@@ -795,7 +824,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
                     tasks = []
                     for i in range(0, len(texts), batch_size):
                         batch = texts[i : i + batch_size]
-                        task = self.provider.get_embeddings(batch)
+                        task = provider.get_embeddings(batch)
                         tasks.append(task)
 
                     # 并发执行所有批次
@@ -927,6 +956,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     def get_model_info(self) -> Dict[str, Any]:
         """获取模型信息"""
+        self._refresh_provider_reference()
         if self._model_info is None:
             meta = self.provider.meta() if hasattr(self.provider, "meta") else {}
             model_name = self._extract_api_model_name(meta)
@@ -1022,7 +1052,11 @@ class EmbeddingProviderFactory:
 
             provider = self.context.get_provider_by_id(normalized_provider_id)
             if provider:
-                api_provider = APIEmbeddingProvider(provider, normalized_provider_id)
+                api_provider = APIEmbeddingProvider(
+                    provider,
+                    normalized_provider_id,
+                    context=self.context,
+                )
                 if await api_provider.check_availability():
                     self.logger.info(f"成功使用API嵌入提供商: {normalized_provider_id}")
                     return api_provider
