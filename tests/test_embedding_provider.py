@@ -35,6 +35,47 @@ class MetaEmbeddingProvider:
         return [1.0, 0.0, 0.0]
 
 
+class ClosedEmbeddingProvider:
+    async def get_embeddings(self, texts):
+        raise RuntimeError("old provider is closed")
+
+    async def get_embedding(self, text):
+        raise RuntimeError("old provider is closed")
+
+
+class RecordingEmbeddingProvider:
+    def __init__(self):
+        self.calls = []
+
+    async def get_embeddings(self, texts):
+        self.calls.append(list(texts))
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+    async def get_embedding(self, text):
+        return [1.0, 0.0, 0.0]
+
+
+class ReplacingContext:
+    def __init__(self, replacement):
+        self.replacement = replacement
+
+    def get_provider_by_id(self, provider_id):
+        assert provider_id == "api_provider"
+        return self.replacement
+
+
+class RotatingContext:
+    def __init__(self, replacements):
+        self.replacements = list(replacements)
+        self.calls = 0
+
+    def get_provider_by_id(self, provider_id):
+        assert provider_id == "api_provider"
+        index = min(self.calls, len(self.replacements) - 1)
+        self.calls += 1
+        return self.replacements[index]
+
+
 def test_api_embedding_provider_rejects_short_batch_results():
     async def run():
         provider = APIEmbeddingProvider(ShortEmbeddingProvider(), "short_provider")
@@ -49,6 +90,69 @@ def test_api_embedding_provider_rejects_short_batch_results():
             raise AssertionError("expected short embedding results to fail")
 
     asyncio.run(run())
+
+
+def test_api_embedding_provider_refreshes_provider_reference_before_batch_request():
+    async def run():
+        replacement = MetaEmbeddingProvider({"model": "BAAI/bge-m3"})
+        provider = APIEmbeddingProvider(
+            ClosedEmbeddingProvider(),
+            "api_provider",
+            context=ReplacingContext(replacement),
+        )
+        provider._available = True
+        provider._cache_enabled = False
+
+        result = await provider.embed_documents(["alpha", "beta"])
+
+        assert result == [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        assert provider.provider is replacement
+
+    asyncio.run(run())
+
+
+def test_api_embedding_provider_uses_one_provider_reference_per_batch_attempt():
+    async def run():
+        first = RecordingEmbeddingProvider()
+        second = RecordingEmbeddingProvider()
+        context = RotatingContext([first, second])
+        provider = APIEmbeddingProvider(
+            ClosedEmbeddingProvider(),
+            "api_provider",
+            context=context,
+        )
+        provider._available = True
+        provider._cache_enabled = False
+        provider.batch_size = 1
+
+        result = await provider.embed_documents(["alpha", "beta"])
+
+        assert result == [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        assert context.calls == 1
+        assert first.calls == [["alpha"], ["beta"]]
+        assert second.calls == []
+        assert provider.provider is first
+
+    asyncio.run(run())
+
+
+def test_api_embedding_provider_refreshes_model_info_cache_after_provider_change():
+    first = MetaEmbeddingProvider({"model": "Old/Embedding"})
+    second = MetaEmbeddingProvider({"model": "New/Embedding"})
+    context = ReplacingContext(first)
+    provider = APIEmbeddingProvider(
+        first,
+        "api_provider",
+        context=context,
+    )
+    provider._available = True
+
+    assert provider.get_model_info()["model_name"] == "Old_Embedding"
+
+    context.replacement = second
+
+    assert provider.get_model_info()["model_name"] == "New_Embedding"
+    assert provider.provider is second
 
 
 def test_api_embedding_provider_exposes_clean_model_name_from_meta():
