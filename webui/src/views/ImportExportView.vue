@@ -33,7 +33,7 @@
               color="secondary"
               @click="doImport"
               :loading="importing"
-              :disabled="!importFile?.length"
+              :disabled="!selectedImportFile"
               prepend-icon="mdi-import"
             >
               执行导入
@@ -55,15 +55,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiGet, apiPost, download } = useBridge()
 
 const exporting = ref(false)
 const importing = ref(false)
-const importFile = ref<File[]>([])
+const importFile = ref<File | File[] | null>(null)
 const importResult = ref<any>(null)
+const selectedImportFile = computed(() => {
+  if (Array.isArray(importFile.value)) return importFile.value[0] ?? null
+  return importFile.value ?? null
+})
 
 async function doExport() {
   exporting.value = true
@@ -78,11 +82,11 @@ async function doExport() {
 }
 
 async function doImport() {
-  if (!importFile.value?.length) return
+  const file = selectedImportFile.value
+  if (!file) return
   importing.value = true
   importResult.value = null
   try {
-    const file = importFile.value[0]
     const text = await file.text()
     const payload = JSON.parse(text)
     importResult.value = await apiPost('import', payload)
