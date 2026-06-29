@@ -42,16 +42,19 @@ class FileMonitorService:
 
         self.logger.info("文件监控器初始化完成（顺序处理模式）")
 
-        # 文件扫描状态统一使用中央真相源（global），并复用 IDService 的 file_manager
+        # 文件扫描状态统一使用中央真相源（global）。
+        # 若复用 NoteService 的共享 file_manager，清理阶段不得关闭它。
         if hasattr(note_service, "id_service") and hasattr(
             note_service.id_service, "file_manager"
         ):
             self.file_index_manager = note_service.id_service.file_manager
+            self._owns_file_index_manager = False
         else:
             # 兜底：避免因注入异常导致监控器不可用
             self.file_index_manager = FileIndexManager(
                 str(path_manager.get_memory_center_index_dir()), "global"
             )
+            self._owns_file_index_manager = True
 
         # 确保raw目录存在
         self.raw_directory.mkdir(parents=True, exist_ok=True)
@@ -83,22 +86,17 @@ class FileMonitorService:
             self.logger.error(f"停止文件扫描服务时发生错误: {e}")
 
     def _force_cleanup_connections(self):
-        """强制清理所有连接（仅在必要时调用）"""
+        """强制清理仅由当前扫描器独占的连接（共享连接不可在此关闭）"""
         try:
-            # 只有在内存压力大或程序结束时才关闭所有连接
-            if hasattr(self.file_index_manager, "close"):
+            if self._owns_file_index_manager and hasattr(self.file_index_manager, "close"):
                 self.file_index_manager.close()
-
-            if hasattr(self.note_service, "id_service"):
-                if hasattr(self.note_service.id_service, "close"):
-                    self.note_service.id_service.close()
         except Exception:
             pass
 
     def _cleanup_all_resources(self):
-        """彻底清理所有资源（扫描完成后调用）"""
+        """清理当前扫描器拥有的资源（停止服务或扫描结束后调用）"""
         try:
-            # 1. 强制关闭SQLite连接（只在程序结束时）
+            # 1. 仅关闭当前扫描器独占的 SQLite 连接，避免误伤 NoteService 共享连接
             self._force_cleanup_connections()
 
             # 2. 关闭NoteService的线程池（如果有）
