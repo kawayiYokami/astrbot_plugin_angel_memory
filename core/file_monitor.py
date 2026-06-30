@@ -259,7 +259,7 @@ class FileMonitorService:
             self.logger.error(f"错误详情: {traceback.format_exc()}")
 
     def _rebuild_chunk_search_index_from_store(self) -> None:
-        """从切片库一次性重建 Tantivy 搜索索引。"""
+        """先与磁盘状态同步，再从切片库一次性重建 Tantivy 搜索索引。"""
         import time
 
         plugin_context = getattr(self.note_service, "plugin_context", None)
@@ -271,6 +271,7 @@ class FileMonitorService:
             return
 
         start = time.time()
+        self._sync_note_indexes_with_disk()
         chunks = chunk_store.list_all_chunks()
         indexed = chunk_search.rebuild_all(chunks)
         cost_ms = int((time.time() - start) * 1000)
@@ -278,9 +279,26 @@ class FileMonitorService:
             f"[切片搜索索引] 全量重建完成 切片数={len(chunks)} 写入={indexed} 耗时毫秒={cost_ms}"
         )
 
+    def _sync_note_indexes_with_disk(self) -> None:
+        """重建搜索索引前，先让注册表、切片库、文件索引与磁盘实际状态对齐。"""
+        old_files = self.file_index_manager.get_all_files()
+        current_files = self._scan_directory_for_files(self.raw_directory)
+        changes = self._compare_file_states(old_files, current_files)
+
+        stale_file_ids = [file_id for file_id, _ in changes["to_delete"]]
+        if stale_file_ids:
+            if not self._delete_file_data_by_file_id(stale_file_ids):
+                raise RuntimeError("重建前清理已删除或已变更文件失败")
+
+        for relative_path, timestamp in changes["to_add"]:
+            self._process_file_change(
+                relative_path,
+                timestamp,
+                update_search_index=False,
+            )
+
     def _clear_note_indexes_for_file_index_rebuild(self) -> None:
         """文件索引版本升级后，清空所有可重建的笔记派生索引。"""
-        import asyncio
         import time
 
         start = time.time()
@@ -295,7 +313,7 @@ class FileMonitorService:
         try:
             memory_sql_manager = plugin_context.get_component("memory_sql_manager")
             if memory_sql_manager is not None:
-                result = asyncio.run(memory_sql_manager.clear_note_file_registry())
+                result = memory_sql_manager._clear_note_file_registry_sync()
                 deleted_registry = int(result.get("deleted", 0) or 0)
 
             chunk_store = plugin_context.get_component("note_chunk_store")
