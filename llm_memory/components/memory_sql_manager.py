@@ -67,6 +67,9 @@ class MemorySqlManager:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
     def _init_db(self) -> None:
@@ -631,6 +634,7 @@ class MemorySqlManager:
         self,
         file_id: str,
         source_file_path: str,
+        heading_h1: str = "",
         total_lines: int = 0,
         updated_at: Optional[float] = None,
     ) -> Dict[str, int]:
@@ -638,6 +642,7 @@ class MemorySqlManager:
             self._upsert_note_file_entry_sync,
             file_id,
             source_file_path,
+            heading_h1,
             total_lines,
             updated_at,
         )
@@ -646,11 +651,13 @@ class MemorySqlManager:
         self,
         file_id: str,
         source_file_path: str,
+        heading_h1: str = "",
         total_lines: int = 0,
         updated_at: Optional[float] = None,
     ) -> Dict[str, int]:
         fid = str(file_id or "").strip()
         rel_path = str(source_file_path or "").replace("\\", "/").strip().lstrip("/")
+        heading_1 = str(heading_h1 or "").strip()
         if not fid or not rel_path:
             return {"scanned": 1, "upserted": 0, "failed": 1}
 
@@ -692,12 +699,12 @@ class MemorySqlManager:
                     heading_h1, heading_h2, heading_h3,
                     heading_h4, heading_h5, heading_h6,
                     total_lines, updated_at
-                ) VALUES (?, ?, ?, ?, '', '', '', '', '', '', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, '', '', '', '', '', ?, ?)
                 ON CONFLICT(source_id) DO UPDATE SET
                     note_short_id=excluded.note_short_id,
                     file_id=excluded.file_id,
                     source_file_path=excluded.source_file_path,
-                    heading_h1='',
+                    heading_h1=excluded.heading_h1,
                     heading_h2='',
                     heading_h3='',
                     heading_h4='',
@@ -711,6 +718,7 @@ class MemorySqlManager:
                     note_short_id,
                     fid,
                     rel_path,
+                    heading_1,
                     int(total_lines or 0),
                     float(updated_at or time.time()),
                 ),
