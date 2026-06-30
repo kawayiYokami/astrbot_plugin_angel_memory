@@ -633,6 +633,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
         self.batch_size = 64  # 程序启动时的批量大小，遇到413会自动减半并在本次生命周期内持久生效
         self._cache_enabled = True  # 缓存启用标志
+        self._client_rebuild_lock = threading.RLock()
 
         # 延迟测试可用性，避免在构造函数中进行异步操作
         self.logger.info(
@@ -660,6 +661,111 @@ class APIEmbeddingProvider(EmbeddingProvider):
             )
         return self.provider
 
+    @staticmethod
+    def _normalize_api_base(api_base: str) -> str:
+        """与 AstrBot OpenAI embedding provider 保持一致的 base_url 规范化。"""
+        api_base = str(api_base or "").strip().removesuffix("/").removesuffix("/embeddings")
+        if api_base and not re.search(r"/v\d+$", api_base):
+            api_base = api_base + "/v1"
+        return api_base
+
+    def _provider_client_is_closed(self, provider) -> bool:
+        client = getattr(provider, "client", None)
+        is_closed = getattr(client, "is_closed", None)
+        if not callable(is_closed):
+            return False
+        try:
+            return bool(is_closed())
+        except Exception:
+            return False
+
+    def _is_closed_client_error(self, error: Exception) -> bool:
+        message = str(error)
+        if "Cannot send a request, as the client has been closed" in message:
+            return True
+        if "client has been closed" in message:
+            return True
+
+        cause = getattr(error, "__cause__", None)
+        while cause is not None:
+            cause_message = str(cause)
+            if "Cannot send a request, as the client has been closed" in cause_message:
+                return True
+            if "client has been closed" in cause_message:
+                return True
+            cause = getattr(cause, "__cause__", None)
+        return False
+
+    def _rebuild_openai_embedding_client(self, provider, *, force: bool = False) -> bool:
+        """重建 AstrBot OpenAI embedding provider 内部已关闭的 AsyncOpenAI client。"""
+        provider_config = getattr(provider, "provider_config", None)
+        if not isinstance(provider_config, dict):
+            return False
+
+        provider_type = str(provider_config.get("type", "") or "").strip()
+        class_name = provider.__class__.__name__
+        if provider_type != "openai_embedding" and class_name != "OpenAIEmbeddingProvider":
+            return False
+
+        with self._client_rebuild_lock:
+            if not force and not self._provider_client_is_closed(provider):
+                return True
+
+            try:
+                from openai import AsyncOpenAI
+            except Exception as e:
+                self.logger.warning(
+                    f"[向量索引] 失败 任务名=重建OpenAI嵌入客户端 "
+                    f"provider_id={self.provider_id} 阶段=导入openai 异常={e}"
+                )
+                return False
+
+            http_client = None
+            proxy = str(provider_config.get("proxy", "") or "").strip()
+            if proxy:
+                try:
+                    import httpx
+
+                    http_client = httpx.AsyncClient(proxy=proxy)
+                except Exception as e:
+                    self.logger.warning(
+                        f"[向量索引] 失败 任务名=重建OpenAI嵌入客户端 "
+                        f"provider_id={self.provider_id} 阶段=创建代理客户端 异常={e}"
+                    )
+                    return False
+
+            try:
+                api_base = self._normalize_api_base(
+                    provider_config.get("embedding_api_base", "https://api.openai.com/v1")
+                )
+                provider.client = AsyncOpenAI(
+                    api_key=provider_config.get("embedding_api_key"),
+                    base_url=api_base,
+                    timeout=int(provider_config.get("timeout", 20)),
+                    http_client=http_client,
+                )
+                if hasattr(provider, "model"):
+                    provider.model = provider_config.get(
+                        "embedding_model", "text-embedding-3-small"
+                    )
+                self.logger.warning(
+                    f"[向量索引] 完成 任务名=重建OpenAI嵌入客户端 "
+                    f"provider_id={self.provider_id} 原因=上游client已关闭"
+                )
+                return True
+            except Exception as e:
+                self.logger.warning(
+                    f"[向量索引] 失败 任务名=重建OpenAI嵌入客户端 "
+                    f"provider_id={self.provider_id} 阶段=创建AsyncOpenAI 异常={e}"
+                )
+                return False
+
+    def _prepare_provider_for_request(self):
+        provider = self._refresh_provider_reference()
+        if self._provider_client_is_closed(provider):
+            self._rebuild_openai_embedding_client(provider)
+        return provider
+
     async def check_availability(self) -> bool:
         """异步检查可用性"""
         if self._available is not None:
@@ -680,7 +786,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
     async def _perform_embedding_test(self, text: str):
         """执行嵌入测试"""
         try:
-            provider = self._refresh_provider_reference()
+            provider = self._prepare_provider_for_request()
             await provider.get_embedding(text)
         except Exception as e:
             raise e
@@ -810,9 +916,10 @@ class APIEmbeddingProvider(EmbeddingProvider):
     ) -> List[List[float]]:
         """使用指定批量大小并发获取向量嵌入，遇到413自动减半并在本次生命周期内持久化"""
 
+        closed_client_retried = False
         while True:
             try:
-                provider = self._refresh_provider_reference()
+                provider = self._prepare_provider_for_request()
                 if batch_size >= len(texts):
                     # 单批次处理
                     result = await provider.get_embeddings(texts)
@@ -851,6 +958,18 @@ class APIEmbeddingProvider(EmbeddingProvider):
                     batch_size = new_batch_size
                     self.batch_size = new_batch_size  # 持久化到实例，本次生命周期内都使用减半后的值
                     # 继续循环用新的batch_size重试
+                elif self._is_closed_client_error(e) and not closed_client_retried:
+                    closed_client_retried = True
+                    self.logger.warning(
+                        f"[向量索引] 开始 任务名=重试API嵌入请求 "
+                        f"provider_id={self.provider_id} 原因=上游client已关闭"
+                    )
+                    current_provider = self._refresh_provider_reference()
+                    if current_provider is not provider:
+                        continue
+                    if self._rebuild_openai_embedding_client(current_provider, force=True):
+                        continue
+                    raise
                 else:
                     raise
 

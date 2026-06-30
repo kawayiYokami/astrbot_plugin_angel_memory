@@ -76,6 +76,55 @@ class RotatingContext:
         return self.replacements[index]
 
 
+class FakeOpenAIClient:
+    def __init__(self, closed=False):
+        self.closed = closed
+
+    def is_closed(self):
+        return self.closed
+
+
+class OpenAIStyleEmbeddingProvider:
+    def __init__(self):
+        self.provider_config = {
+            "id": "api_provider",
+            "type": "openai_embedding",
+            "embedding_api_key": "test-key",
+            "embedding_api_base": "https://example.com",
+            "timeout": 20,
+            "embedding_model": "text-embedding-3-small",
+        }
+        self.provider_settings = {}
+        self.client = FakeOpenAIClient(closed=True)
+        self.model = self.provider_config["embedding_model"]
+        self.calls = 0
+
+    async def get_embeddings(self, texts):
+        self.calls += 1
+        if self.client.is_closed():
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+    async def get_embedding(self, text):
+        if self.client.is_closed():
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
+        return [1.0, 0.0, 0.0]
+
+
+class FlakyClosedClientEmbeddingProvider(OpenAIStyleEmbeddingProvider):
+    def __init__(self):
+        super().__init__()
+        self.client = FakeOpenAIClient(closed=False)
+
+    async def get_embeddings(self, texts):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
+        if self.client.is_closed():
+            raise RuntimeError("Cannot send a request, as the client has been closed.")
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+
 def test_api_embedding_provider_rejects_short_batch_results():
     async def run():
         provider = APIEmbeddingProvider(ShortEmbeddingProvider(), "short_provider")
@@ -134,6 +183,46 @@ def test_api_embedding_provider_uses_one_provider_reference_per_batch_attempt():
         assert provider.provider is first
 
     asyncio.run(run())
+
+
+def test_api_embedding_provider_rebuilds_closed_openai_client_before_request():
+    async def run():
+        upstream = OpenAIStyleEmbeddingProvider()
+        provider = APIEmbeddingProvider(upstream, "api_provider")
+        provider._available = True
+        provider._cache_enabled = False
+
+        result = await provider.embed_documents(["alpha", "beta"])
+
+        assert result == [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        assert upstream.calls == 1
+        assert upstream.client.is_closed() is False
+
+    asyncio.run(run())
+
+
+def test_api_embedding_provider_rebuilds_and_retries_after_closed_client_error():
+    async def run():
+        upstream = FlakyClosedClientEmbeddingProvider()
+        provider = APIEmbeddingProvider(upstream, "api_provider")
+        provider._available = True
+        provider._cache_enabled = False
+
+        result = await provider.embed_documents(["alpha", "beta"])
+
+        assert result == [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        assert upstream.calls == 2
+        assert upstream.client.is_closed() is False
+
+    asyncio.run(run())
+
+
+def test_api_embedding_provider_detects_closed_client_from_exception_cause():
+    provider = APIEmbeddingProvider(MetaEmbeddingProvider({"model": "BAAI/bge-m3"}), "api_provider")
+    outer = RuntimeError("Connection error.")
+    outer.__cause__ = RuntimeError("Cannot send a request, as the client has been closed.")
+
+    assert provider._is_closed_client_error(outer) is True
 
 
 def test_api_embedding_provider_refreshes_model_info_cache_after_provider_change():
