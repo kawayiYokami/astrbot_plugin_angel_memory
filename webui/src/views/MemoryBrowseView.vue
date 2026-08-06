@@ -92,7 +92,18 @@
 <script setup lang="ts">
 import { h, ref, computed, onMounted } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NTag } from 'naive-ui'
+import {
+  NButton,
+  NCard,
+  NDataTable,
+  NDescriptions,
+  NDescriptionsItem,
+  NInput,
+  NModal,
+  NSelect,
+  NSpace,
+  NTag,
+} from 'naive-ui'
 import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
 import { formatTime, parseTags } from '@/utils/format'

@@ -112,6 +112,16 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import {
+  NAvatar,
+  NButton,
+  NCard,
+  NEmpty,
+  NGrid,
+  NGridItem,
+  NSpin,
+  NTag,
+} from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 import { formatTime, parseTags } from '@/utils/format'
 
