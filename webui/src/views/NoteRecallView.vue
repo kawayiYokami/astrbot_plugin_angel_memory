@@ -1,99 +1,65 @@
 <template>
   <div>
-    <h2 class="text-h5 mb-4">📝 笔记读取</h2>
+    <n-card title="读取笔记" embedded class="mb-4">
+      <n-space>
+        <n-input-number v-model:value="noteShortId" placeholder="note_short_id" :min="0" style="width: 180px" />
+        <n-input-number v-model:value="offset" placeholder="offset" :min="1" style="width: 140px" />
+        <n-input-number v-model:value="limit" placeholder="limit" :min="1" style="width: 140px" />
+        <n-button type="primary" :loading="loading" @click="doRecall">读取</n-button>
+      </n-space>
+    </n-card>
 
-    <v-card class="mb-4">
-      <v-card-text>
-        <v-row>
-          <v-col cols="12" sm="3">
-            <v-text-field
-              v-model.number="noteShortId"
-              label="note_short_id"
-              type="number"
-              density="compact"
-              variant="outlined"
-              :min="0"
-            />
-          </v-col>
-          <v-col cols="12" sm="3">
-            <v-text-field
-              v-model.number="offset"
-              label="offset"
-              type="number"
-              density="compact"
-              variant="outlined"
-              :min="1"
-            />
-          </v-col>
-          <v-col cols="12" sm="3">
-            <v-text-field
-              v-model.number="limit"
-              label="limit"
-              type="number"
-              density="compact"
-              variant="outlined"
-              :min="1"
-            />
-          </v-col>
-          <v-col cols="12" sm="3">
-            <v-btn color="primary" @click="doRecall" :loading="loading" block>读取</v-btn>
-          </v-col>
-        </v-row>
-      </v-card-text>
-    </v-card>
+    <n-alert v-if="error" type="error" class="mb-4">{{ error }}</n-alert>
 
-    <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
-
-    <v-card v-if="result">
-      <v-card-title class="d-flex align-center ga-2">
-        <v-icon icon="mdi-file-document" />
-        {{ result.source_file_path }}
-      </v-card-title>
-      <v-card-subtitle>
-        note_short_id={{ result.note_short_id }} |
-        total_lines={{ result.total_lines }} |
+    <n-card v-if="result" embedded class="mb-4">
+      <template #header>
+        <n-space align="center" size="small">
+          <Icon icon="lucide:file-text" />
+          <span>{{ result.source_file_path }}</span>
+        </n-space>
+      </template>
+      <div class="muted mb-2">
+        note_short_id={{ result.note_short_id }} | total_lines={{ result.total_lines }} |
         显示行 {{ result.actual_start_line }}-{{ result.actual_end_line }}
-      </v-card-subtitle>
-      <v-card-text>
-        <pre class="pa-3 rounded" style="background: #1a1a2e; overflow-x: auto; white-space: pre-wrap; font-size: 13px;">{{ result.content }}</pre>
-      </v-card-text>
-    </v-card>
+      </div>
+      <pre class="code-pre">{{ result.content }}</pre>
+    </n-card>
 
     <!-- 笔记文件浏览 -->
-    <v-card class="mt-6">
-      <v-card-title>📂 笔记文件浏览</v-card-title>
-      <v-card-text>
-        <v-select
-          v-model="selectedFile"
-          :items="files"
-          label="选择文件"
-          density="compact"
-          variant="outlined"
-          @update:model-value="loadFileContent"
-        />
-        <pre v-if="fileContent" class="pa-3 rounded mt-3" style="background: #1a1a2e; overflow-x: auto; white-space: pre-wrap; font-size: 13px;">{{ fileContent }}</pre>
-      </v-card-text>
-    </v-card>
+    <n-card title="笔记文件浏览" embedded>
+      <n-select
+        v-model:value="selectedFile"
+        :options="fileOptions"
+        placeholder="选择文件"
+        clearable
+        @update:value="loadFileContent"
+      />
+      <pre v-if="fileContent" class="code-pre mt-3">{{ fileContent }}</pre>
+    </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiGet, apiPost } = useBridge()
 
-const noteShortId = ref(0)
-const offset = ref(1)
-const limit = ref(200)
+const noteShortId = ref<number | null>(null)
+const offset = ref<number | null>(null)
+const limit = ref<number | null>(200)
 const loading = ref(false)
 const result = ref<any>(null)
 const error = ref('')
 
 // 文件浏览
 const files = ref<string[]>([])
-const selectedFile = ref('')
+const selectedFile = ref<string | null>(null)
 const fileContent = ref('')
+
+const fileOptions = computed(() =>
+  files.value.map(f => ({ label: f, value: f })),
+)
 
 async function doRecall() {
   loading.value = true
@@ -121,7 +87,9 @@ async function loadFiles() {
   try {
     const data: any = await apiGet('notes/files')
     files.value = data.files || []
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 async function loadFileContent() {
@@ -136,3 +104,25 @@ async function loadFileContent() {
 
 onMounted(() => loadFiles())
 </script>
+
+<style scoped>
+.code-pre {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 13px;
+  margin: 0;
+}
+
+.mt-3 {
+  margin-top: 12px;
+}
+
+.muted {
+  opacity: 0.65;
+  font-size: 13px;
+}
+</style>

@@ -1,59 +1,121 @@
 <template>
-  <v-app>
-    <v-navigation-drawer v-model="drawer" :rail="rail" permanent>
-      <v-list-item
-        prepend-icon="mdi-brain"
-        title="Angel Memory"
-        subtitle="记忆管理面板"
-        nav
-      >
-        <template v-slot:append>
-          <v-btn
-            icon="mdi-chevron-left"
-            variant="text"
-            @click="rail = !rail"
-            :style="{ transform: rail ? 'rotate(180deg)' : '' }"
-          />
-        </template>
-      </v-list-item>
+  <n-config-provider :theme="darkTheme" :locale="zhCN" :date-locale="dateZhCN">
+    <n-message-provider>
+      <n-dialog-provider>
+        <n-layout has-sider style="height: 100vh">
+          <!-- 左侧导航（两段式第一段） -->
+          <n-layout-sider
+            bordered
+            collapse-mode="width"
+            :collapsed-width="56"
+            :width="200"
+            show-trigger="bar"
+            :collapsed="collapsed"
+            @collapse="collapsed = true"
+            @expand="collapsed = false"
+          >
+            <div class="app-brand">
+              <Icon :icon="'lucide:brain'" class="brand-icon" />
+              <span v-if="!collapsed" class="brand-text">天使的记忆</span>
+            </div>
+            <n-menu
+              :collapsed="collapsed"
+              :collapsed-width="56"
+              :collapsed-icon-size="20"
+              :options="menuOptions"
+              :value="activeKey"
+              @update:value="onMenuSelect"
+            />
+          </n-layout-sider>
 
-      <v-divider />
-
-      <v-list density="compact" nav>
-        <v-list-item
-          v-for="route in navRoutes"
-          :key="route.path"
-          :prepend-icon="route.meta?.icon as string"
-          :title="route.meta?.title as string"
-          :to="route.path"
-          :active="$route.path === route.path"
-          color="primary"
-        />
-      </v-list>
-    </v-navigation-drawer>
-
-    <v-main>
-      <v-container fluid class="pa-4">
-        <router-view />
-      </v-container>
-    </v-main>
-  </v-app>
+          <!-- 主内容区（两段式第二段） -->
+          <n-layout>
+            <n-layout-header bordered class="app-header">
+              <span class="header-title">{{ currentTitle }}</span>
+            </n-layout-header>
+            <n-layout-content content-style="padding: 20px 24px; overflow: auto;">
+              <router-view />
+            </n-layout-content>
+          </n-layout>
+        </n-layout>
+      </n-dialog-provider>
+    </n-message-provider>
+  </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, h, ref, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import type { MenuOption } from 'naive-ui'
+import { NIcon, darkTheme, dateZhCN, zhCN } from 'naive-ui'
+import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
 
 const router = useRouter()
+const route = useRoute()
 const { init } = useBridge()
 
-const drawer = ref(true)
-const rail = ref(false)
+const collapsed = ref(false)
 
-const navRoutes = computed(() => router.getRoutes().filter(r => r.meta?.title))
+function renderIcon(icon: string) {
+  return () => h(NIcon, null, { default: () => h(Icon, { icon }) })
+}
+
+// 从路由表生成菜单（与路由 meta.title / meta.icon 对应）
+const menuOptions: MenuOption[] = router
+  .getRoutes()
+  .filter(r => r.meta?.title)
+  .map(r => ({
+    label: r.meta!.title as string,
+    key: r.path,
+    icon: renderIcon((r.meta!.icon as string) || 'lucide:circle'),
+  }))
+
+const activeKey = computed(() => route.path)
+const currentTitle = computed(() => (route.meta?.title as string) || '')
+
+function onMenuSelect(key: string) {
+  if (key !== route.path) {
+    router.push(key)
+  }
+}
 
 onMounted(async () => {
   await init()
 })
 </script>
+
+<style scoped>
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.brand-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.brand-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 20px;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+</style>

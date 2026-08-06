@@ -1,82 +1,51 @@
 <template>
   <div>
-    <h2 class="text-h5 mb-4">🗂️ 笔记索引</h2>
-
-    <v-card>
-      <v-card-text>
-        <v-text-field
-          v-model="keyword"
-          label="关键词搜索（路径 / 标题 / tags）"
-          density="compact"
-          variant="outlined"
+    <n-card embedded>
+      <n-space vertical size="medium">
+        <n-input
+          v-model:value="keyword"
+          placeholder="关键词搜索（路径 / 标题 / tags）"
           clearable
-          append-inner-icon="mdi-magnify"
-          class="mb-3"
           @keyup.enter="loadData"
-          @click:append-inner="loadData"
-        />
-
-        <v-data-table-server
-          :headers="headers"
-          :items="items"
-          :items-length="total"
-          :loading="loading"
-          :page="page"
-          :items-per-page="pageSize"
-          @update:page="onPageChange"
-          @update:items-per-page="onPageSizeChange"
-          density="compact"
         >
-          <template v-slot:item.source_file_path="{ item }">
-            <div class="text-truncate" style="max-width: 200px">{{ item.source_file_path }}</div>
+          <template #suffix>
+            <Icon icon="lucide:search" @click="loadData" style="cursor: pointer" />
           </template>
-          <template v-slot:item.heading="{ item }">
-            <div class="text-truncate" style="max-width: 250px">{{ buildHeading(item) }}</div>
-          </template>
-          <template v-slot:item.tags_text="{ item }">
-            <div class="d-flex flex-wrap ga-1">
-              <v-chip
-                v-for="tag in parseTags(item.tags_text)"
-                :key="tag"
-                size="x-small"
-                color="secondary"
-                variant="tonal"
-              >
-                {{ tag }}
-              </v-chip>
-            </div>
-          </template>
-          <template v-slot:item.actions="{ item }">
-            <v-btn
-              icon="mdi-eye"
-              size="x-small"
-              variant="text"
-              @click="showDetail(item)"
-            />
-          </template>
-        </v-data-table-server>
-      </v-card-text>
-    </v-card>
+        </n-input>
+
+        <n-data-table
+          remote
+          :columns="columns"
+          :data="items"
+          :loading="loading"
+          :pagination="pagination"
+          :row-key="(row: any) => row.note_short_id"
+          @update:page="onPageChange"
+          @update:page-size="onPageSizeChange"
+        />
+      </n-space>
+    </n-card>
 
     <!-- 详情对话框 -->
-    <v-dialog v-model="detailDialog" max-width="600">
-      <v-card v-if="selectedItem">
-        <v-card-title>笔记索引详情</v-card-title>
-        <v-card-text>
-          <pre class="text-body-2" style="white-space: pre-wrap">{{ JSON.stringify(selectedItem, null, 2) }}</pre>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="detailDialog = false">关闭</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <n-modal
+      v-model:show="detailDialog"
+      preset="card"
+      title="笔记索引详情"
+      style="width: 640px"
+      :bordered="false"
+    >
+      <pre class="json-pre">{{ selectedItem ? JSON.stringify(selectedItem, null, 2) : '' }}</pre>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { h, ref, onMounted, computed } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
+import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
+import { parseTags } from '@/utils/format'
 
 const { apiGet } = useBridge()
 
@@ -90,33 +59,71 @@ const keyword = ref('')
 const detailDialog = ref(false)
 const selectedItem = ref<any>(null)
 
-const headers = [
-  { title: 'Short ID', key: 'note_short_id', width: '80px' },
-  { title: '文件路径', key: 'source_file_path' },
-  { title: '标题', key: 'heading' },
-  { title: 'Tags', key: 'tags_text', width: '200px' },
-  { title: '行数', key: 'total_lines', width: '60px' },
-  { title: '操作', key: 'actions', width: '60px', sortable: false },
-]
-
 function buildHeading(item: any): string {
   const parts = []
   for (let i = 1; i <= 6; i++) {
-    const h = item[`heading_h${i}`]
-    if (h) parts.push(h)
+    const hh = item[`heading_h${i}`]
+    if (hh) parts.push(hh)
   }
   return parts.join(' / ') || '(无标题)'
-}
-
-function parseTags(tags: string): string[] {
-  if (!tags) return []
-  return tags.split(',').map(t => t.trim()).filter(Boolean)
 }
 
 function showDetail(item: any) {
   selectedItem.value = item
   detailDialog.value = true
 }
+
+const pagination = computed(() => ({
+  page: page.value,
+  pageSize: pageSize.value,
+  itemCount: total.value,
+  showSizePicker: true,
+  pageSizes: [10, 20, 50, 100],
+  prefix: ({ itemCount }: { itemCount: number }) => `共 ${itemCount} 条`,
+}))
+
+const columns: DataTableColumns<any> = [
+  { title: 'Short ID', key: 'note_short_id', width: 90 },
+  {
+    title: '文件路径',
+    key: 'source_file_path',
+    ellipsis: { tooltip: true },
+  },
+  {
+    title: '标题',
+    key: 'heading',
+    ellipsis: { tooltip: true },
+    render: row => buildHeading(row),
+  },
+  {
+    title: 'Tags',
+    key: 'tags_text',
+    width: 220,
+    render: row => {
+      const tags = parseTags(row.tags_text)
+      if (!tags.length) return ''
+      return h(
+        'div',
+        { style: 'display:flex; flex-wrap:wrap; gap:4px;' },
+        tags.map(tag =>
+          h(NTag, { size: 'small', bordered: false }, { default: () => tag }),
+        ),
+      )
+    },
+  },
+  { title: '行数', key: 'total_lines', width: 70 },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 70,
+    render: row =>
+      h(
+        NButton,
+        { size: 'tiny', quaternary: true, onClick: () => showDetail(row) },
+        { icon: () => h(Icon, { icon: 'lucide:eye' }) },
+      ),
+  },
+]
 
 function onPageChange(p: number) {
   page.value = p
@@ -148,3 +155,16 @@ async function loadData() {
 
 onMounted(() => loadData())
 </script>
+
+<style scoped>
+.json-pre {
+  max-height: 60vh;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+</style>

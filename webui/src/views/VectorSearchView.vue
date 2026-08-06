@@ -1,103 +1,67 @@
 <template>
   <div>
-    <h2 class="text-h5 mb-4">🧭 向量检索</h2>
-
-    <v-card class="mb-4">
-      <v-card-text>
-        <v-row>
-          <v-col cols="12" sm="3">
-            <v-select
-              v-model="collection"
-              :items="collections"
-              item-title="name"
-              item-value="name"
-              label="集合"
-              density="compact"
-              variant="outlined"
-            >
-              <template v-slot:item="{ item, props }">
-                <v-list-item v-bind="props">
-                  <template v-slot:subtitle>{{ item.raw.count }} 条记录</template>
-                </v-list-item>
-              </template>
-            </v-select>
-          </v-col>
-          <v-col cols="12" sm="6">
-            <v-text-field
-              v-model="queryText"
-              label="向量查询"
-              placeholder="输入一句话测试向量召回"
-              density="compact"
-              variant="outlined"
-              @keyup.enter="doSearch"
-            />
-          </v-col>
-          <v-col cols="12" sm="1">
-            <v-text-field
-              v-model.number="topK"
-              label="Top K"
-              type="number"
-              density="compact"
-              variant="outlined"
-              :min="1"
-              :max="50"
-            />
-          </v-col>
-          <v-col cols="12" sm="2">
-            <v-btn color="primary" @click="doSearch" :loading="searching" block>检索</v-btn>
-          </v-col>
-        </v-row>
-      </v-card-text>
-    </v-card>
+    <n-card title="向量检索" embedded class="mb-4">
+      <n-space>
+        <n-select
+          v-model:value="collection"
+          :options="collectionOptions"
+          placeholder="集合"
+          style="width: 240px"
+        />
+        <n-input
+          v-model:value="queryText"
+          placeholder="输入一句话测试向量召回"
+          style="flex: 1"
+          @keyup.enter="doSearch"
+        />
+        <n-input-number v-model:value="topK" :min="1" :max="50" placeholder="Top K" style="width: 100px" />
+        <n-button type="primary" :loading="searching" @click="doSearch">检索</n-button>
+      </n-space>
+    </n-card>
 
     <!-- 检索结果 -->
-    <v-card v-if="results.length">
-      <v-card-title>检索结果（{{ results.length }}条）</v-card-title>
-      <v-card-text>
-        <v-list>
-          <v-list-item v-for="(item, idx) in results" :key="idx" class="mb-2">
-            <v-card variant="outlined" class="pa-3">
-              <div class="d-flex align-center ga-2 mb-1">
-                <v-chip size="small" color="primary">score: {{ item.score?.toFixed(4) }}</v-chip>
-                <span class="text-caption text-grey">{{ item.id }}</span>
-              </div>
-              <code class="text-body-2">{{ item.document }}</code>
-            </v-card>
-          </v-list-item>
-        </v-list>
-      </v-card-text>
-    </v-card>
+    <n-card v-if="results.length" title="检索结果" embedded class="mb-4">
+      <n-space vertical size="small">
+        <n-card v-for="(item, idx) in results" :key="idx" embedded size="small">
+          <n-space align="center" size="small" class="mb-1">
+            <n-tag size="small" type="primary" :bordered="false">
+              score: {{ item.score?.toFixed(4) }}
+            </n-tag>
+            <span class="muted">{{ item.id }}</span>
+          </n-space>
+          <code class="doc-code">{{ item.document }}</code>
+        </n-card>
+      </n-space>
+    </n-card>
 
-    <v-alert v-if="error" type="error" class="mt-4">{{ error }}</v-alert>
+    <n-alert v-if="error" type="error" class="mb-4">{{ error }}</n-alert>
 
     <!-- 原始浏览 -->
-    <v-card class="mt-4">
-      <v-card-title>
-        原始浏览
-        <v-btn size="small" variant="text" @click="loadBrowse" icon="mdi-refresh" class="ml-2" />
-      </v-card-title>
-      <v-card-text>
-        <v-data-table-server
-          :headers="browseHeaders"
-          :items="browseItems"
-          :items-length="browseTotal"
-          :loading="browseLoading"
-          :page="browsePage"
-          :items-per-page="20"
-          @update:page="onBrowsePageChange"
-          density="compact"
-        >
-          <template v-slot:item.document="{ item }">
-            <div class="text-truncate" style="max-width: 400px">{{ item.document }}</div>
-          </template>
-        </v-data-table-server>
-      </v-card-text>
-    </v-card>
+    <n-card embedded>
+      <template #header>
+        <n-space align="center">
+          <span>原始浏览</span>
+          <n-button size="tiny" quaternary @click="loadBrowse">
+            <template #icon><Icon icon="lucide:refresh-cw" /></template>
+          </n-button>
+        </n-space>
+      </template>
+      <n-data-table
+        remote
+        :columns="browseColumns"
+        :data="browseItems"
+        :loading="browseLoading"
+        :pagination="browsePagination"
+        :row-key="(row: any) => row.id"
+        @update:page="onBrowsePageChange"
+      />
+    </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { h, ref, computed, onMounted, watch } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiGet } = useBridge()
@@ -105,7 +69,7 @@ const { apiGet } = useBridge()
 const collection = ref('memory_index')
 const collections = ref<any[]>([])
 const queryText = ref('')
-const topK = ref(10)
+const topK = ref<number | null>(10)
 const searching = ref(false)
 const results = ref<any[]>([])
 const error = ref('')
@@ -116,20 +80,39 @@ const browseTotal = ref(0)
 const browsePage = ref(1)
 const browseLoading = ref(false)
 
-const browseHeaders = [
-  { title: 'ID', key: 'id', width: '200px' },
-  { title: '内容', key: 'document' },
-  { title: '维度', key: 'dimension', width: '70px' },
+const collectionOptions = computed(() =>
+  collections.value.map(c => ({
+    label: `${c.name}（${c.count} 条）`,
+    value: c.name,
+  })),
+)
+
+const browseColumns: DataTableColumns<any> = [
+  { title: 'ID', key: 'id', width: 220, ellipsis: { tooltip: true } },
+  { title: '内容', key: 'document', ellipsis: { tooltip: true } },
+  { title: '维度', key: 'dimension', width: 80 },
 ]
+
+const browsePagination = computed(() => ({
+  page: browsePage.value,
+  pageSize: 20,
+  itemCount: browseTotal.value,
+  prefix: ({ itemCount }: { itemCount: number }) => `共 ${itemCount} 条`,
+}))
 
 async function loadCollections() {
   try {
     const data: any = await apiGet('vector/collections')
     collections.value = data.collections || []
-    if (collections.value.length && !collections.value.find((c: any) => c.name === collection.value)) {
+    if (
+      collections.value.length &&
+      !collections.value.find((c: any) => c.name === collection.value)
+    ) {
       collection.value = collections.value[0].name
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 async function doSearch() {
@@ -187,3 +170,17 @@ onMounted(async () => {
   await loadBrowse()
 })
 </script>
+
+<style scoped>
+.doc-code {
+  display: block;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.muted {
+  opacity: 0.6;
+  font-size: 12px;
+}
+</style>
