@@ -1,97 +1,92 @@
 <template>
   <div>
-    <h2 class="text-h5 mb-4">🔖 Tags 调试</h2>
-
     <!-- 标签命中搜索 -->
-    <v-card class="mb-4">
-      <v-card-title>标签命中搜索</v-card-title>
-      <v-card-text>
-        <v-row>
-          <v-col cols="12" sm="6">
-            <v-text-field
-              v-model="hitQuery"
-              label="输入查询文本"
-              density="compact"
-              variant="outlined"
-              @keyup.enter="doHitSearch"
-            />
-          </v-col>
-          <v-col cols="12" sm="3">
-            <v-text-field
-              v-model="hitScope"
-              label="Scope（可空）"
-              density="compact"
-              variant="outlined"
-            />
-          </v-col>
-          <v-col cols="12" sm="3">
-            <v-btn color="primary" @click="doHitSearch" :loading="hitLoading" block>搜索</v-btn>
-          </v-col>
-        </v-row>
+    <n-card title="标签命中搜索" embedded class="mb-4">
+      <n-space vertical size="medium">
+        <n-space>
+          <n-input
+            v-model:value="hitQuery"
+            placeholder="输入查询文本"
+            style="flex: 2"
+            @keyup.enter="doHitSearch"
+          />
+          <n-input
+            v-model:value="hitScope"
+            placeholder="Scope（可空）"
+            style="flex: 1"
+            @keyup.enter="doHitSearch"
+          />
+          <n-button type="primary" :loading="hitLoading" @click="doHitSearch">搜索</n-button>
+        </n-space>
 
         <template v-if="hitResult">
-          <v-divider class="my-3" />
-          <div class="mb-2">
+          <n-divider />
+          <div>
             <strong>命中标签：</strong>
-            <v-chip v-for="tag in hitResult.matched_tags" :key="tag" size="small" color="success" class="ma-1">
-              {{ tag }}
-            </v-chip>
-            <span v-if="!hitResult.matched_tags?.length" class="text-grey">无命中</span>
+            <template v-if="hitResult.matched_tags?.length">
+              <n-tag
+                v-for="tag in hitResult.matched_tags"
+                :key="tag"
+                type="success"
+                size="small"
+                :bordered="false"
+                class="chip-item"
+              >
+                {{ tag }}
+              </n-tag>
+            </template>
+            <span v-else class="muted">无命中</span>
           </div>
 
-          <div v-if="hitResult.memory_hits?.length">
+          <template v-if="hitResult.memory_hits?.length">
             <strong>命中记忆（{{ hitResult.memory_hits.length }}条）：</strong>
-            <v-list density="compact" class="mt-2">
-              <v-list-item v-for="mem in hitResult.memory_hits" :key="mem.id" class="mb-2">
-                <v-card variant="outlined" class="pa-2">
-                  <div class="d-flex align-center ga-2 mb-1">
-                    <v-chip size="x-small" color="primary">{{ mem.memory_type }}</v-chip>
-                    <v-chip size="x-small" color="warning">命中{{ mem.hit_count }}个标签</v-chip>
-                    <v-chip size="x-small">强度 {{ mem.strength }}</v-chip>
-                  </div>
-                  <div>{{ mem.judgment }}</div>
-                  <div class="text-caption text-grey mt-1">{{ mem.reasoning }}</div>
-                </v-card>
-              </v-list-item>
-            </v-list>
-          </div>
+            <n-space vertical size="small" class="mt-2">
+              <n-card
+                v-for="mem in hitResult.memory_hits"
+                :key="mem.id"
+                embedded
+                size="small"
+              >
+                <n-space size="small" class="mb-1">
+                  <n-tag size="small" type="primary" :bordered="false">{{ mem.memory_type }}</n-tag>
+                  <n-tag size="small" type="warning" :bordered="false">命中{{ mem.hit_count }}个标签</n-tag>
+                  <n-tag size="small" :bordered="false">强度 {{ mem.strength }}</n-tag>
+                </n-space>
+                <div class="mem-judgment">{{ mem.judgment }}</div>
+                <div v-if="mem.reasoning" class="muted mem-reasoning">{{ mem.reasoning }}</div>
+              </n-card>
+            </n-space>
+          </template>
         </template>
-      </v-card-text>
-    </v-card>
+      </n-space>
+    </n-card>
 
     <!-- 全局标签列表 -->
-    <v-card>
-      <v-card-title>全局标签列表</v-card-title>
-      <v-card-text>
-        <v-text-field
-          v-model="tagKeyword"
-          label="筛选标签名"
-          density="compact"
-          variant="outlined"
+    <n-card title="全局标签列表" embedded>
+      <n-space vertical size="medium">
+        <n-input
+          v-model:value="tagKeyword"
+          placeholder="筛选标签名"
           clearable
-          class="mb-3"
           @keyup.enter="loadTags"
-          @click:clear="tagKeyword = ''; loadTags()"
+          @clear="loadTags"
         />
-
-        <v-data-table
-          :headers="tagHeaders"
-          :items="tags"
+        <n-data-table
+          :columns="tagColumns"
+          :data="tags"
           :loading="tagsLoading"
-          density="compact"
-          :items-per-page="50"
-        >
-          <template v-slot:item.name="{ item }">
-            <v-chip size="small" variant="tonal">{{ item.name }}</v-chip>
-          </template>
-        </v-data-table>
-      </v-card-text>
-    </v-card>
+          :pagination="{ pageSize: 50 }"
+          :row-key="(row: any) => row.id"
+        />
+      </n-space>
+    </n-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { h, ref, onMounted } from 'vue'
+import type { DataTableColumns } from 'naive-ui'
+import { NTag } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiGet, apiPost } = useBridge()
@@ -123,11 +118,16 @@ const tagKeyword = ref('')
 const tags = ref<any[]>([])
 const tagsLoading = ref(false)
 
-const tagHeaders = [
-  { title: 'ID', key: 'id', width: '60px' },
-  { title: '标签名', key: 'name' },
-  { title: '记忆引用', key: 'memory_refs', width: '100px' },
-  { title: '笔记引用', key: 'note_refs', width: '100px' },
+const tagColumns: DataTableColumns<any> = [
+  { title: 'ID', key: 'id', width: 70 },
+  {
+    title: '标签名',
+    key: 'name',
+    render: row =>
+      h(NTag, { size: 'small' }, { default: () => row.name }),
+  },
+  { title: '记忆引用', key: 'memory_refs', width: 100 },
+  { title: '笔记引用', key: 'note_refs', width: 100 },
 ]
 
 async function loadTags() {
@@ -144,3 +144,25 @@ async function loadTags() {
 
 onMounted(() => loadTags())
 </script>
+
+<style scoped>
+.chip-item {
+  margin: 2px 4px 2px 0;
+}
+
+.mem-judgment {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.mem-reasoning {
+  font-size: 13px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.muted {
+  opacity: 0.6;
+  font-size: 13px;
+}
+</style>

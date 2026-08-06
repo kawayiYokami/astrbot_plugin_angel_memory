@@ -2,6 +2,20 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.5.0] - 2026-08-07
+
+### Highlights
+- WebUI 管理面板从 Vuetify 3 重构为 Naive UI，与 angel_heart、angel_smile 插件统一视觉与交互风格。
+- 布局采用左侧可折叠导航 + 主内容区两段式，深色主题，图标统一为 lucide。
+
+### Core Changes
+- `refactor(webui)`: 全部 9 个视图迁移至 Naive UI（总览 / 记忆浏览 / 用户画像 / Tags 调试 / 向量检索 / 笔记索引 / 笔记读取 / 导入导出 / 维护状态）。
+- `refactor(webui)`: 服务端分页表格迁移为 `n-data-table` remote 模式（记忆浏览 / 向量浏览 / 笔记索引）；客户端表格迁移为本地分页。
+- `refactor(webui)`: 详情与删除确认对话框迁移为 `n-modal`；删除操作保留确认弹窗。
+- `refactor(webui)`: 移除 Vuetify / mdi 图标依赖，切换为 naive-ui + @iconify/vue + lucide。
+- `refactor(webui)`: 抽取公共 `utils/format.ts`（时间戳格式化 / tags 解析 / 文件大小），消除 4 个视图的重复实现。
+- `chore(webui)`: 前端资源已重新构建至 `pages/memory-dashboard`。
+
 ## [1.4.9] - 2026-05-29
 
 ### Highlights

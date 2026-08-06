@@ -1,116 +1,95 @@
 <template>
   <div>
-    <h2 class="text-h5 mb-4">📌 系统总览</h2>
+    <n-spin :show="loading">
+      <template v-if="!loading">
+        <!-- 统计卡片 -->
+        <n-grid :cols="4" :x-gap="16" responsive="screen" item-responsive>
+          <n-grid-item span="4 s:2 m:1">
+            <n-card class="stat-card" embedded>
+              <div class="stat-value">{{ overview.memory_count ?? '-' }}</div>
+              <div class="stat-label">记忆总数</div>
+            </n-card>
+          </n-grid-item>
+          <n-grid-item span="4 s:2 m:1">
+            <n-card class="stat-card" embedded>
+              <div class="stat-value">{{ overview.global_tag_count ?? '-' }}</div>
+              <div class="stat-label">全局标签</div>
+            </n-card>
+          </n-grid-item>
+          <n-grid-item span="4 s:2 m:1">
+            <n-card class="stat-card" embedded>
+              <div class="stat-value">{{ overview.note_index_count ?? '-' }}</div>
+              <div class="stat-label">笔记索引</div>
+            </n-card>
+          </n-grid-item>
+          <n-grid-item span="4 s:2 m:1">
+            <n-card class="stat-card" embedded>
+              <div class="stat-value">
+                <Icon
+                  :icon="overview.has_providers ? 'lucide:check-circle-2' : 'lucide:alert-triangle'"
+                  :style="{ color: overview.has_providers ? '#63e2b7' : '#f0a020', fontSize: '30px' }"
+                />
+              </div>
+              <div class="stat-label">{{ overview.has_providers ? '提供商就绪' : '无提供商' }}</div>
+            </n-card>
+          </n-grid-item>
+        </n-grid>
 
-    <v-row v-if="loading">
-      <v-col cols="12" class="text-center">
-        <v-progress-circular indeterminate color="primary" />
-      </v-col>
-    </v-row>
+        <n-grid :cols="2" :x-gap="16" responsive="screen" class="mt-4">
+          <!-- 配置信息 -->
+          <n-grid-item span="2 m:1">
+            <n-card title="配置信息" embedded>
+              <n-descriptions label-placement="left" :column="1" size="small">
+                <n-descriptions-item label="嵌入提供商">
+                  {{ overview.provider_id || '-' }}
+                </n-descriptions-item>
+                <n-descriptions-item label="LLM 提供商">
+                  {{ overview.llm_provider_id || '-' }}
+                </n-descriptions-item>
+                <n-descriptions-item label="索引目录">
+                  <span class="truncate" :title="overview.index_dir">{{ overview.index_dir || '-' }}</span>
+                </n-descriptions-item>
+                <n-descriptions-item label="向量索引">
+                  {{ overview.has_vector_db ? '可用' : '不可用' }}
+                </n-descriptions-item>
+              </n-descriptions>
+            </n-card>
+          </n-grid-item>
 
-    <template v-else>
-      <v-row>
-        <v-col cols="12" sm="6" md="3">
-          <v-card variant="tonal" color="primary">
-            <v-card-text class="text-center">
-              <div class="text-h4">{{ overview.memory_count }}</div>
-              <div class="text-caption">记忆总数</div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-        <v-col cols="12" sm="6" md="3">
-          <v-card variant="tonal" color="secondary">
-            <v-card-text class="text-center">
-              <div class="text-h4">{{ overview.global_tag_count }}</div>
-              <div class="text-caption">全局标签</div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-        <v-col cols="12" sm="6" md="3">
-          <v-card variant="tonal" color="accent">
-            <v-card-text class="text-center">
-              <div class="text-h4">{{ overview.note_index_count }}</div>
-              <div class="text-caption">笔记索引</div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-        <v-col cols="12" sm="6" md="3">
-          <v-card variant="tonal" :color="overview.has_providers ? 'success' : 'warning'">
-            <v-card-text class="text-center">
-              <v-icon :icon="overview.has_providers ? 'mdi-check-circle' : 'mdi-alert'" size="32" />
-              <div class="text-caption mt-1">{{ overview.has_providers ? '提供商就绪' : '无提供商' }}</div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
+          <!-- Scope 与向量集合 -->
+          <n-grid-item span="2 m:1">
+            <n-card title="Scope 列表" embedded>
+              <template v-if="overview.scopes?.length">
+                <n-tag
+                  v-for="scope in overview.scopes"
+                  :key="scope"
+                  type="primary"
+                  size="small"
+                  class="chip-item"
+                  :bordered="false"
+                >
+                  {{ scope }}
+                </n-tag>
+              </template>
+              <n-empty v-else description="暂无 scope" size="small" />
+            </n-card>
 
-      <v-row class="mt-4">
-        <v-col cols="12" md="6">
-          <v-card>
-            <v-card-title>配置信息</v-card-title>
-            <v-card-text>
-              <v-list density="compact">
-                <v-list-item>
-                  <template v-slot:prepend><v-icon icon="mdi-chip" size="small" /></template>
-                  <v-list-item-title>嵌入提供商</v-list-item-title>
-                  <v-list-item-subtitle>{{ overview.provider_id }}</v-list-item-subtitle>
-                </v-list-item>
-                <v-list-item>
-                  <template v-slot:prepend><v-icon icon="mdi-robot" size="small" /></template>
-                  <v-list-item-title>LLM 提供商</v-list-item-title>
-                  <v-list-item-subtitle>{{ overview.llm_provider_id }}</v-list-item-subtitle>
-                </v-list-item>
-                <v-list-item>
-                  <template v-slot:prepend><v-icon icon="mdi-folder" size="small" /></template>
-                  <v-list-item-title>索引目录</v-list-item-title>
-                  <v-list-item-subtitle class="text-truncate">{{ overview.index_dir }}</v-list-item-subtitle>
-                </v-list-item>
-                <v-list-item>
-                  <template v-slot:prepend><v-icon icon="mdi-database" size="small" /></template>
-                  <v-list-item-title>向量索引</v-list-item-title>
-                  <v-list-item-subtitle>{{ overview.has_vector_db ? '可用' : '不可用' }}</v-list-item-subtitle>
-                </v-list-item>
-              </v-list>
-            </v-card-text>
-          </v-card>
-        </v-col>
-
-        <v-col cols="12" md="6">
-          <v-card>
-            <v-card-title>Scope 列表</v-card-title>
-            <v-card-text>
-              <v-chip
-                v-for="scope in overview.scopes"
-                :key="scope"
-                class="ma-1"
-                color="primary"
-                variant="outlined"
-                size="small"
-              >
-                {{ scope }}
-              </v-chip>
-              <div v-if="!overview.scopes?.length" class="text-grey">暂无 scope</div>
-            </v-card-text>
-          </v-card>
-
-          <v-card class="mt-4" v-if="overview.vector_collections?.length">
-            <v-card-title>向量集合</v-card-title>
-            <v-card-text>
-              <v-chip
+            <n-card v-if="overview.vector_collections?.length" title="向量集合" embedded class="mt-4">
+              <n-tag
                 v-for="col in overview.vector_collections"
                 :key="col"
-                class="ma-1"
-                color="secondary"
-                variant="outlined"
+                type="info"
                 size="small"
+                class="chip-item"
+                :bordered="false"
               >
                 {{ col }}
-              </v-chip>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
-    </template>
+              </n-tag>
+            </n-card>
+          </n-grid-item>
+        </n-grid>
+      </template>
+    </n-spin>
   </div>
 </template>
 
@@ -133,3 +112,34 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.stat-card {
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stat-label {
+  margin-top: 4px;
+  font-size: 13px;
+  opacity: 0.65;
+}
+
+.chip-item {
+  margin: 2px 4px 2px 0;
+}
+
+.truncate {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+</style>

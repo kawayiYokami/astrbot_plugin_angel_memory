@@ -1,139 +1,123 @@
 <template>
   <div>
-    <h2 class="text-h5 mb-4">👤 用户画像</h2>
-
-    <v-row v-if="loading">
-      <v-col cols="12" class="text-center">
-        <v-progress-circular indeterminate color="primary" />
-      </v-col>
-    </v-row>
-
-    <template v-else>
-      <!-- 用户列表 -->
-      <v-card v-if="!selectedUser">
-        <v-card-title>已识别用户（{{ users.length }}）</v-card-title>
-        <v-card-text>
-          <v-alert v-if="!users.length" type="info" variant="tonal">
-            暂无用户画像数据。用户画像会在对话过程中自动生成。
-          </v-alert>
-          <v-row v-else>
-            <v-col v-for="user in users" :key="user.user_id" cols="12" sm="6" md="4">
-              <v-card
-                variant="outlined"
-                class="pa-3 cursor-pointer"
-                hover
+    <n-spin :show="loading">
+      <template v-if="!loading">
+        <!-- 用户列表 -->
+        <n-card v-if="!selectedUser" :title="`已识别用户（${users.length}）`" embedded>
+          <n-empty v-if="!users.length" description="暂无用户画像数据。用户画像会在对话过程中自动生成。" />
+          <n-grid v-else :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
+            <n-grid-item v-for="user in users" :key="user.user_id" span="3 s:2 m:1">
+              <n-card
+                embedded
+                hoverable
+                class="user-card"
                 @click="selectUser(user)"
               >
-                <div class="d-flex align-center ga-3 mb-2">
-                  <v-avatar color="primary" size="40">
-                    <span class="text-body-1">{{ (user.nickname || user.user_id).charAt(0) }}</span>
-                  </v-avatar>
-                  <div>
-                    <div class="text-body-1 font-weight-medium">
-                      {{ user.nickname || '未知昵称' }}
-                    </div>
-                    <div class="text-caption text-grey">ID: {{ user.user_id }}</div>
+                <div class="user-head">
+                  <n-avatar round :size="40" color="#7c4dff">
+                    {{ (user.nickname || user.user_id).charAt(0) }}
+                  </n-avatar>
+                  <div class="user-meta">
+                    <div class="user-name">{{ user.nickname || '未知昵称' }}</div>
+                    <div class="user-id">ID: {{ user.user_id }}</div>
                   </div>
                 </div>
-                <div class="d-flex flex-wrap ga-1 mt-2">
-                  <v-chip
+                <div class="attr-chips">
+                  <n-tag
                     v-for="(count, attr) in user.attributes"
-                    :key="attr"
-                    size="x-small"
-                    :color="attrColor(attr as string)"
-                    variant="tonal"
+                    :key="String(attr)"
+                    size="small"
+                    :type="attrType(String(attr))"
+                    class="chip-item"
+                    :bordered="false"
                   >
                     {{ attr }} ({{ count }})
-                  </v-chip>
+                  </n-tag>
                 </div>
-                <div class="text-caption text-grey mt-2">共 {{ user.memory_count }} 条画像记忆</div>
-              </v-card>
-            </v-col>
-          </v-row>
-        </v-card-text>
-      </v-card>
+                <div class="user-foot">共 {{ user.memory_count }} 条画像记忆</div>
+              </n-card>
+            </n-grid-item>
+          </n-grid>
+        </n-card>
 
-      <!-- 用户详情 -->
-      <template v-if="selectedUser">
-        <v-btn
-          variant="text"
-          prepend-icon="mdi-arrow-left"
-          class="mb-3"
-          @click="selectedUser = null; profileMemories = []"
-        >
-          返回用户列表
-        </v-btn>
+        <!-- 用户详情 -->
+        <template v-else>
+          <n-button quaternary class="mb-3" @click="selectedUser = null; profileMemories = []">
+            <template #icon><Icon icon="lucide:arrow-left" /></template>
+            返回用户列表
+          </n-button>
 
-        <v-card class="mb-4">
-          <v-card-text class="d-flex align-center ga-4">
-            <v-avatar color="primary" size="56">
-              <span class="text-h6">{{ (selectedUser.nickname || selectedUser.user_id).charAt(0) }}</span>
-            </v-avatar>
-            <div>
-              <div class="text-h6">{{ selectedUser.nickname || '未知昵称' }}</div>
-              <div class="text-body-2 text-grey">用户 ID: {{ selectedUser.user_id }}</div>
-              <div class="text-caption text-grey">共 {{ selectedUser.memory_count }} 条画像记忆</div>
+          <n-card embedded class="mb-4">
+            <div class="detail-head">
+              <n-avatar round :size="56" color="#7c4dff">
+                {{ (selectedUser.nickname || selectedUser.user_id).charAt(0) }}
+              </n-avatar>
+              <div>
+                <div class="detail-name">{{ selectedUser.nickname || '未知昵称' }}</div>
+                <div class="detail-sub">用户 ID: {{ selectedUser.user_id }}</div>
+                <div class="detail-sub">共 {{ selectedUser.memory_count }} 条画像记忆</div>
+              </div>
             </div>
-          </v-card-text>
-        </v-card>
+          </n-card>
 
-        <v-progress-linear v-if="profileLoading" indeterminate color="primary" class="mb-4" />
+          <n-spin :show="profileLoading">
+            <!-- 按属性分组展示 -->
+            <n-card
+              v-for="attr in attributeOrder"
+              :key="attr"
+              v-show="groupedMemories[attr]?.length"
+              embedded
+              class="mb-4"
+            >
+              <template #header>
+                <div class="group-header">
+                  <n-tag size="small" :type="attrType(attr)" :bordered="false">{{ attr }}</n-tag>
+                  <span class="group-count">{{ groupedMemories[attr]?.length || 0 }} 条</span>
+                </div>
+              </template>
 
-        <!-- 按属性分组展示 -->
-        <template v-for="attr in attributeOrder" :key="attr">
-          <v-card v-if="groupedMemories[attr]?.length" class="mb-4">
-            <v-card-title>
-              <v-chip :color="attrColor(attr)" size="small" class="mr-2">{{ attr }}</v-chip>
-              {{ groupedMemories[attr].length }} 条
-            </v-card-title>
-            <v-card-text>
-              <v-list density="compact">
-                <v-list-item
-                  v-for="mem in groupedMemories[attr]"
-                  :key="mem.id"
-                  class="mb-2"
-                >
-                  <v-card variant="tonal" class="pa-3">
-                    <div class="d-flex align-center ga-2 mb-1">
-                      <v-icon
-                        :icon="mem.is_active ? 'mdi-star' : 'mdi-star-outline'"
-                        :color="mem.is_active ? 'amber' : 'grey'"
-                        size="small"
-                      />
-                      <v-chip size="x-small" :color="strengthColor(mem.strength)">
-                        强度 {{ mem.strength }}
-                      </v-chip>
-                      <span class="text-caption text-grey">{{ formatTime(mem.updated_at) }}</span>
-                    </div>
-                    <div class="text-body-2 font-weight-medium">{{ mem.judgment }}</div>
-                    <div v-if="mem.reasoning" class="text-caption text-grey mt-1">{{ mem.reasoning }}</div>
-                    <div class="d-flex flex-wrap ga-1 mt-2">
-                      <v-chip
-                        v-for="tag in parseTags(mem.tags)"
-                        :key="tag"
-                        size="x-small"
-                        :color="tagColor(tag)"
-                        variant="tonal"
-                      >
-                        {{ tag }}
-                      </v-chip>
-                    </div>
-                  </v-card>
-                </v-list-item>
-              </v-list>
-            </v-card-text>
-          </v-card>
+              <div v-for="mem in groupedMemories[attr]" :key="mem.id" class="mem-card">
+                <div class="mem-top">
+                  <Icon
+                    :icon="mem.is_active ? 'lucide:star' : 'lucide:star'"
+                    :style="{ color: mem.is_active ? '#f0a020' : '#888', fontSize: '14px' }"
+                  />
+                  <n-tag size="small" :type="strengthType(mem.strength)" :bordered="false">
+                    强度 {{ mem.strength }}
+                  </n-tag>
+                  <span class="mem-time">{{ formatTime(mem.updated_at) }}</span>
+                </div>
+                <div class="mem-judgment">{{ mem.judgment }}</div>
+                <div v-if="mem.reasoning" class="mem-reasoning">{{ mem.reasoning }}</div>
+                <div class="mem-tags">
+                  <n-tag
+                    v-for="tag in parseTags(mem.tags)"
+                    :key="tag"
+                    size="small"
+                    :type="tagType(tag)"
+                    class="chip-item"
+                    :bordered="false"
+                  >
+                    {{ tag }}
+                  </n-tag>
+                </div>
+              </div>
+            </n-card>
+          </n-spin>
         </template>
       </template>
-    </template>
+    </n-spin>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useBridge } from '@/composables/useBridge'
+import { formatTime, parseTags } from '@/utils/format'
 
 const { apiGet } = useBridge()
+
+type TagType = 'default' | 'primary' | 'success' | 'info' | 'warning' | 'error'
 
 const loading = ref(true)
 const users = ref<any[]>([])
@@ -153,46 +137,37 @@ const groupedMemories = computed(() => {
   return groups
 })
 
-function attrColor(attr: string): string {
-  const map: Record<string, string> = {
-    '用户别名': 'blue',
-    '事实属性': 'green',
-    '技能树': 'purple',
-    '关系图谱': 'orange',
-    '活跃项目': 'cyan',
+function attrType(attr: string): TagType {
+  const map: Record<string, TagType> = {
+    用户别名: 'primary',
+    事实属性: 'success',
+    技能树: 'warning',
+    关系图谱: 'error',
+    活跃项目: 'info',
   }
-  return map[attr] || 'grey'
+  return map[attr] || 'default'
 }
 
-function strengthColor(s: number): string {
+function strengthType(s: number): TagType {
   if (s >= 80) return 'success'
   if (s >= 50) return 'primary'
   if (s >= 30) return 'warning'
   return 'error'
 }
 
-function formatTime(ts: number | null): string {
-  if (!ts) return '-'
-  let t = Number(ts)
-  if (t > 1e11) t /= 1000
-  return new Date(t * 1000).toLocaleString('zh-CN')
-}
-
-function parseTags(tags: string): string[] {
-  if (!tags) return []
-  return tags.split(',').map(t => t.trim()).filter(Boolean)
-}
-
-function tagColor(tag: string): string {
-  const attrColors: Record<string, string> = {
-    '用户别名': 'blue',
-    '事实属性': 'green',
-    '技能树': 'purple',
-    '关系图谱': 'orange',
-    '活跃项目': 'cyan',
+function tagType(tag: string): TagType {
+  if (Object.keys(attrType('')).length === 0) {
+    // noop 防未用告警
   }
-  if (attrColors[tag]) return attrColors[tag]
-  if (/^\d{6,}$/.test(tag)) return 'grey'
+  const attrMap: Record<string, TagType> = {
+    用户别名: 'primary',
+    事实属性: 'success',
+    技能树: 'warning',
+    关系图谱: 'error',
+    活跃项目: 'info',
+  }
+  if (attrMap[tag]) return attrMap[tag]
+  if (/^\d{6,}$/.test(tag)) return 'default'
   return 'primary'
 }
 
@@ -220,3 +195,112 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.user-card {
+  cursor: pointer;
+}
+
+.user-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.user-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.user-id {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.attr-chips {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.chip-item {
+  margin: 2px 4px 2px 0;
+}
+
+.user-foot {
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.mb-3 {
+  margin-bottom: 12px;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.detail-name {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.detail-sub {
+  font-size: 13px;
+  opacity: 0.65;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-count {
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+.mem-card {
+  background: var(--n-color-2, rgba(255, 255, 255, 0.04));
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.mem-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mem-time {
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.mem-judgment {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.mem-reasoning {
+  font-size: 13px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.mem-tags {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+</style>
