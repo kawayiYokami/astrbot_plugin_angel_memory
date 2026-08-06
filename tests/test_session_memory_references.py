@@ -118,6 +118,11 @@ class _Config:
     enable_soul_system = False
 
 
+class _FakePluginContext:
+    def get_component(self, component_name: str):
+        return None
+
+
 class _DeepMind:
     def __init__(self, runtime):
         self.session_memory_manager = SessionMemoryManager()
@@ -126,6 +131,7 @@ class _DeepMind:
         self.config = _Config()
         self.soul = None
         self.user_profile_service = None
+        self.plugin_context = _FakePluginContext()
         self.logger = logging.getLogger("session-memory-test")
 
 
