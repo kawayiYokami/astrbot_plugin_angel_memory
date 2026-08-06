@@ -86,7 +86,7 @@
 <script setup lang="ts">
 import { h, ref, onMounted } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NTag } from 'naive-ui'
+import { NButton, NCard, NDataTable, NDivider, NInput, NSpace, NTag } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiGet, apiPost } = useBridge()

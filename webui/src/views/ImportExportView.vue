@@ -60,6 +60,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { NAlert, NButton, NCard, NGrid, NGridItem, NUpload } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiPost, download } = useBridge()

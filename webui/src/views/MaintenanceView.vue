@@ -31,7 +31,7 @@
 <script setup lang="ts">
 import { h, ref, onMounted } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NIcon, useMessage } from 'naive-ui'
+import { NButton, NCard, NDataTable, NEmpty, NIcon, NSpin, useMessage } from 'naive-ui'
 import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
 import { formatSize, formatTime } from '@/utils/format'

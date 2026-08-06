@@ -95,6 +95,16 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import {
+  NCard,
+  NDescriptions,
+  NDescriptionsItem,
+  NEmpty,
+  NGrid,
+  NGridItem,
+  NSpin,
+  NTag,
+} from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiGet } = useBridge()

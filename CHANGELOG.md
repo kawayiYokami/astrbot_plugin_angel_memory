@@ -2,6 +2,11 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.5.1] - 2026-08-07
+
+### Fixed
+- `fix(webui)`: 修复管理面板样式全崩——迁移 Naive UI 后全部视图未显式导入组件，模板组件被当未知元素渲染；已补全 App.vue 与 9 个视图的显式组件导入，前端资源已重新构建至 `pages/memory-dashboard`。
+
 ## [1.5.0] - 2026-08-07
 
 ### Highlights

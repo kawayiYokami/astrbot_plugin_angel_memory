@@ -41,6 +41,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+import { NAlert, NButton, NCard, NInputNumber, NSelect, NSpace } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiGet, apiPost } = useBridge()

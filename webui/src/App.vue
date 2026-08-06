@@ -47,7 +47,20 @@
 import { computed, h, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MenuOption } from 'naive-ui'
-import { NIcon, darkTheme, dateZhCN, zhCN } from 'naive-ui'
+import {
+  NConfigProvider,
+  NDialogProvider,
+  NIcon,
+  NLayout,
+  NLayoutContent,
+  NLayoutHeader,
+  NLayoutSider,
+  NMenu,
+  NMessageProvider,
+  darkTheme,
+  dateZhCN,
+  zhCN,
+} from 'naive-ui'
 import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
 
