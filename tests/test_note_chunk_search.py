@@ -203,8 +203,9 @@ class TestSearchEngine:
         count = engine.rebuild_all(all_chunks)
         assert count == 2
 
-        # 旧数据搜不到
-        assert engine.search("旧数据", limit=10) == []
+        # 旧数据搜不到：OR 降级可能命中共享 bigram 的新数据，但旧 file_id 不应出现
+        results = engine.search("旧数据", limit=10)
+        assert all(r["file_id"] != "old" for r in results)
         # 新数据能搜到
         assert len(engine.search("新数据", limit=10)) > 0
 
