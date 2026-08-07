@@ -57,7 +57,10 @@ if PACKAGE_NAME not in sys.modules:
 
 from astrbot_plugin_angel_memory.core.services.user_profile_service import UserProfileService
 from astrbot_plugin_angel_memory.llm_memory.models.data_models import BaseMemory, MemoryType
-from astrbot_plugin_angel_memory.llm_memory.utils.user_profile import is_user_profile_tags
+from astrbot_plugin_angel_memory.llm_memory.utils.user_profile import (
+    is_user_id_tag,
+    is_user_profile_tags,
+)
 
 
 def _memory(memory_id: str, judgment: str, tags: list[str]) -> BaseMemory:
@@ -77,6 +80,21 @@ def test_user_profile_tags_require_user_id_and_attribute():
     assert not is_user_profile_tags(["小明", "用户别名"])
     assert not is_user_profile_tags(["小明", "123456", "项目"])
     assert not is_user_profile_tags(["小明", "123456", "654321", "关系图谱"])
+
+
+def test_is_user_id_tag_distinguishes_ids_from_descriptive_tags():
+    # 真实平台 ID：纯数字、数字+字母、含符号的平台标识符
+    assert is_user_id_tag("1023456789")
+    assert is_user_id_tag("o9cq809xxxx@im.wechat")
+    assert is_user_id_tag("wxid_abc123")
+    # 伪 ID：连字符/下划线词形用户名、中文日期、英文短语、纯中文、过短
+    assert not is_user_id_tag("Test-Bot")
+    assert not is_user_id_tag("weixin_oc_adapter")
+    assert not is_user_id_tag("1998年10月19日")
+    assert not is_user_id_tag("docker restart")
+    assert not is_user_id_tag("小明")
+    assert not is_user_id_tag("abcde")
+    assert not is_user_id_tag("12345")
 
 
 def test_extract_current_user_ids_deduplicates_latest_batch():

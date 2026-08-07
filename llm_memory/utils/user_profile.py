@@ -27,17 +27,21 @@ def normalize_tags(tags: Iterable[str]) -> List[str]:
 def is_user_id_tag(tag: str) -> bool:
     """判断 tag 是否为用户 ID。
 
-    规则：长度 > 5，且不是纯中文、不是纯英文字母。
-    纯数字、数字+字母混合、含下划线/连字符的平台标识符等都算用户 ID。
+    排除法规则：长度 > 5，且不含中文、不含空白、不是纯英文词形。
+    纯数字、数字+字母混合、含下划线/连字符且含数字的平台标识符等算用户 ID。
+    描述性标签（含中文、含空格、纯英文词形）一律不算。
     """
     text = str(tag or "").strip()
     if len(text) <= 5:
         return False
-    # 纯中文 → 不是 ID
-    if all("\u4e00" <= c <= "\u9fff" for c in text):
+    # 含中文字符 → 描述性标签，不是平台 ID（如「1998年10月19日」）
+    if any("\u4e00" <= c <= "\u9fff" for c in text):
         return False
-    # 纯英文字母 → 不是 ID
-    if text.isascii() and text.isalpha():
+    # 含空白 → 描述性短语，不是平台 ID（如「docker restart」）
+    if any(c.isspace() for c in text):
+        return False
+    # 去掉连字符/下划线后是纯英文字母 → 词形用户名，不是 ID（如 Test-Bot、weixin_oc_adapter）
+    if text.replace("-", "").replace("_", "").isalpha():
         return False
     return True
 
