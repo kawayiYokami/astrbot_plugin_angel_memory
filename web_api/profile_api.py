@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from typing import Any, Dict, List, Optional
@@ -78,15 +79,57 @@ class ProfileAPI:
                 tuple(sorted(PROFILE_ATTRIBUTE_TAGS)),
             ).fetchall()
 
-            # 从账本读取已知用户 ID，作为画像判定的权威锚点
+            # 账本为主数据源：平台 + 用户 ID + 昵称列表 + 群信息
             ledger_rows = cur.execute(
-                "SELECT user_id FROM user_ledger"
+                """
+                SELECT platform, user_id, user_names,
+                       first_seen_at, last_seen_at
+                FROM user_ledger
+                ORDER BY last_seen_at DESC
+                """
             ).fetchall()
-            known_user_ids = [
-                str(row["user_id"] or "").strip()
-                for row in ledger_rows
-                if str(row["user_id"] or "").strip()
+            group_rows = cur.execute(
+                """
+                SELECT group_id, group_name, first_seen_at, last_seen_at
+                FROM group_ledger
+                ORDER BY last_seen_at DESC
+                """
+            ).fetchall()
+
+            ledger_users = []
+            for row in ledger_rows:
+                platform = str(row["platform"] or "").strip()
+                user_id = str(row["user_id"] or "").strip()
+                if not platform or not user_id:
+                    continue
+                try:
+                    names = json.loads(str(row["user_names"] or "[]"))
+                except (json.JSONDecodeError, ValueError):
+                    names = []
+                if not isinstance(names, list):
+                    names = []
+                ledger_users.append({
+                    "platform": platform,
+                    "user_id": user_id,
+                    "nickname": names[-1] if names else "",
+                    "nicknames": names,
+                    "first_seen_at": row["first_seen_at"],
+                    "last_seen_at": row["last_seen_at"],
+                })
+
+            groups = [
+                {
+                    "group_id": str(g["group_id"] or "").strip(),
+                    "group_name": str(g["group_name"] or "").strip(),
+                    "first_seen_at": g["first_seen_at"],
+                    "last_seen_at": g["last_seen_at"],
+                }
+                for g in group_rows
+                if str(g["group_id"] or "").strip()
             ]
+
+            # 账本 ID 作为画像判定的权威锚点（跨平台同号不串）
+            known_user_ids = [u["user_id"] for u in ledger_users]
 
             # 用统一的识别函数分组
             user_data: Dict[str, Dict[str, Any]] = {}
@@ -104,6 +147,7 @@ class ProfileAPI:
                 if user_id not in user_data:
                     user_data[user_id] = {
                         "user_id": user_id,
+                        "platforms": [],
                         "nickname": "",
                         "memory_count": 0,
                         "attributes": {},
@@ -125,8 +169,16 @@ class ProfileAPI:
                             user_data[user_id]["nickname"] = tag
                             break
 
+            # 合并账本平台/昵称信息到分组结果
+            for ledger_user in ledger_users:
+                uid = ledger_user["user_id"]
+                if uid in user_data:
+                    user_data[uid]["platforms"].append(ledger_user["platform"])
+                    if not user_data[uid]["nickname"] and ledger_user["nickname"]:
+                        user_data[uid]["nickname"] = ledger_user["nickname"]
+
             users = sorted(user_data.values(), key=lambda u: u["memory_count"], reverse=True)
-            return jsonify({"users": users})
+            return jsonify({"users": users, "groups": groups})
         except Exception as e:
             logger.error(f"[WebUI] 用户画像列表查询失败: {e}", exc_info=True)
             return jsonify({"users": [], "error": str(e)}), 500
