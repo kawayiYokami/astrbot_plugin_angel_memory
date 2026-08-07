@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import threading
 import time
@@ -117,6 +118,13 @@ class MemorySqlManager:
                     heading_h6 TEXT,
                     total_lines INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_ledger (
+                    user_id TEXT PRIMARY KEY,
+                    user_names TEXT NOT NULL DEFAULT '[]',
+                    first_seen_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_memory_scope_created_at
@@ -325,6 +333,64 @@ class MemorySqlManager:
             if not new_tags:
                 return
             self._tag_names.update(new_tags)
+
+    def upsert_user(self, user_id: str, user_name: str = "") -> None:
+        """登记用户到账本：同 ID 合并昵称列表（去重），刷新最近活跃时间。"""
+        uid = str(user_id or "").strip()
+        if not uid or uid in {"Unknown", "unknown", "assistant", "user"}:
+            return
+        name = str(user_name or "").strip()
+        now = time.time()
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT user_names FROM user_ledger WHERE user_id = ?",
+                    (uid,),
+                ).fetchone()
+                if row is None:
+                    names = [name] if name else []
+                    conn.execute(
+                        "INSERT INTO user_ledger (user_id, user_names, first_seen_at, last_seen_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (uid, json.dumps(names, ensure_ascii=False), now, now),
+                    )
+                    return
+                try:
+                    names = json.loads(str(row["user_names"] or "[]"))
+                except (json.JSONDecodeError, ValueError):
+                    names = []
+                if not isinstance(names, list):
+                    names = []
+                if name and name not in names:
+                    names.append(name)
+                conn.execute(
+                    "UPDATE user_ledger SET user_names = ?, last_seen_at = ? WHERE user_id = ?",
+                    (json.dumps(names, ensure_ascii=False), now, uid),
+                )
+
+    def get_known_user_ids(self) -> List[str]:
+        """返回账本中全部已知用户 ID。"""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT user_id FROM user_ledger").fetchall()
+        return [str(row["user_id"] or "").strip() for row in rows if str(row["user_id"] or "").strip()]
+
+    def get_user_names(self, user_id: str) -> List[str]:
+        """返回某用户账本中登记过的全部昵称。"""
+        uid = str(user_id or "").strip()
+        if not uid:
+            return []
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_names FROM user_ledger WHERE user_id = ?",
+                (uid,),
+            ).fetchone()
+        if row is None:
+            return []
+        try:
+            names = json.loads(str(row["user_names"] or "[]"))
+        except (json.JSONDecodeError, ValueError):
+            return []
+        return [str(name).strip() for name in names if isinstance(name, str) and str(name).strip()]
 
     def _list_memory_rows_for_fts_sync(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -1572,7 +1638,11 @@ class MemorySqlManager:
 
         ordered_ids = [str(row["id"]) for row in rows]
         memories = self._get_memories_by_ids_sync(ordered_ids)
-        memory_map = {mem.id: mem for mem in memories if is_user_profile_tags(mem.tags)}
+        memory_map = {
+            mem.id: mem
+            for mem in memories
+            if is_user_profile_tags(mem.tags, known_user_ids=user_tags)
+        }
 
         per_user_count = {user_id: 0 for user_id in user_tags}
         result: List[BaseMemory] = []

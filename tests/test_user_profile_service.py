@@ -58,6 +58,7 @@ if PACKAGE_NAME not in sys.modules:
 from astrbot_plugin_angel_memory.core.services.user_profile_service import UserProfileService
 from astrbot_plugin_angel_memory.llm_memory.models.data_models import BaseMemory, MemoryType
 from astrbot_plugin_angel_memory.llm_memory.utils.user_profile import (
+    extract_user_id_from_tags,
     is_user_id_tag,
     is_user_profile_tags,
 )
@@ -95,6 +96,59 @@ def test_is_user_id_tag_distinguishes_ids_from_descriptive_tags():
     assert not is_user_id_tag("小明")
     assert not is_user_id_tag("abcde")
     assert not is_user_id_tag("12345")
+
+
+def test_is_user_id_tag_ledger_hit_wins_over_shape_guess():
+    # 账本命中：即使是形态上会被排除的词形用户名，只要账本里有就判定为 ID
+    assert is_user_id_tag("Test-Bot", known_user_ids=["Test-Bot", "1023456789"])
+    assert is_user_id_tag("wxid_abcdef", known_user_ids=["wxid_abcdef"])
+    assert is_user_id_tag("10000", known_user_ids=["10000"])
+    # 账本未命中：回退形态判定
+    assert not is_user_id_tag("Test-Bot", known_user_ids=["1023456789"])
+    assert is_user_id_tag("1023456789", known_user_ids=[])
+
+
+def test_extract_user_id_with_ledger_prefers_known_id():
+    # issue #73 复现场景：排除法已不把 Test-Bot 当 ID，无账本也能提取
+    assert (
+        extract_user_id_from_tags(["Test-Bot", "1023456789", "事实属性"])
+        == "1023456789"
+    )
+    # 账本命中优先：即使形态上像伪 ID 的 tag，账本有即认定
+    assert (
+        extract_user_id_from_tags(
+            ["Test-Bot", "1023456789", "事实属性"],
+            known_user_ids=["1023456789"],
+        )
+        == "1023456789"
+    )
+    # 账本里不存在的形态疑似 ID 不影响提取真实 ID
+    assert (
+        extract_user_id_from_tags(
+            ["weixin_oc_adapter", "1023456789", "事实属性"],
+            known_user_ids=["1023456789"],
+        )
+        == "1023456789"
+    )
+    # 多个真实 ID（多用户画像）无账本时仍返回空
+    assert extract_user_id_from_tags(["1023456789", "654321", "事实属性"]) == ""
+
+
+def test_is_user_profile_tags_with_ledger():
+    # 排除法修复后：Test-Bot 不再被误判，画像判定通过
+    assert is_user_profile_tags(["Test-Bot", "1023456789", "事实属性"])
+    # 账本命中：同样通过
+    assert is_user_profile_tags(
+        ["Test-Bot", "1023456789", "事实属性"],
+        known_user_ids=["1023456789"],
+    )
+    # 缺属性标签仍判定失败
+    assert not is_user_profile_tags(
+        ["Test-Bot", "1023456789"],
+        known_user_ids=["1023456789"],
+    )
+    # 多个真实 ID 且无账本：判定失败（无法区分归属）
+    assert not is_user_profile_tags(["1023456789", "654321", "事实属性"])
 
 
 def test_extract_current_user_ids_deduplicates_latest_batch():

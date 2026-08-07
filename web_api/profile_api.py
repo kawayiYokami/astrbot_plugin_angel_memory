@@ -78,16 +78,26 @@ class ProfileAPI:
                 tuple(sorted(PROFILE_ATTRIBUTE_TAGS)),
             ).fetchall()
 
+            # 从账本读取已知用户 ID，作为画像判定的权威锚点
+            ledger_rows = cur.execute(
+                "SELECT user_id FROM user_ledger"
+            ).fetchall()
+            known_user_ids = [
+                str(row["user_id"] or "").strip()
+                for row in ledger_rows
+                if str(row["user_id"] or "").strip()
+            ]
+
             # 用统一的识别函数分组
             user_data: Dict[str, Dict[str, Any]] = {}
             for row in rows:
                 tags_text = str(row["tags_text"] or "")
                 tag_list = [t.strip() for t in tags_text.split(",") if t.strip()]
 
-                if not is_user_profile_tags(tag_list):
+                if not is_user_profile_tags(tag_list, known_user_ids=known_user_ids):
                     continue
 
-                user_id = extract_user_id_from_tags(tag_list)
+                user_id = extract_user_id_from_tags(tag_list, known_user_ids=known_user_ids)
                 if not user_id:
                     continue
 
@@ -167,8 +177,8 @@ class ProfileAPI:
                 tags_text = str(row["tags_text"] or "")
                 tag_list = [t.strip() for t in tags_text.split(",") if t.strip()]
 
-                # 用统一函数判定是否为画像记忆
-                if not is_user_profile_tags(tag_list):
+                # 用统一函数判定是否为画像记忆（以当前用户 ID 为账本锚点）
+                if not is_user_profile_tags(tag_list, known_user_ids=[user_id]):
                     continue
 
                 attr_type = extract_profile_attribute_from_tags(tag_list)

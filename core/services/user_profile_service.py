@@ -9,7 +9,6 @@ from ...llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,
     extract_profile_attribute_from_tags,
     extract_user_id_from_tags,
-    is_user_id_tag,
     normalize_judgment,
 )
 from ..utils.memory_formatter import MemoryFormatter
@@ -79,7 +78,8 @@ class UserProfileService:
         text = str(user_id or "").strip()
         if not text or text in {"Unknown", "unknown", "assistant", "user"}:
             return False
-        return is_user_id_tag(text)
+        # sender_id 来自消息事件，是权威 ID，不再用形态猜测
+        return True
 
     async def refresh_session_profiles(
         self,
@@ -167,8 +167,12 @@ class UserProfileService:
         user_names = self._session_user_names.get(
             str(session_id or "").strip(), {}
         )
+        known_user_ids = self._session_user_ids.get(str(session_id or "").strip(), [])
         for memory in profiles:
-            user_id = extract_user_id_from_tags(getattr(memory, "tags", []))
+            user_id = extract_user_id_from_tags(
+                getattr(memory, "tags", []),
+                known_user_ids=known_user_ids,
+            )
             if not user_id or not extract_profile_attribute_from_tags(getattr(memory, "tags", [])):
                 continue
             grouped[user_id].append(memory)

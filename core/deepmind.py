@@ -427,6 +427,18 @@ class DeepMind:
             memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
             if memory_sql_manager is not None:
                 self.user_profile_service.set_memory_sql_manager(memory_sql_manager)
+                # 登记当前事件用户到账本
+                ledger_sender_id, ledger_sender_name = self._get_event_sender_identity(event)
+                if ledger_sender_id and ledger_sender_id.lower() not in {
+                    "unknown", "user", "assistant", "none", "null", "0",
+                }:
+                    try:
+                        memory_sql_manager.upsert_user(ledger_sender_id, ledger_sender_name)
+                    except Exception as ledger_e:
+                        self.logger.warning(
+                            f"[用户账本] 登记失败 sender_id={ledger_sender_id} 错误={ledger_e}",
+                            exc_info=True,
+                        )
             memory_scope = await self.plugin_context.resolve_memory_scope_from_event(event)
             await self.user_profile_service.refresh_session_profiles(
                 session_id=session_id,
