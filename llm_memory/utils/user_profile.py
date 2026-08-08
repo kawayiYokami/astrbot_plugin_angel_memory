@@ -50,23 +50,37 @@ def is_user_id_tag(tag: str, known_user_ids: Optional[Sequence[str]] = None) -> 
     return True
 
 
-def extract_user_id_from_tags(
+def extract_user_ids_from_tags(
     tags: Iterable[str],
     known_user_ids: Optional[Sequence[str]] = None,
-) -> str:
-    """从 tags 中提取用户 ID。
+) -> List[str]:
+    """从 tags 中提取全部用户 ID。
 
-    账本命中优先：返回 tags 中第一个命中 known_user_ids 的 tag。
-    兜底：退回形态判定，仅当恰好一个疑似 ID 时返回。
+    一个记忆可关联多个用户（如「小明和小红是好友」的关系图谱），
+    因此返回所有命中 ID 而非单个：
+    1. 账本命中优先：返回所有命中 known_user_ids 的 tag。
+    2. 无账本命中 → 退回形态判定，返回所有疑似 ID。
     """
     normalized = normalize_tags(tags)
     if known_user_ids:
         known = {str(uid).strip() for uid in known_user_ids if str(uid or "").strip()}
-        for tag in normalized:
-            if tag in known:
-                return tag
-    user_ids = [tag for tag in normalized if is_user_id_tag(tag)]
-    return user_ids[0] if len(user_ids) == 1 else ""
+        ledger_hits = [tag for tag in normalized if tag in known]
+        if ledger_hits:
+            return ledger_hits
+    return [tag for tag in normalized if is_user_id_tag(tag)]
+
+
+def extract_user_id_from_tags(
+    tags: Iterable[str],
+    known_user_ids: Optional[Sequence[str]] = None,
+) -> str:
+    """从 tags 中提取用户 ID（单值兼容版）。
+
+    恰好一个 ID 时返回它；多个 ID（记忆关联多个用户）时返回第一个，
+    需要全部 ID 请使用 extract_user_ids_from_tags。
+    """
+    user_ids = extract_user_ids_from_tags(tags, known_user_ids=known_user_ids)
+    return user_ids[0] if user_ids else ""
 
 
 def extract_profile_attribute_from_tags(tags: Iterable[str]) -> str:

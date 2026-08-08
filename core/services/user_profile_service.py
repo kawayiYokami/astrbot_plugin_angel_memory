@@ -8,7 +8,7 @@ from ...llm_memory.models.data_models import BaseMemory
 from ...llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,
     extract_profile_attribute_from_tags,
-    extract_user_id_from_tags,
+    extract_user_ids_from_tags,
     normalize_judgment,
 )
 from ..utils.memory_formatter import MemoryFormatter
@@ -169,13 +169,14 @@ class UserProfileService:
         )
         known_user_ids = self._session_user_ids.get(str(session_id or "").strip(), [])
         for memory in profiles:
-            user_id = extract_user_id_from_tags(
+            user_ids = extract_user_ids_from_tags(
                 getattr(memory, "tags", []),
                 known_user_ids=known_user_ids,
             )
-            if not user_id or not extract_profile_attribute_from_tags(getattr(memory, "tags", [])):
+            if not user_ids or not extract_profile_attribute_from_tags(getattr(memory, "tags", [])):
                 continue
-            grouped[user_id].append(memory)
+            for user_id in user_ids:
+                grouped[user_id].append(memory)
 
         lines = ["[用户画像]"]
         for user_id in self._session_user_ids.get(str(session_id or "").strip(), []):

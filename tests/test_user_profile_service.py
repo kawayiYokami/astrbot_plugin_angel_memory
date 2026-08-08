@@ -59,6 +59,7 @@ from astrbot_plugin_angel_memory.core.services.user_profile_service import UserP
 from astrbot_plugin_angel_memory.llm_memory.models.data_models import BaseMemory, MemoryType
 from astrbot_plugin_angel_memory.llm_memory.utils.user_profile import (
     extract_user_id_from_tags,
+    extract_user_ids_from_tags,
     is_user_id_tag,
     is_user_profile_tags,
 )
@@ -80,7 +81,8 @@ def test_user_profile_tags_require_user_id_and_attribute():
     assert is_user_profile_tags(["小明", "123456", "用户别名"])
     assert not is_user_profile_tags(["小明", "用户别名"])
     assert not is_user_profile_tags(["小明", "123456", "项目"])
-    assert not is_user_profile_tags(["小明", "123456", "654321", "关系图谱"])
+    # 多 ID 是合法场景（一条记忆可关联多个用户），判定为画像
+    assert is_user_profile_tags(["小明", "123456", "654321", "关系图谱"])
 
 
 def test_is_user_id_tag_distinguishes_ids_from_descriptive_tags():
@@ -130,8 +132,8 @@ def test_extract_user_id_with_ledger_prefers_known_id():
         )
         == "1023456789"
     )
-    # 多个真实 ID（多用户画像）无账本时仍返回空
-    assert extract_user_id_from_tags(["1023456789", "654321", "事实属性"]) == ""
+    # 多个真实 ID 场景：单值版返回第一个（多用户关联是合法场景）
+    assert extract_user_id_from_tags(["1023456789", "654321", "事实属性"]) == "1023456789"
 
 
 def test_is_user_profile_tags_with_ledger():
@@ -147,8 +149,28 @@ def test_is_user_profile_tags_with_ledger():
         ["Test-Bot", "1023456789"],
         known_user_ids=["1023456789"],
     )
-    # 多个真实 ID 且无账本：判定失败（无法区分归属）
-    assert not is_user_profile_tags(["1023456789", "654321", "事实属性"])
+    # 多个真实 ID：多用户关联是合法场景，判定为画像
+    assert is_user_profile_tags(["1023456789", "654321", "事实属性"])
+
+
+def test_extract_user_ids_from_tags_returns_all_matched_ids():
+    # 一条记忆可关联多个用户（如关系图谱）：返回全部命中 ID
+    assert extract_user_ids_from_tags(
+        ["小明", "1023456789", "654321", "关系图谱"],
+        known_user_ids=["1023456789", "654321"],
+    ) == ["1023456789", "654321"]
+    # 无账本时形态兜底同样返回全部疑似 ID
+    assert extract_user_ids_from_tags(
+        ["1023456789", "654321", "事实属性"]
+    ) == ["1023456789", "654321"]
+    # 单值兼容版返回第一个
+    assert (
+        extract_user_id_from_tags(
+            ["小明", "1023456789", "654321", "关系图谱"],
+            known_user_ids=["1023456789", "654321"],
+        )
+        == "1023456789"
+    )
 
 
 def test_extract_current_user_ids_deduplicates_latest_batch():

@@ -23,7 +23,7 @@ except ImportError:
 from ..llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,
     extract_profile_attribute_from_tags,
-    extract_user_id_from_tags,
+    extract_user_ids_from_tags,
     is_user_id_tag,
     is_user_profile_tags,
     normalize_tags,
@@ -140,34 +140,35 @@ class ProfileAPI:
                 if not is_user_profile_tags(tag_list, known_user_ids=known_user_ids):
                     continue
 
-                user_id = extract_user_id_from_tags(tag_list, known_user_ids=known_user_ids)
-                if not user_id:
+                user_ids = extract_user_ids_from_tags(tag_list, known_user_ids=known_user_ids)
+                if not user_ids:
                     continue
 
-                if user_id not in user_data:
-                    user_data[user_id] = {
-                        "user_id": user_id,
-                        "platforms": [],
-                        "nickname": "",
-                        "memory_count": 0,
-                        "attributes": {},
-                    }
+                for user_id in user_ids:
+                    if user_id not in user_data:
+                        user_data[user_id] = {
+                            "user_id": user_id,
+                            "platforms": [],
+                            "nickname": "",
+                            "memory_count": 0,
+                            "attributes": {},
+                        }
 
-                user_data[user_id]["memory_count"] += 1
+                    user_data[user_id]["memory_count"] += 1
 
-                # 属性统计
-                attr = extract_profile_attribute_from_tags(tag_list)
-                if attr:
-                    user_data[user_id]["attributes"][attr] = (
-                        user_data[user_id]["attributes"].get(attr, 0) + 1
-                    )
+                    # 属性统计
+                    attr = extract_profile_attribute_from_tags(tag_list)
+                    if attr:
+                        user_data[user_id]["attributes"][attr] = (
+                            user_data[user_id]["attributes"].get(attr, 0) + 1
+                        )
 
-                # 提取昵称（非用户ID、非属性标签的第一个标签）
-                if not user_data[user_id]["nickname"]:
-                    for tag in tag_list:
-                        if tag != user_id and tag not in PROFILE_ATTRIBUTE_TAGS and not is_user_id_tag(tag):
-                            user_data[user_id]["nickname"] = tag
-                            break
+                    # 提取昵称（非用户ID、非属性标签的第一个标签）
+                    if not user_data[user_id]["nickname"]:
+                        for tag in tag_list:
+                            if tag != user_id and tag not in PROFILE_ATTRIBUTE_TAGS and not is_user_id_tag(tag):
+                                user_data[user_id]["nickname"] = tag
+                                break
 
             # 合并账本平台/昵称信息到分组结果
             for ledger_user in ledger_users:
