@@ -164,9 +164,14 @@ class ProfileAPI:
                         )
 
                     # 提取昵称（非用户ID、非属性标签的第一个标签）
+                    # 排除 ID 时带上账本锚点，避免字母型 ID（如 weixin_oc_adapter）被形态兜底误判为非 ID
                     if not user_data[user_id]["nickname"]:
                         for tag in tag_list:
-                            if tag != user_id and tag not in PROFILE_ATTRIBUTE_TAGS and not is_user_id_tag(tag):
+                            if (
+                                tag != user_id
+                                and tag not in PROFILE_ATTRIBUTE_TAGS
+                                and not is_user_id_tag(tag, known_user_ids=known_user_ids)
+                            ):
                                 user_data[user_id]["nickname"] = tag
                                 break
 
