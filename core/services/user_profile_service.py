@@ -76,10 +76,9 @@ class UserProfileService:
     @staticmethod
     def _is_valid_user_id(user_id: str) -> bool:
         text = str(user_id or "").strip()
-        if not text or text in {"Unknown", "unknown", "assistant", "user"}:
-            return False
-        # sender_id 来自消息事件，是权威 ID，不再用形态猜测
-        return True
+        # 与 deepmind 登记处共用同一占位集合：空、0、none、null、占位身份一律拒绝
+        invalid_ids = {"", "0", "unknown", "user", "assistant", "none", "null"}
+        return text.lower() not in invalid_ids
 
     async def refresh_session_profiles(
         self,

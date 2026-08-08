@@ -344,10 +344,15 @@ class MemorySqlManager:
             self._tag_names.update(new_tags)
 
     def upsert_user(self, platform: str, user_id: str, user_name: str = "") -> None:
-        """登记用户到账本：平台 + 用户 ID 复合主键，同记录合并昵称列表（去重）。"""
+        """登记用户到账本：平台 + 用户 ID 复合主键，同记录合并昵称列表（去重）。
+
+        统一拒绝占位身份（空、0、none、null、unknown/user/assistant），
+        与 _is_valid_user_id 及 deepmind 登记处共用同一集合。
+        """
         plat = str(platform or "").strip()
         uid = str(user_id or "").strip()
-        if not plat or not uid or uid in {"Unknown", "unknown", "assistant", "user"}:
+        invalid_ids = {"", "0", "unknown", "user", "assistant", "none", "null"}
+        if not plat or uid.lower() in invalid_ids:
             return
         name = str(user_name or "").strip()
         now = time.time()
