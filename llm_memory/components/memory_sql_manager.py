@@ -427,6 +427,8 @@ class MemorySqlManager:
             names = json.loads(str(row["user_names"] or "[]"))
         except (json.JSONDecodeError, ValueError):
             return []
+        if not isinstance(names, list):
+            return []
         return [str(name).strip() for name in names if isinstance(name, str) and str(name).strip()]
 
     def upsert_group(self, group_id: str, group_name: str = "") -> None:
