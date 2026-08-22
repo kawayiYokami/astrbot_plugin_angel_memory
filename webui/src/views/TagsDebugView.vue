@@ -1,7 +1,7 @@
 <template>
-  <div>
+  <n-space vertical :size="16">
     <!-- 标签命中搜索 -->
-    <n-card title="标签命中搜索" embedded class="mb-4">
+    <n-card title="标签命中搜索" embedded>
       <n-space vertical size="medium">
         <n-space>
           <n-input
@@ -40,14 +40,14 @@
 
           <template v-if="hitResult.memory_hits?.length">
             <strong>命中记忆（{{ hitResult.memory_hits.length }}条）：</strong>
-            <n-space vertical size="small" class="mt-2">
+            <n-space vertical size="small">
               <n-card
                 v-for="mem in hitResult.memory_hits"
                 :key="mem.id"
                 embedded
                 size="small"
               >
-                <n-space size="small" class="mb-1">
+                <n-space size="small">
                   <n-tag size="small" type="primary" :bordered="false">{{ mem.memory_type }}</n-tag>
                   <n-tag size="small" type="warning" :bordered="false">命中{{ mem.hit_count }}个标签</n-tag>
                   <n-tag size="small" :bordered="false">强度 {{ mem.strength }}</n-tag>
@@ -80,7 +80,7 @@
         />
       </n-space>
     </n-card>
-  </div>
+  </n-space>
 </template>
 
 <script setup lang="ts">

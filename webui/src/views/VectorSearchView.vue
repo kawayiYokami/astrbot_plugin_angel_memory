@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <n-card title="向量检索" embedded class="mb-4">
+  <n-space vertical :size="16">
+    <n-card title="向量检索" embedded>
       <n-space>
         <n-select
           v-model:value="collection"
@@ -20,10 +20,10 @@
     </n-card>
 
     <!-- 检索结果 -->
-    <n-card v-if="results.length" title="检索结果" embedded class="mb-4">
+    <n-card v-if="results.length" title="检索结果" embedded>
       <n-space vertical size="small">
         <n-card v-for="(item, idx) in results" :key="idx" embedded size="small">
-          <n-space align="center" size="small" class="mb-1">
+          <n-space align="center" size="small">
             <n-tag size="small" type="primary" :bordered="false">
               score: {{ item.score?.toFixed(4) }}
             </n-tag>
@@ -34,7 +34,7 @@
       </n-space>
     </n-card>
 
-    <n-alert v-if="error" type="error" class="mb-4">{{ error }}</n-alert>
+    <n-alert v-if="error" type="error">{{ error }}</n-alert>
 
     <!-- 原始浏览 -->
     <n-card embedded>
@@ -56,7 +56,7 @@
         @update:page="onBrowsePageChange"
       />
     </n-card>
-  </div>
+  </n-space>
 </template>
 
 <script setup lang="ts">
@@ -108,7 +108,7 @@ const browsePagination = computed(() => ({
   page: browsePage.value,
   pageSize: 20,
   itemCount: browseTotal.value,
-  prefix: ({ itemCount }: { itemCount: number }) => `共 ${itemCount} 条`,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount ?? 0} 条`,
 }))
 
 async function loadCollections() {
