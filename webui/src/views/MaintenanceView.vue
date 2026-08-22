@@ -1,9 +1,9 @@
 <template>
-  <div>
+  <n-space vertical :size="16">
     <n-spin :show="loading">
-      <template v-if="!loading">
+      <n-space v-if="!loading" vertical :size="16">
         <!-- 维护状态 JSON -->
-        <n-card title="maintenance_state.json" embedded class="mb-4">
+        <n-card title="maintenance_state.json" embedded>
           <template v-if="state">
             <pre class="code-block">{{ JSON.stringify(state, null, 2) }}</pre>
           </template>
@@ -23,15 +23,15 @@
           </template>
           <n-empty v-else description="暂无备份文件" size="small" />
         </n-card>
-      </template>
+      </n-space>
     </n-spin>
-  </div>
+  </n-space>
 </template>
 
 <script setup lang="ts">
 import { h, ref, onMounted } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
-import { NButton, NCard, NDataTable, NEmpty, NIcon, NSpin, useMessage } from 'naive-ui'
+import { NButton, NCard, NDataTable, NEmpty, NIcon, NSpace, NSpin, useMessage } from 'naive-ui'
 import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
 import { formatSize, formatTime } from '@/utils/format'
@@ -92,10 +92,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.mb-4 {
-  margin-bottom: 16px;
-}
-
 .code-block {
   background: #1a1a2e;
   color: #e0e0e0;

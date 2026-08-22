@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <n-card embedded class="mb-4">
+  <n-space vertical :size="16">
+    <n-card embedded>
       <n-space>
         <n-select
           v-model:value="scope"
@@ -86,7 +86,7 @@
       确定要删除这条记忆吗？此操作不可撤销。
       <div v-if="deleteTarget" class="delete-preview">{{ deleteTarget.judgment }}</div>
     </n-modal>
-  </div>
+  </n-space>
 </template>
 
 <script setup lang="ts">
@@ -138,7 +138,7 @@ const pagination = computed(() => ({
   itemCount: total.value,
   showSizePicker: true,
   pageSizes: [10, 20, 50, 100],
-  prefix: ({ itemCount }: { itemCount: number }) => `共 ${itemCount} 条`,
+  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount ?? 0} 条`,
 }))
 
 const columns: DataTableColumns<any> = [

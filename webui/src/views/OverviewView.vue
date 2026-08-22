@@ -1,9 +1,9 @@
 <template>
   <div>
     <n-spin :show="loading">
-      <template v-if="!loading">
+      <n-space v-if="!loading" vertical :size="16">
         <!-- 统计卡片 -->
-        <n-grid :cols="4" :x-gap="16" responsive="screen" item-responsive>
+        <n-grid :cols="4" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
           <n-grid-item span="4 s:2 m:1">
             <n-card class="stat-card" embedded>
               <div class="stat-value">{{ overview.memory_count ?? '-' }}</div>
@@ -35,9 +35,9 @@
           </n-grid-item>
         </n-grid>
 
-        <n-grid :cols="2" :x-gap="16" responsive="screen" class="mt-4">
-          <!-- 配置信息 -->
-          <n-grid-item span="2 m:1">
+          <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen">
+            <!-- 配置信息 -->
+            <n-grid-item span="2 m:1">
             <n-card title="配置信息" embedded>
               <n-descriptions label-placement="left" :column="1" size="small">
                 <n-descriptions-item label="嵌入提供商">
@@ -58,37 +58,39 @@
 
           <!-- Scope 与向量集合 -->
           <n-grid-item span="2 m:1">
-            <n-card title="Scope 列表" embedded>
-              <template v-if="overview.scopes?.length">
+            <n-space vertical :size="16">
+              <n-card title="Scope 列表" embedded>
+                <template v-if="overview.scopes?.length">
+                  <n-tag
+                    v-for="scope in overview.scopes"
+                    :key="scope"
+                    type="primary"
+                    size="small"
+                    class="chip-item"
+                    :bordered="false"
+                  >
+                    {{ scope }}
+                  </n-tag>
+                </template>
+                <n-empty v-else description="暂无 scope" size="small" />
+              </n-card>
+
+              <n-card v-if="overview.vector_collections?.length" title="向量集合" embedded>
                 <n-tag
-                  v-for="scope in overview.scopes"
-                  :key="scope"
-                  type="primary"
+                  v-for="col in overview.vector_collections"
+                  :key="col"
+                  type="info"
                   size="small"
                   class="chip-item"
                   :bordered="false"
                 >
-                  {{ scope }}
+                  {{ col }}
                 </n-tag>
-              </template>
-              <n-empty v-else description="暂无 scope" size="small" />
-            </n-card>
-
-            <n-card v-if="overview.vector_collections?.length" title="向量集合" embedded class="mt-4">
-              <n-tag
-                v-for="col in overview.vector_collections"
-                :key="col"
-                type="info"
-                size="small"
-                class="chip-item"
-                :bordered="false"
-              >
-                {{ col }}
-              </n-tag>
-            </n-card>
+              </n-card>
+            </n-space>
           </n-grid-item>
         </n-grid>
-      </template>
+      </n-space>
     </n-spin>
   </div>
 </template>
@@ -102,6 +104,7 @@ import {
   NEmpty,
   NGrid,
   NGridItem,
+  NSpace,
   NSpin,
   NTag,
 } from 'naive-ui'

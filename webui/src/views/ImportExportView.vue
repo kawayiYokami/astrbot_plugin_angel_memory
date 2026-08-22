@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <n-grid :cols="2" :x-gap="16" responsive="screen">
+  <n-space vertical :size="16">
+    <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen">
       <!-- 导出 -->
       <n-grid-item span="2 m:1">
         <n-card title="导出记忆快照" embedded>
@@ -29,8 +29,7 @@
             </n-button>
           </n-upload>
           <n-button
-            type="secondary"
-            class="mt-3"
+            class="import-btn"
             :loading="importing"
             :disabled="!importFile"
             @click="doImport"
@@ -44,7 +43,6 @@
 
     <n-alert
       v-if="importResult"
-      class="mt-4"
       :type="importResult.success ? 'success' : 'error'"
       :title="importResult.success ? '导入完成' : '导入失败'"
     >
@@ -55,12 +53,13 @@
         {{ importResult.error }}
       </template>
     </n-alert>
-  </div>
+  </n-space>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { NAlert, NButton, NCard, NGrid, NGridItem, NUpload } from 'naive-ui'
+import type { UploadFileInfo } from 'naive-ui'
+import { NAlert, NButton, NCard, NGrid, NGridItem, NSpace, NUpload } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
 const { apiPost, download } = useBridge()
@@ -70,8 +69,8 @@ const importing = ref(false)
 const importFile = ref<File | null>(null)
 const importResult = ref<any>(null)
 
-function onFileChange(options: { file: { file?: File } }) {
-  importFile.value = options.file.file ?? null
+function onFileChange({ file }: { file: UploadFileInfo }) {
+  importFile.value = file.file ?? null
   importResult.value = null
 }
 
@@ -110,7 +109,7 @@ async function doImport() {
   margin-bottom: 12px;
 }
 
-.mt-3 {
+.import-btn {
   margin-top: 12px;
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
   <div>
     <n-spin :show="loading">
-      <template v-if="!loading">
+      <n-space v-if="!loading" vertical :size="16">
         <!-- 用户列表 -->
         <n-card v-if="!selectedUser" :title="`已识别用户（${users.length}）`" embedded>
           <n-empty v-if="!users.length" description="暂无用户画像数据。用户画像会在对话过程中自动生成。" />
@@ -52,7 +52,7 @@
         </n-card>
 
         <!-- 群聊账本 -->
-        <n-card v-if="!selectedUser && groups.length" title="已知群聊" embedded class="mt-4">
+        <n-card v-if="!selectedUser && groups.length" title="已知群聊" embedded>
           <n-grid :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
             <n-grid-item v-for="group in groups" :key="group.group_id" span="3 s:2 m:1">
               <n-card embedded size="small" class="group-card">
@@ -66,12 +66,12 @@
 
         <!-- 用户详情 -->
         <template v-else>
-          <n-button quaternary class="mb-3" @click="selectedUser = null; profileMemories = []">
+          <n-button quaternary @click="selectedUser = null; profileMemories = []">
             <template #icon><Icon icon="lucide:arrow-left" /></template>
             返回用户列表
           </n-button>
 
-          <n-card embedded class="mb-4">
+          <n-card embedded>
             <div class="detail-head">
               <n-avatar round :size="56" color="#7c4dff">
                 {{ (selectedUser.nickname || selectedUser.user_id).charAt(0) }}
@@ -86,13 +86,13 @@
 
           <n-spin :show="profileLoading">
             <!-- 按属性分组展示 -->
-            <n-card
-              v-for="attr in attributeOrder"
-              :key="attr"
-              v-show="groupedMemories[attr]?.length"
-              embedded
-              class="mb-4"
-            >
+            <n-space vertical :size="16">
+              <n-card
+                v-for="attr in attributeOrder"
+                :key="attr"
+                v-show="groupedMemories[attr]?.length"
+                embedded
+              >
               <template #header>
                 <div class="group-header">
                   <n-tag size="small" :type="attrType(attr)" :bordered="false">{{ attr }}</n-tag>
@@ -127,9 +127,10 @@
                 </div>
               </div>
             </n-card>
+            </n-space>
           </n-spin>
         </template>
-      </template>
+      </n-space>
     </n-spin>
   </div>
 </template>
@@ -143,6 +144,7 @@ import {
   NEmpty,
   NGrid,
   NGridItem,
+  NSpace,
   NSpin,
   NTag,
 } from 'naive-ui'
@@ -275,10 +277,6 @@ onMounted(async () => {
   margin-top: 2px;
 }
 
-.mt-4 {
-  margin-top: 16px;
-}
-
 .group-card {
   cursor: default;
 }
@@ -287,14 +285,6 @@ onMounted(async () => {
   font-weight: 600;
   font-size: 14px;
   margin-bottom: 4px;
-}
-
-.mb-3 {
-  margin-bottom: 12px;
-}
-
-.mb-4 {
-  margin-bottom: 16px;
 }
 
 .detail-head {

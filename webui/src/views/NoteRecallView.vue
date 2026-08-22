@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <n-card title="读取笔记" embedded class="mb-4">
+  <n-space vertical :size="16">
+    <n-card title="读取笔记" embedded>
       <n-space>
         <n-input-number v-model:value="noteShortId" placeholder="note_short_id" :min="0" style="width: 180px" />
         <n-input-number v-model:value="offset" placeholder="offset" :min="1" style="width: 140px" />
@@ -9,16 +9,16 @@
       </n-space>
     </n-card>
 
-    <n-alert v-if="error" type="error" class="mb-4">{{ error }}</n-alert>
+    <n-alert v-if="error" type="error">{{ error }}</n-alert>
 
-    <n-card v-if="result" embedded class="mb-4">
+    <n-card v-if="result" embedded>
       <template #header>
         <n-space align="center" size="small">
           <Icon icon="lucide:file-text" />
           <span>{{ result.source_file_path }}</span>
         </n-space>
       </template>
-      <div class="muted mb-2">
+      <div class="muted">
         note_short_id={{ result.note_short_id }} | total_lines={{ result.total_lines }} |
         显示行 {{ result.actual_start_line }}-{{ result.actual_end_line }}
       </div>
@@ -34,9 +34,9 @@
         clearable
         @update:value="loadFileContent"
       />
-      <pre v-if="fileContent" class="code-pre mt-3">{{ fileContent }}</pre>
+      <pre v-if="fileContent" class="code-pre">{{ fileContent }}</pre>
     </n-card>
-  </div>
+  </n-space>
 </template>
 
 <script setup lang="ts">
@@ -116,10 +116,6 @@ onMounted(() => loadFiles())
   word-break: break-all;
   font-size: 13px;
   margin: 0;
-}
-
-.mt-3 {
-  margin-top: 12px;
 }
 
 .muted {
