@@ -57,7 +57,12 @@ if PACKAGE_NAME not in sys.modules:
 
 from astrbot_plugin_angel_memory.core.services.user_profile_service import UserProfileService
 from astrbot_plugin_angel_memory.llm_memory.models.data_models import BaseMemory, MemoryType
-from astrbot_plugin_angel_memory.llm_memory.utils.user_profile import is_user_profile_tags
+from astrbot_plugin_angel_memory.llm_memory.utils.user_profile import (
+    extract_user_id_from_tags,
+    extract_user_ids_from_tags,
+    is_user_id_tag,
+    is_user_profile_tags,
+)
 
 
 def _memory(memory_id: str, judgment: str, tags: list[str]) -> BaseMemory:
@@ -76,7 +81,96 @@ def test_user_profile_tags_require_user_id_and_attribute():
     assert is_user_profile_tags(["小明", "123456", "用户别名"])
     assert not is_user_profile_tags(["小明", "用户别名"])
     assert not is_user_profile_tags(["小明", "123456", "项目"])
-    assert not is_user_profile_tags(["小明", "123456", "654321", "关系图谱"])
+    # 多 ID 是合法场景（一条记忆可关联多个用户），判定为画像
+    assert is_user_profile_tags(["小明", "123456", "654321", "关系图谱"])
+
+
+def test_is_user_id_tag_distinguishes_ids_from_descriptive_tags():
+    # 真实平台 ID：纯数字、数字+字母、含符号的平台标识符
+    assert is_user_id_tag("1023456789")
+    assert is_user_id_tag("o9cq809xxxx@im.wechat")
+    assert is_user_id_tag("wxid_abc123")
+    # 伪 ID：连字符/下划线词形用户名、中文日期、英文短语、纯中文、过短
+    assert not is_user_id_tag("Test-Bot")
+    assert not is_user_id_tag("weixin_oc_adapter")
+    assert not is_user_id_tag("1998年10月19日")
+    assert not is_user_id_tag("docker restart")
+    assert not is_user_id_tag("小明")
+    assert not is_user_id_tag("abcde")
+    assert not is_user_id_tag("12345")
+
+
+def test_is_user_id_tag_ledger_hit_wins_over_shape_guess():
+    # 账本命中：即使是形态上会被排除的词形用户名，只要账本里有就判定为 ID
+    assert is_user_id_tag("Test-Bot", known_user_ids=["Test-Bot", "1023456789"])
+    assert is_user_id_tag("wxid_abcdef", known_user_ids=["wxid_abcdef"])
+    assert is_user_id_tag("10000", known_user_ids=["10000"])
+    # 账本未命中：回退形态判定
+    assert not is_user_id_tag("Test-Bot", known_user_ids=["1023456789"])
+    assert is_user_id_tag("1023456789", known_user_ids=[])
+
+
+def test_extract_user_id_with_ledger_prefers_known_id():
+    # issue #73 复现场景：排除法已不把 Test-Bot 当 ID，无账本也能提取
+    assert (
+        extract_user_id_from_tags(["Test-Bot", "1023456789", "事实属性"])
+        == "1023456789"
+    )
+    # 账本命中优先：即使形态上像伪 ID 的 tag，账本有即认定
+    assert (
+        extract_user_id_from_tags(
+            ["Test-Bot", "1023456789", "事实属性"],
+            known_user_ids=["1023456789"],
+        )
+        == "1023456789"
+    )
+    # 账本里不存在的形态疑似 ID 不影响提取真实 ID
+    assert (
+        extract_user_id_from_tags(
+            ["weixin_oc_adapter", "1023456789", "事实属性"],
+            known_user_ids=["1023456789"],
+        )
+        == "1023456789"
+    )
+    # 多个真实 ID 场景：单值版返回第一个（多用户关联是合法场景）
+    assert extract_user_id_from_tags(["1023456789", "654321", "事实属性"]) == "1023456789"
+
+
+def test_is_user_profile_tags_with_ledger():
+    # 排除法修复后：Test-Bot 不再被误判，画像判定通过
+    assert is_user_profile_tags(["Test-Bot", "1023456789", "事实属性"])
+    # 账本命中：同样通过
+    assert is_user_profile_tags(
+        ["Test-Bot", "1023456789", "事实属性"],
+        known_user_ids=["1023456789"],
+    )
+    # 缺属性标签仍判定失败
+    assert not is_user_profile_tags(
+        ["Test-Bot", "1023456789"],
+        known_user_ids=["1023456789"],
+    )
+    # 多个真实 ID：多用户关联是合法场景，判定为画像
+    assert is_user_profile_tags(["1023456789", "654321", "事实属性"])
+
+
+def test_extract_user_ids_from_tags_returns_all_matched_ids():
+    # 一条记忆可关联多个用户（如关系图谱）：返回全部命中 ID
+    assert extract_user_ids_from_tags(
+        ["小明", "1023456789", "654321", "关系图谱"],
+        known_user_ids=["1023456789", "654321"],
+    ) == ["1023456789", "654321"]
+    # 无账本时形态兜底同样返回全部疑似 ID
+    assert extract_user_ids_from_tags(
+        ["1023456789", "654321", "事实属性"]
+    ) == ["1023456789", "654321"]
+    # 单值兼容版返回第一个
+    assert (
+        extract_user_id_from_tags(
+            ["小明", "1023456789", "654321", "关系图谱"],
+            known_user_ids=["1023456789", "654321"],
+        )
+        == "1023456789"
+    )
 
 
 def test_extract_current_user_ids_deduplicates_latest_batch():
