@@ -177,3 +177,6 @@ AGNET.md
 # WebUI 开发依赖
 webui/node_modules/
 webui/dist/
+
+# 点开头的工作目录一律无视，需要的自行强制追踪
+.*/
