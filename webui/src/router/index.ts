@@ -8,6 +8,7 @@ import NoteRecallView from '@/views/NoteRecallView.vue'
 import ImportExportView from '@/views/ImportExportView.vue'
 import MaintenanceView from '@/views/MaintenanceView.vue'
 import UserProfileView from '@/views/UserProfileView.vue'
+import SettingsView from '@/views/SettingsView.vue'
 
 export const routes: RouteRecordRaw[] = [
   {
@@ -63,5 +64,11 @@ export const routes: RouteRecordRaw[] = [
     name: 'maintenance',
     component: MaintenanceView,
     meta: { title: '维护状态', icon: 'lucide:wrench' },
+  },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: SettingsView,
+    meta: { title: '插件设置', icon: 'lucide:settings' },
   },
 ]

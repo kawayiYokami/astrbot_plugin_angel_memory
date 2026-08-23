@@ -3,7 +3,7 @@
     <n-spin :show="loading">
       <n-space v-if="!loading" vertical :size="16">
         <!-- 用户列表 -->
-        <n-card v-if="!selectedUser" :title="`已识别用户（${users.length}）`" embedded>
+        <template v-if="!selectedUser">
           <n-empty v-if="!users.length" description="暂无用户画像数据。用户画像会在对话过程中自动生成。" />
           <n-grid v-else :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
             <n-grid-item v-for="user in users" :key="`${user.platforms?.[0] || ''}-${user.user_id}`" span="3 s:2 m:1">
@@ -49,20 +49,18 @@
               </n-card>
             </n-grid-item>
           </n-grid>
-        </n-card>
+        </template>
 
         <!-- 群聊账本 -->
-        <n-card v-if="!selectedUser && groups.length" title="已知群聊" embedded>
-          <n-grid :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
-            <n-grid-item v-for="group in groups" :key="group.group_id" span="3 s:2 m:1">
-              <n-card embedded size="small" class="group-card">
-                <div class="group-name">{{ group.group_name || '未知群名' }}</div>
-                <div class="user-id">群 ID: {{ group.group_id }}</div>
-                <div class="mem-time">最近活跃: {{ formatTime(group.last_seen_at) }}</div>
-              </n-card>
-            </n-grid-item>
-          </n-grid>
-        </n-card>
+        <n-grid v-if="!selectedUser && groups.length" :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
+          <n-grid-item v-for="group in groups" :key="group.group_id" span="3 s:2 m:1">
+            <n-card embedded size="small" class="group-card">
+              <div class="group-name">{{ group.group_name || '未知群名' }}</div>
+              <div class="user-id">群 ID: {{ group.group_id }}</div>
+              <div class="mem-time">最近活跃: {{ formatTime(group.last_seen_at) }}</div>
+            </n-card>
+          </n-grid-item>
+        </n-grid>
 
         <!-- 用户详情 -->
         <template v-else>
