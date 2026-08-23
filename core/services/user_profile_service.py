@@ -8,8 +8,7 @@ from ...llm_memory.models.data_models import BaseMemory
 from ...llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,
     extract_profile_attribute_from_tags,
-    extract_user_id_from_tags,
-    is_user_id_tag,
+    extract_user_ids_from_tags,
     normalize_judgment,
 )
 from ..utils.memory_formatter import MemoryFormatter
@@ -77,9 +76,9 @@ class UserProfileService:
     @staticmethod
     def _is_valid_user_id(user_id: str) -> bool:
         text = str(user_id or "").strip()
-        if not text or text in {"Unknown", "unknown", "assistant", "user"}:
-            return False
-        return is_user_id_tag(text)
+        # 与 deepmind 登记处共用同一占位集合：空、0、none、null、占位身份一律拒绝
+        invalid_ids = {"", "0", "unknown", "user", "assistant", "none", "null"}
+        return text.lower() not in invalid_ids
 
     async def refresh_session_profiles(
         self,
@@ -167,11 +166,16 @@ class UserProfileService:
         user_names = self._session_user_names.get(
             str(session_id or "").strip(), {}
         )
+        known_user_ids = self._session_user_ids.get(str(session_id or "").strip(), [])
         for memory in profiles:
-            user_id = extract_user_id_from_tags(getattr(memory, "tags", []))
-            if not user_id or not extract_profile_attribute_from_tags(getattr(memory, "tags", [])):
+            user_ids = extract_user_ids_from_tags(
+                getattr(memory, "tags", []),
+                known_user_ids=known_user_ids,
+            )
+            if not user_ids or not extract_profile_attribute_from_tags(getattr(memory, "tags", [])):
                 continue
-            grouped[user_id].append(memory)
+            for user_id in user_ids:
+                grouped[user_id].append(memory)
 
         lines = ["[用户画像]"]
         for user_id in self._session_user_ids.get(str(session_id or "").strip(), []):

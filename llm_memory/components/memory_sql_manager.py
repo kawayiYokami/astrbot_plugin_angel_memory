@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import threading
 import time
@@ -117,6 +118,22 @@ class MemorySqlManager:
                     heading_h6 TEXT,
                     total_lines INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_ledger (
+                    platform TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_names TEXT NOT NULL DEFAULT '[]',
+                    first_seen_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    PRIMARY KEY (platform, user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS group_ledger (
+                    group_id TEXT PRIMARY KEY,
+                    group_name TEXT NOT NULL DEFAULT '',
+                    first_seen_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_memory_scope_created_at
@@ -325,6 +342,145 @@ class MemorySqlManager:
             if not new_tags:
                 return
             self._tag_names.update(new_tags)
+
+    def upsert_user(self, platform: str, user_id: str, user_name: str = "") -> None:
+        """登记用户到账本：平台 + 用户 ID 复合主键，同记录合并昵称列表（去重）。
+
+        统一拒绝占位身份（空、0、none、null、unknown/user/assistant），
+        与 _is_valid_user_id 及 deepmind 登记处共用同一集合。
+        """
+        plat = str(platform or "").strip()
+        uid = str(user_id or "").strip()
+        invalid_ids = {"", "0", "unknown", "user", "assistant", "none", "null"}
+        if not plat or uid.lower() in invalid_ids:
+            return
+        name = str(user_name or "").strip()
+        now = time.time()
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT user_names FROM user_ledger WHERE platform = ? AND user_id = ?",
+                    (plat, uid),
+                ).fetchone()
+                if row is None:
+                    names = [name] if name else []
+                    conn.execute(
+                        "INSERT INTO user_ledger (platform, user_id, user_names, first_seen_at, last_seen_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (plat, uid, json.dumps(names, ensure_ascii=False), now, now),
+                    )
+                    return
+                try:
+                    names = json.loads(str(row["user_names"] or "[]"))
+                except (json.JSONDecodeError, ValueError):
+                    names = []
+                if not isinstance(names, list):
+                    names = []
+                if name and name not in names:
+                    names.append(name)
+                conn.execute(
+                    "UPDATE user_ledger SET user_names = ?, last_seen_at = ? "
+                    "WHERE platform = ? AND user_id = ?",
+                    (json.dumps(names, ensure_ascii=False), now, plat, uid),
+                )
+
+    def get_known_user_ids(self, platform: str = "") -> List[str]:
+        """返回账本中全部已知用户 ID；platform 非空时只返回该平台下的 ID。
+
+        不带平台时返回跨平台去重后的 ID 集合（仅用于画像判定锚点），
+        带平台时返回该平台下的完整列表（可能含不同用户同号，但同平台内唯一）。
+        """
+        plat = str(platform or "").strip()
+        with self._connect() as conn:
+            if plat:
+                rows = conn.execute(
+                    "SELECT user_id FROM user_ledger WHERE platform = ?",
+                    (plat,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT user_id FROM user_ledger").fetchall()
+        ids = [str(row["user_id"] or "").strip() for row in rows if str(row["user_id"] or "").strip()]
+        if plat:
+            return ids
+        seen = set()
+        unique = []
+        for uid in ids:
+            if uid not in seen:
+                seen.add(uid)
+                unique.append(uid)
+        return unique
+
+    def get_user_names(self, platform: str, user_id: str) -> List[str]:
+        """返回某平台下某用户账本中登记过的全部昵称。"""
+        plat = str(platform or "").strip()
+        uid = str(user_id or "").strip()
+        if not plat or not uid:
+            return []
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_names FROM user_ledger WHERE platform = ? AND user_id = ?",
+                (plat, uid),
+            ).fetchone()
+        if row is None:
+            return []
+        try:
+            names = json.loads(str(row["user_names"] or "[]"))
+        except (json.JSONDecodeError, ValueError):
+            return []
+        if not isinstance(names, list):
+            return []
+        return [str(name).strip() for name in names if isinstance(name, str) and str(name).strip()]
+
+    def upsert_group(self, group_id: str, group_name: str = "") -> None:
+        """登记群聊到群账本：同群 ID 更新群名（用最近拿到的值）与最近活跃时间。"""
+        gid = str(group_id or "").strip()
+        if not gid or gid in {"Unknown", "unknown", "0"}:
+            return
+        gname = str(group_name or "").strip()
+        now = time.time()
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT group_name FROM group_ledger WHERE group_id = ?",
+                    (gid,),
+                ).fetchone()
+                if row is None:
+                    conn.execute(
+                        "INSERT INTO group_ledger (group_id, group_name, first_seen_at, last_seen_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (gid, gname, now, now),
+                    )
+                    return
+                if gname:
+                    conn.execute(
+                        "UPDATE group_ledger SET group_name = ?, last_seen_at = ? WHERE group_id = ?",
+                        (gname, now, gid),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE group_ledger SET last_seen_at = ? WHERE group_id = ?",
+                        (now, gid),
+                    )
+
+    def get_known_group_ids(self) -> List[str]:
+        """返回群账本中全部已知群 ID。"""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT group_id FROM group_ledger").fetchall()
+        return [str(row["group_id"] or "").strip() for row in rows if str(row["group_id"] or "").strip()]
+
+    def get_group_name(self, group_id: str) -> str:
+        """返回某群的群名，未登记或无名返回空串。"""
+        gid = str(group_id or "").strip()
+        if not gid:
+            return ""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT group_name FROM group_ledger WHERE group_id = ?",
+                (gid,),
+            ).fetchone()
+        if row is None:
+            return ""
+        return str(row["group_name"] or "").strip()
 
     def _list_memory_rows_for_fts_sync(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -1548,6 +1704,10 @@ class MemorySqlManager:
         if not user_tags:
             return []
 
+        # 用账本全部已知 ID 作为画像判定锚点：账本命中即 ID，不猜形态
+        ledger_ids = self.get_known_user_ids()
+        known_user_ids = list(dict.fromkeys([*ledger_ids, *user_tags]))
+
         scope_clause, scope_args = self._scope_sql(memory_scope, alias="mr")
         user_placeholders = ",".join(["?" for _ in user_tags])
         attr_tags = sorted(PROFILE_ATTRIBUTE_TAGS)
@@ -1572,7 +1732,11 @@ class MemorySqlManager:
 
         ordered_ids = [str(row["id"]) for row in rows]
         memories = self._get_memories_by_ids_sync(ordered_ids)
-        memory_map = {mem.id: mem for mem in memories if is_user_profile_tags(mem.tags)}
+        memory_map = {
+            mem.id: mem
+            for mem in memories
+            if is_user_profile_tags(mem.tags, known_user_ids=known_user_ids)
+        }
 
         per_user_count = {user_id: 0 for user_id in user_tags}
         result: List[BaseMemory] = []

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from typing import Any, Dict, List, Optional
@@ -22,7 +23,7 @@ except ImportError:
 from ..llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,
     extract_profile_attribute_from_tags,
-    extract_user_id_from_tags,
+    extract_user_ids_from_tags,
     is_user_id_tag,
     is_user_profile_tags,
     normalize_tags,
@@ -78,45 +79,112 @@ class ProfileAPI:
                 tuple(sorted(PROFILE_ATTRIBUTE_TAGS)),
             ).fetchall()
 
+            # 账本为主数据源：平台 + 用户 ID + 昵称列表 + 群信息
+            ledger_rows = cur.execute(
+                """
+                SELECT platform, user_id, user_names,
+                       first_seen_at, last_seen_at
+                FROM user_ledger
+                ORDER BY last_seen_at DESC
+                """
+            ).fetchall()
+            group_rows = cur.execute(
+                """
+                SELECT group_id, group_name, first_seen_at, last_seen_at
+                FROM group_ledger
+                ORDER BY last_seen_at DESC
+                """
+            ).fetchall()
+
+            ledger_users = []
+            for row in ledger_rows:
+                platform = str(row["platform"] or "").strip()
+                user_id = str(row["user_id"] or "").strip()
+                if not platform or not user_id:
+                    continue
+                try:
+                    names = json.loads(str(row["user_names"] or "[]"))
+                except (json.JSONDecodeError, ValueError):
+                    names = []
+                if not isinstance(names, list):
+                    names = []
+                ledger_users.append({
+                    "platform": platform,
+                    "user_id": user_id,
+                    "nickname": names[-1] if names else "",
+                    "nicknames": names,
+                    "first_seen_at": row["first_seen_at"],
+                    "last_seen_at": row["last_seen_at"],
+                })
+
+            groups = [
+                {
+                    "group_id": str(g["group_id"] or "").strip(),
+                    "group_name": str(g["group_name"] or "").strip(),
+                    "first_seen_at": g["first_seen_at"],
+                    "last_seen_at": g["last_seen_at"],
+                }
+                for g in group_rows
+                if str(g["group_id"] or "").strip()
+            ]
+
+            # 账本 ID 作为画像判定的权威锚点（跨平台同号不串）
+            known_user_ids = [u["user_id"] for u in ledger_users]
+
             # 用统一的识别函数分组
             user_data: Dict[str, Dict[str, Any]] = {}
             for row in rows:
                 tags_text = str(row["tags_text"] or "")
                 tag_list = [t.strip() for t in tags_text.split(",") if t.strip()]
 
-                if not is_user_profile_tags(tag_list):
+                if not is_user_profile_tags(tag_list, known_user_ids=known_user_ids):
                     continue
 
-                user_id = extract_user_id_from_tags(tag_list)
-                if not user_id:
+                user_ids = extract_user_ids_from_tags(tag_list, known_user_ids=known_user_ids)
+                if not user_ids:
                     continue
 
-                if user_id not in user_data:
-                    user_data[user_id] = {
-                        "user_id": user_id,
-                        "nickname": "",
-                        "memory_count": 0,
-                        "attributes": {},
-                    }
+                for user_id in user_ids:
+                    if user_id not in user_data:
+                        user_data[user_id] = {
+                            "user_id": user_id,
+                            "platforms": [],
+                            "nickname": "",
+                            "memory_count": 0,
+                            "attributes": {},
+                        }
 
-                user_data[user_id]["memory_count"] += 1
+                    user_data[user_id]["memory_count"] += 1
 
-                # 属性统计
-                attr = extract_profile_attribute_from_tags(tag_list)
-                if attr:
-                    user_data[user_id]["attributes"][attr] = (
-                        user_data[user_id]["attributes"].get(attr, 0) + 1
-                    )
+                    # 属性统计
+                    attr = extract_profile_attribute_from_tags(tag_list)
+                    if attr:
+                        user_data[user_id]["attributes"][attr] = (
+                            user_data[user_id]["attributes"].get(attr, 0) + 1
+                        )
 
-                # 提取昵称（非用户ID、非属性标签的第一个标签）
-                if not user_data[user_id]["nickname"]:
-                    for tag in tag_list:
-                        if tag != user_id and tag not in PROFILE_ATTRIBUTE_TAGS and not is_user_id_tag(tag):
-                            user_data[user_id]["nickname"] = tag
-                            break
+                    # 提取昵称（非用户ID、非属性标签的第一个标签）
+                    # 排除 ID 时带上账本锚点，避免字母型 ID（如 weixin_oc_adapter）被形态兜底误判为非 ID
+                    if not user_data[user_id]["nickname"]:
+                        for tag in tag_list:
+                            if (
+                                tag != user_id
+                                and tag not in PROFILE_ATTRIBUTE_TAGS
+                                and not is_user_id_tag(tag, known_user_ids=known_user_ids)
+                            ):
+                                user_data[user_id]["nickname"] = tag
+                                break
+
+            # 合并账本平台/昵称信息到分组结果
+            for ledger_user in ledger_users:
+                uid = ledger_user["user_id"]
+                if uid in user_data:
+                    user_data[uid]["platforms"].append(ledger_user["platform"])
+                    if not user_data[uid]["nickname"] and ledger_user["nickname"]:
+                        user_data[uid]["nickname"] = ledger_user["nickname"]
 
             users = sorted(user_data.values(), key=lambda u: u["memory_count"], reverse=True)
-            return jsonify({"users": users})
+            return jsonify({"users": users, "groups": groups})
         except Exception as e:
             logger.error(f"[WebUI] 用户画像列表查询失败: {e}", exc_info=True)
             return jsonify({"users": [], "error": str(e)}), 500
@@ -167,8 +235,8 @@ class ProfileAPI:
                 tags_text = str(row["tags_text"] or "")
                 tag_list = [t.strip() for t in tags_text.split(",") if t.strip()]
 
-                # 用统一函数判定是否为画像记忆
-                if not is_user_profile_tags(tag_list):
+                # 用统一函数判定是否为画像记忆（以当前用户 ID 为账本锚点）
+                if not is_user_profile_tags(tag_list, known_user_ids=[user_id]):
                     continue
 
                 attr_type = extract_profile_attribute_from_tags(tag_list)

@@ -6,7 +6,7 @@
         <n-card v-if="!selectedUser" :title="`已识别用户（${users.length}）`" embedded>
           <n-empty v-if="!users.length" description="暂无用户画像数据。用户画像会在对话过程中自动生成。" />
           <n-grid v-else :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
-            <n-grid-item v-for="user in users" :key="user.user_id" span="3 s:2 m:1">
+            <n-grid-item v-for="user in users" :key="`${user.platforms?.[0] || ''}-${user.user_id}`" span="3 s:2 m:1">
               <n-card
                 embedded
                 hoverable
@@ -20,6 +20,17 @@
                   <div class="user-meta">
                     <div class="user-name">{{ user.nickname || '未知昵称' }}</div>
                     <div class="user-id">ID: {{ user.user_id }}</div>
+                    <div v-if="user.platforms?.length" class="user-platform">
+                      <n-tag
+                        v-for="plat in user.platforms"
+                        :key="String(plat)"
+                        size="small"
+                        :bordered="false"
+                        class="chip-item"
+                      >
+                        {{ plat }}
+                      </n-tag>
+                    </div>
                   </div>
                 </div>
                 <div class="attr-chips">
@@ -35,6 +46,19 @@
                   </n-tag>
                 </div>
                 <div class="user-foot">共 {{ user.memory_count }} 条画像记忆</div>
+              </n-card>
+            </n-grid-item>
+          </n-grid>
+        </n-card>
+
+        <!-- 群聊账本 -->
+        <n-card v-if="!selectedUser && groups.length" title="已知群聊" embedded class="mt-4">
+          <n-grid :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
+            <n-grid-item v-for="group in groups" :key="group.group_id" span="3 s:2 m:1">
+              <n-card embedded size="small" class="group-card">
+                <div class="group-name">{{ group.group_name || '未知群名' }}</div>
+                <div class="user-id">群 ID: {{ group.group_id }}</div>
+                <div class="mem-time">最近活跃: {{ formatTime(group.last_seen_at) }}</div>
               </n-card>
             </n-grid-item>
           </n-grid>
@@ -131,6 +155,7 @@ type TagType = 'default' | 'primary' | 'success' | 'info' | 'warning' | 'error'
 
 const loading = ref(true)
 const users = ref<any[]>([])
+const groups = ref<any[]>([])
 const selectedUser = ref<any>(null)
 const profileMemories = ref<any[]>([])
 const profileLoading = ref(false)
@@ -198,6 +223,7 @@ onMounted(async () => {
   try {
     const data: any = await apiGet('profiles')
     users.value = data.users || []
+    groups.value = data.groups || []
   } catch (e) {
     console.error('加载用户列表失败:', e)
   } finally {
@@ -241,6 +267,26 @@ onMounted(async () => {
   margin-top: 8px;
   font-size: 12px;
   opacity: 0.6;
+}
+
+.user-platform {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.mt-4 {
+  margin-top: 16px;
+}
+
+.group-card {
+  cursor: default;
+}
+
+.group-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
 }
 
 .mb-3 {

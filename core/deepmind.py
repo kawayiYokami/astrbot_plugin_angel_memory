@@ -427,6 +427,40 @@ class DeepMind:
             memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
             if memory_sql_manager is not None:
                 self.user_profile_service.set_memory_sql_manager(memory_sql_manager)
+                # 登记当前事件用户与群聊到账本
+                ledger_sender_id, ledger_sender_name = self._get_event_sender_identity(event)
+                if ledger_sender_id and ledger_sender_id.lower() not in {
+                    "unknown", "user", "assistant", "none", "null", "0",
+                }:
+                    try:
+                        ledger_platform = ""
+                        if hasattr(event, "get_platform_name"):
+                            try:
+                                ledger_platform = str(event.get_platform_name() or "").strip()
+                            except Exception:
+                                ledger_platform = ""
+                        ledger_group_id = ""
+                        if hasattr(event, "get_group_id"):
+                            try:
+                                ledger_group_id = str(event.get_group_id() or "").strip()
+                            except Exception:
+                                ledger_group_id = ""
+
+                        def _register_ledger() -> None:
+                            memory_sql_manager.upsert_user(
+                                ledger_platform, ledger_sender_id, ledger_sender_name
+                            )
+                            if ledger_group_id:
+                                memory_sql_manager.upsert_group(ledger_group_id)
+
+                        await asyncio.to_thread(_register_ledger)
+                    except Exception as ledger_e:
+                        ledger_elapsed_ms = int((time.time() - profile_refresh_started_at) * 1000)
+                        self.logger.warning(
+                            f"[用户账本] 登记失败 任务=事件身份登记 触发条件=对话注入前 "
+                            f"sender_id={ledger_sender_id} 耗时毫秒={ledger_elapsed_ms} 错误={ledger_e}",
+                            exc_info=True,
+                        )
             memory_scope = await self.plugin_context.resolve_memory_scope_from_event(event)
             await self.user_profile_service.refresh_session_profiles(
                 session_id=session_id,
