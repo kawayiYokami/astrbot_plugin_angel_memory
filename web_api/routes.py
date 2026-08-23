@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 PLUGIN_NAME = "astrbot_plugin_angel_memory"
 
 
-def register_all_routes(context: "Context", plugin_context) -> None:
+def register_all_routes(context: "Context", plugin_context, plugin=None) -> None:
     """注册所有 WebUI API 路由。"""
     from .memory_api import MemoryAPI
     from .notes_api import NotesAPI
@@ -58,6 +58,27 @@ def register_all_routes(context: "Context", plugin_context) -> None:
         (f"/{PLUGIN_NAME}/profiles", profile_api.list_users, ["GET"], "用户画像列表"),
         (f"/{PLUGIN_NAME}/profiles/detail", profile_api.get_user_profile, ["GET"], "用户画像详情"),
     ]
+
+    if plugin is not None:
+        from .plugin_config_api import PluginConfigAPI
+
+        plugin_config_api = PluginConfigAPI(plugin_context, plugin)
+        routes.append(
+            (
+                f"/{PLUGIN_NAME}/plugin_config",
+                plugin_config_api.get_config,
+                ["GET"],
+                "插件全局配置（schema + 当前值 + provider 列表）",
+            )
+        )
+        routes.append(
+            (
+                f"/{PLUGIN_NAME}/plugin_config/save",
+                plugin_config_api.save_config,
+                ["POST"],
+                "保存插件全局配置并即时生效",
+            )
+        )
 
     for path, handler, methods, description in routes:
         context.register_web_api(path, handler, methods, description)

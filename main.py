@@ -106,6 +106,7 @@ class AngelMemoryPlugin(Star):
 
         # 5. 注册LLM工具
         self.llm_tools_enabled = True  # 标记LLM工具是否启用
+        self._llm_tools = []  # 持有引用，供配置保存钩子动态增删 NoteCreateTool
         try:
             llm_tools = [
                 CoreMemoryRememberTool(),
@@ -116,6 +117,7 @@ class AngelMemoryPlugin(Star):
             if note_config.get("enable_create", True):
                 llm_tools.append(NoteCreateTool())
 
+            self._llm_tools = llm_tools
             self.context.add_llm_tools(*llm_tools)
             registered_names = "、".join(tool.name for tool in llm_tools)
             self.logger.info(f"已注册 LLM 工具：{registered_names}")
@@ -137,10 +139,38 @@ class AngelMemoryPlugin(Star):
         # 6. 注册 WebUI API 路由
         try:
             from .web_api import register_all_routes
-            register_all_routes(self.context, self.plugin_context)
+            register_all_routes(self.context, self.plugin_context, plugin=self)
             self.logger.info("已注册 WebUI API 路由（Plugin Pages）")
         except Exception as e:
             self.logger.warning(f"WebUI API 路由注册失败（不影响核心功能）: {e}")
+
+    def on_config_saved(self):
+        """WebUI 保存全局配置后的热生效钩子。
+
+        PluginContext.config 持引用、组件动态读取，多数配置自动生效，
+        scope map 缓存已由 update_config 刷新；此处只同步启动时固化的
+        NoteCreateTool 注册状态（note_assistant.enable_create）。
+        provider 类改动（provider_id / embedding_provider_id 等）依赖
+        后台初始化时创建的组件实例，需重载插件后生效。
+        """
+        if not self.llm_tools_enabled:
+            self.logger.warning("AngelMemory: LLM 工具未启用，跳过 NoteCreateTool 同步")
+            return
+        note_config = self.plugin_context.get_config("note_assistant", {}) or {}
+        enabled = bool(note_config.get("enable_create", True))
+        registered = any(t.name == "angel_note_create" for t in self._llm_tools)
+        try:
+            if enabled and not registered:
+                tool = NoteCreateTool()
+                self.context.add_llm_tools(tool)
+                self._llm_tools.append(tool)
+                self.logger.info("AngelMemory: 已热注册 LLM 工具 angel_note_create")
+            elif not enabled and registered:
+                self.context.provider_manager.llm_tools.remove_func("angel_note_create")
+                self._llm_tools = [t for t in self._llm_tools if t.name != "angel_note_create"]
+                self.logger.info("AngelMemory: 已热移除 LLM 工具 angel_note_create")
+        except Exception as e:
+            self.logger.error(f"AngelMemory: 同步 NoteCreateTool 失败: {e}", exc_info=True)
 
     def _load_complete_config(self):
         """在主线程检查配置项"""

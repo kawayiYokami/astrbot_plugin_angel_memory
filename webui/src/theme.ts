@@ -63,7 +63,7 @@ const brand = {
  */
 export function buildThemeOverrides(mode: ThemeMode): GlobalThemeOverrides {
   const c = brand[mode]
-  const glassCard = mode === 'light' ? 'rgba(255, 255, 255, 0.62)' : 'rgba(28, 28, 30, 0.62)'
+  const glassCard = mode === 'light' ? 'rgba(255, 255, 255, 0.88)' : 'rgba(44, 44, 46, 0.85)'
   // default 型按钮的玻璃胶囊底（iOS 26：无纯线框按钮）
   const btnGlass =
     mode === 'light'

@@ -38,7 +38,7 @@
     "editor_mode": true,
     "editor_language": "json",
     "editor_theme": "vs-dark",
-    "hint": "JSON格式配置，键可为人格名或会话ID，值为记忆分类域。匹配顺序：先人格名（Persona名），后会话ID（unified_msg_origin）。示例：{\"女友\":\"恋爱\",\"aiocqhttp:group:12345\":\"家人\"}。未命中默认 public。scope 名仅允许字母/数字/中文/下划线/短横线。"
+    "hint": "键为人格名（优先匹配）或会话ID，值为记忆分类域；未命中时默认 public。scope 名仅允许字母、数字、中文、下划线和短横线。"
   },
   "memory_behavior": {
     "type": "object",

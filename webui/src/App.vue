@@ -20,28 +20,39 @@
             @collapse="collapsed = true"
             @expand="collapsed = false"
           >
-            <div class="app-brand" :class="{ 'is-collapsed': collapsed }">
-              <button
-                class="theme-toggle"
-                type="button"
-                :title="isDark ? '切换到光模式' : '切换到暗模式'"
-                @click="toggleTheme()"
-              >
-                <Icon :icon="isDark ? 'lucide:sun' : 'lucide:moon'" />
-              </button>
-              <template v-if="!collapsed">
-                <Icon icon="lucide:brain" class="brand-icon" />
-                <span class="brand-text">天使的记忆</span>
-              </template>
+            <div class="sider-body">
+              <div class="app-brand" :class="{ 'is-collapsed': collapsed }">
+                <button
+                  class="theme-toggle"
+                  type="button"
+                  :title="isDark ? '切换到光模式' : '切换到暗模式'"
+                  @click="toggleTheme()"
+                >
+                  <Icon :icon="isDark ? 'lucide:sun' : 'lucide:moon'" />
+                </button>
+                <template v-if="!collapsed">
+                  <span class="brand-text">天使的记忆</span>
+                </template>
+              </div>
+              <n-menu
+                :collapsed="collapsed"
+                :collapsed-width="64"
+                :collapsed-icon-size="20"
+                :options="menuOptions"
+                :value="activeKey"
+                @update:value="onMenuSelect"
+              />
+              <div class="sider-footer">
+                <n-menu
+                  :collapsed="collapsed"
+                  :collapsed-width="64"
+                  :collapsed-icon-size="20"
+                  :options="settingsMenuOptions"
+                  :value="route.path === '/settings' ? '/settings' : null"
+                  @update:value="router.push('/settings')"
+                />
+              </div>
             </div>
-            <n-menu
-              :collapsed="collapsed"
-              :collapsed-width="64"
-              :collapsed-icon-size="20"
-              :options="menuOptions"
-              :value="activeKey"
-              @update:value="onMenuSelect"
-            />
           </n-layout-sider>
 
           <n-layout>
@@ -62,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, provide, ref, watchEffect } from 'vue'
+import { computed, h, onMounted, onUnmounted, provide, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MenuOption } from 'naive-ui'
 import {
@@ -88,6 +99,18 @@ const route = useRoute()
 const { init } = useBridge()
 
 const collapsed = ref(false)
+// naive-ui 的 n-layout-sider 没有 breakpoint 属性，用 matchMedia 实现窄屏自动收起
+const narrowMql = window.matchMedia('(max-width: 768px)')
+const syncSidebarToWidth = () => {
+  collapsed.value = narrowMql.matches
+}
+onMounted(() => {
+  syncSidebarToWidth()
+  narrowMql.addEventListener('change', syncSidebarToWidth)
+})
+onUnmounted(() => {
+  narrowMql.removeEventListener('change', syncSidebarToWidth)
+})
 
 const theme = createThemeApi()
 provide(themeKey, theme)
@@ -106,15 +129,19 @@ function renderIcon(icon: string) {
   return () => h(NIcon, null, { default: () => h(Icon, { icon }) })
 }
 
-// 从路由表生成菜单（与路由 meta.title / meta.icon 对应）
+// 从路由表生成菜单（与路由 meta.title / meta.icon 对应）；插件设置单独沉底，不进菜单
 const menuOptions: MenuOption[] = router
   .getRoutes()
-  .filter(r => r.meta?.title)
+  .filter(r => r.meta?.title && r.path !== '/settings')
   .map(r => ({
     label: r.meta!.title as string,
     key: r.path,
     icon: renderIcon((r.meta!.icon as string) || 'lucide:circle'),
   }))
+
+const settingsMenuOptions: MenuOption[] = [
+  { label: '插件设置', key: '/settings', icon: renderIcon('lucide:settings') },
+]
 
 const activeKey = computed(() => route.path)
 const currentTitle = computed(() => (route.meta?.title as string) || '')
@@ -131,6 +158,17 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.sider-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.sider-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--glass-divider);
+}
+
 .app-brand {
   display: flex;
   align-items: center;
@@ -145,11 +183,6 @@ onMounted(async () => {
 .app-brand.is-collapsed {
   flex-direction: column;
   padding: 10px 0;
-}
-
-.brand-icon {
-  font-size: 22px;
-  flex-shrink: 0;
 }
 
 .brand-text {
@@ -185,8 +218,8 @@ body,
 
 :root[data-theme='light'] {
   --bg-base: #f2f2f7;
-  --glass-thick-bg: rgba(255, 255, 255, 0.66);
-  --glass-regular-bg: rgba(255, 255, 255, 0.3);
+  --glass-thick-bg: rgba(255, 255, 255, 0.95);
+  --glass-regular-bg: rgba(255, 255, 255, 0.6);
   --glass-border: rgba(255, 255, 255, 0.65);
   --glass-highlight: rgba(255, 255, 255, 0.9);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
@@ -205,8 +238,8 @@ body,
 
 :root[data-theme='dark'] {
   --bg-base: #0d0d0f;
-  --glass-thick-bg: rgba(28, 28, 30, 0.62);
-  --glass-regular-bg: rgba(44, 44, 46, 0.32);
+  --glass-thick-bg: rgba(60, 60, 64, 0.92);
+  --glass-regular-bg: rgba(48, 48, 52, 0.6);
   --glass-border: rgba(255, 255, 255, 0.14);
   --glass-highlight: rgba(255, 255, 255, 0.22);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
