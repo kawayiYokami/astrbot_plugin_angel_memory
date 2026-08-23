@@ -56,9 +56,6 @@
           </n-layout-sider>
 
           <n-layout>
-            <n-layout-header bordered class="app-header">
-              <span class="header-title">{{ currentTitle }}</span>
-            </n-layout-header>
             <n-layout-content
               content-style="padding: 24px;"
               :native-scrollbar="false"
@@ -82,7 +79,6 @@ import {
   NIcon,
   NLayout,
   NLayoutContent,
-  NLayoutHeader,
   NLayoutSider,
   NMenu,
   NMessageProvider,
@@ -144,7 +140,6 @@ const settingsMenuOptions: MenuOption[] = [
 ]
 
 const activeKey = computed(() => route.path)
-const currentTitle = computed(() => (route.meta?.title as string) || '')
 
 function onMenuSelect(key: string) {
   if (key !== route.path) {
@@ -188,18 +183,6 @@ onMounted(async () => {
 .brand-text {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  height: 48px;
-  padding: 0 20px;
-}
-
-.header-title {
-  font-size: 15px;
-  font-weight: 600;
 }
 </style>
 
@@ -315,10 +298,6 @@ body::before {
 
 .theme-toggle:active {
   transform: scale(0.94);
-}
-
-.header-title {
-  color: var(--text-1);
 }
 
 /* default 型按钮的玻璃胶囊折射层 */
