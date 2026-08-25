@@ -279,3 +279,32 @@ def test_api_embedding_provider_expands_aggregated_embedding():
         assert result == [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]
 
     asyncio.run(run())
+
+
+def test_is_batch_too_large_error_detects_dashscope_batch_limit():
+    error = Exception(
+        "DashScope Embedding API request failed (HTTP 400): InvalidParameter - "
+        "InternalError.Algo.InvalidParameter: Value error, batch size is invalid, "
+        "it should not be larger than 10."
+    )
+
+    assert APIEmbeddingProvider._is_batch_too_large_error(error) is True
+
+
+def test_is_rate_limit_error_detects_http_429_and_throttling():
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    assert APIEmbeddingProvider._is_rate_limit_error(_RateLimitError("rate limited")) is True
+    assert (
+        APIEmbeddingProvider._is_rate_limit_error(
+            Exception("Throttling.RateQuota - Requests rate limit exceeded")
+        )
+        is True
+    )
+    assert (
+        APIEmbeddingProvider._is_rate_limit_error(
+            Exception("some other invalid parameter")
+        )
+        is False
+    )

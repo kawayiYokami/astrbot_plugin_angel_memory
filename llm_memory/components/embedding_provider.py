@@ -631,7 +631,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self._model_info = None
         self._available = None  # None表示未测试，True/False表示测试结果
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
-        self.batch_size = 64  # 程序启动时的批量大小，遇到413会自动减半并在本次生命周期内持久生效
+        # DashScope 等提供商限制单批不超过 10 条；使用较小默认值可避免 400。
+        self.batch_size = 10
         self._cache_enabled = True  # 缓存启用标志
         self._client_rebuild_lock = threading.RLock()
 
@@ -927,19 +928,33 @@ class APIEmbeddingProvider(EmbeddingProvider):
                     self._validate_embedding_count(result, texts)
                     return result
                 else:
-                    # 分批并发处理
-                    tasks = []
-                    for i in range(0, len(texts), batch_size):
-                        batch = texts[i : i + batch_size]
-                        task = provider.get_embeddings(batch)
-                        tasks.append(task)
+                    # 分批并发处理，但限制同时请求的批次数量，避免触发 429。
+                    sem = asyncio.Semaphore(1)
+                    batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+
+                    async def run_batch(batch):
+                        async with sem:
+                            for attempt in range(4):
+                                try:
+                                    return await provider.get_embeddings(batch)
+                                except Exception as e:
+                                    if self._is_rate_limit_error(e) and attempt < 3:
+                                        delay = (2**attempt) + (attempt * 2)
+                                        self.logger.warning(
+                                            f"批量向量化遇到429限流，等待{delay}秒后重试 "
+                                            f"provider_id={self.provider_id} attempt={attempt + 1}"
+                                        )
+                                        await asyncio.sleep(delay)
+                                        continue
+                                    raise
+
+                    tasks = [run_batch(batch) for batch in batches]
 
                     # 并发执行所有批次
                     batch_results = await asyncio.gather(*tasks)
 
                     # 按顺序拼接结果
                     result = []
-                    batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
                     for batch, batch_embeddings in zip(batches, batch_results):
                         batch_embeddings = self._expand_aggregated_embedding(
                             batch_embeddings, batch
@@ -1019,7 +1034,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     @staticmethod
     def _is_batch_too_large_error(e: Exception) -> bool:
-        """判断异常是否为批量大小超限（HTTP 413）"""
+        """判断异常是否为批量大小超限（HTTP 413 或 provider 明确报批量过大）"""
         # openai.APIStatusError 或类似异常
         if hasattr(e, "status_code") and e.status_code == 413:
             return True
@@ -1029,11 +1044,34 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 hasattr(sub, "status_code") and sub.status_code == 413
                 for sub in e.exceptions
             )
-        # 兜底：检查错误消息中是否包含413相关关键词
+        # 兜底：检查错误消息中是否包含413或 provider 明确告知的批量上限错误。
         err_msg = str(e)
         if "413" in err_msg and "batch" in err_msg.lower():
             return True
+        lowered = err_msg.lower()
+        if "batch size" in lowered and (
+            "should not be larger" in lowered or "batch size is invalid" in lowered
+        ):
+            return True
         return False
+
+    @staticmethod
+    def _is_rate_limit_error(e: Exception) -> bool:
+        """判断异常是否为请求速率/配额超限（HTTP 429）。"""
+        if hasattr(e, "status_code") and e.status_code == 429:
+            return True
+        if hasattr(e, "exceptions"):
+            return any(
+                APIEmbeddingProvider._is_rate_limit_error(sub)
+                for sub in e.exceptions
+            )
+        err_msg = str(e).lower()
+        return (
+            "429" in err_msg
+            or "rate limit" in err_msg
+            or "throttling" in err_msg
+            or "ratequota" in err_msg
+        )
 
     @staticmethod
     def _meta_get(meta: Any, key: str, default: Any = None) -> Any:
