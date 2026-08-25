@@ -671,6 +671,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         return api_base
 
     def _provider_client_is_closed(self, provider) -> bool:
+        """判断上游 embedding provider 的 OpenAI client 是否已关闭。"""
         client = getattr(provider, "client", None)
         is_closed = getattr(client, "is_closed", None)
         if not callable(is_closed):
@@ -681,6 +682,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
             return False
 
     def _is_closed_client_error(self, error: Exception) -> bool:
+        """判断异常是否为上游 OpenAI client 已关闭导致的错误。"""
         message = str(error)
         if "Cannot send a request, as the client has been closed" in message:
             return True
@@ -762,6 +764,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 return False
 
     def _prepare_provider_for_request(self):
+        """刷新 provider 引用，并在 client 已关闭时尝试重建，返回可用实例。"""
         provider = self._refresh_provider_reference()
         if self._provider_client_is_closed(provider):
             self._rebuild_openai_embedding_client(provider)
@@ -1123,6 +1126,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     @staticmethod
     def _meta_get(meta: Any, key: str, default: Any = None) -> Any:
+        """从字典或对象中安全获取指定元数据键。"""
         if isinstance(meta, dict):
             return meta.get(key, default)
         return getattr(meta, key, default)
