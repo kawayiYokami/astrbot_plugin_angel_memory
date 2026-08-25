@@ -55,6 +55,22 @@ class RecordingEmbeddingProvider:
         return [1.0, 0.0, 0.0]
 
 
+class RateLimitedEmbeddingProvider:
+    """模拟首次请求触发 429、重试后成功的嵌入提供商。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def get_embeddings(self, texts):
+        self.calls += 1
+        if self.calls == 1:
+            raise Exception("429 Throttling.RateQuota - rate limit exceeded")
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+    async def get_embedding(self, text):
+        return [1.0, 0.0, 0.0]
+
+
 class ReplacingContext:
     def __init__(self, replacement):
         self.replacement = replacement
@@ -282,6 +298,7 @@ def test_api_embedding_provider_expands_aggregated_embedding():
 
 
 def test_is_batch_too_large_error_detects_dashscope_batch_limit():
+    """应能识别 DashScope 返回的批量大小超限错误。"""
     error = Exception(
         "DashScope Embedding API request failed (HTTP 400): InvalidParameter - "
         "InternalError.Algo.InvalidParameter: Value error, batch size is invalid, "
@@ -292,6 +309,7 @@ def test_is_batch_too_large_error_detects_dashscope_batch_limit():
 
 
 def test_is_rate_limit_error_detects_http_429_and_throttling():
+    """应能识别 HTTP 429 与限流文本错误。"""
     class _RateLimitError(Exception):
         status_code = 429
 
@@ -308,3 +326,22 @@ def test_is_rate_limit_error_detects_http_429_and_throttling():
         )
         is False
     )
+
+
+def test_api_embedding_provider_retries_single_batch_on_rate_limit():
+    """单批请求遇到 429 后应自动重试并成功返回。"""
+
+    async def run():
+        provider = APIEmbeddingProvider(
+            RateLimitedEmbeddingProvider(),
+            "rate_limited_provider",
+        )
+        provider._available = True
+        provider._cache_enabled = False
+        provider.batch_size = 100
+
+        result = await provider.embed_documents(["alpha", "beta"])
+
+        assert result == [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+
+    asyncio.run(run())

@@ -912,20 +912,88 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         return full_embeddings
 
+    async def _get_embeddings_with_retry(
+        self,
+        provider: Any,
+        texts: List[str],
+        retry_stats: dict | None = None,
+    ) -> List[List[float]]:
+        """获取单个批次的向量嵌入，并在限流时进行指数退避重试。
+
+        Args:
+            provider: 提供 get_embeddings 方法的嵌入提供商实例。
+            texts: 当前批次的文本列表。
+            retry_stats: 可选的统计字典，用于聚合记录重试次数。
+
+        Returns:
+            当前批次的向量列表。
+
+        Raises:
+            Exception: 重试次数用尽后仍失败时抛出原始异常。
+        """
+        for attempt in range(4):
+            try:
+                return await provider.get_embeddings(texts)
+            except Exception as exc:
+                if self._is_rate_limit_error(exc) and attempt < 3:
+                    delay = (2**attempt) + (attempt * 2)
+                    if retry_stats is not None:
+                        retry_stats["retry_count"] += 1
+                    self.logger.debug(
+                        "批量向量化遇到429限流，等待%s秒后重试 "
+                        "provider_id=%s attempt=%s",
+                        delay,
+                        self.provider_id,
+                        attempt + 1,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+
+    def _log_retry_aggregate(self, retry_stats: dict, start_time: float) -> None:
+        """输出批量向量化过程中的聚合重试日志。
+
+        Args:
+            retry_stats: 包含 retry_count 和 text_count 的统计字典。
+            start_time: 开始时间戳，用于计算耗时毫秒。
+        """
+        if retry_stats["retry_count"] <= 0:
+            return
+        self.logger.warning(
+            "[睡眠维护] 任务名=批量向量化完成 provider_id=%s "
+            "重试次数=%s 文本数=%s 耗时毫秒=%s",
+            self.provider_id,
+            retry_stats["retry_count"],
+            retry_stats["text_count"],
+            int((time.time() - start_time) * 1000),
+        )
+
     async def _get_embeddings_with_batch(
         self, texts: List[str], batch_size: int
     ) -> List[List[float]]:
-        """使用指定批量大小并发获取向量嵌入，遇到413自动减半并在本次生命周期内持久化"""
+        """使用指定批量大小获取向量嵌入，遇到413自动减半并在本次生命周期内持久化。
 
+        Args:
+            texts: 需要向量化的文本列表。
+            batch_size: 单批最大文本数。
+
+        Returns:
+            全部文本的向量列表。
+        """
+        start_time = time.time()
+        retry_stats = {"retry_count": 0, "text_count": len(texts)}
         closed_client_retried = False
         while True:
             try:
                 provider = self._prepare_provider_for_request()
                 if batch_size >= len(texts):
-                    # 单批次处理
-                    result = await provider.get_embeddings(texts)
+                    # 单批次处理，同样走限流重试。
+                    result = await self._get_embeddings_with_retry(
+                        provider, texts, retry_stats
+                    )
                     result = self._expand_aggregated_embedding(result, texts)
                     self._validate_embedding_count(result, texts)
+                    self._log_retry_aggregate(retry_stats, start_time)
                     return result
                 else:
                     # 分批并发处理，但限制同时请求的批次数量，避免触发 429。
@@ -933,20 +1001,11 @@ class APIEmbeddingProvider(EmbeddingProvider):
                     batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
 
                     async def run_batch(batch):
+                        """串行执行单个批次并在限流时重试。"""
                         async with sem:
-                            for attempt in range(4):
-                                try:
-                                    return await provider.get_embeddings(batch)
-                                except Exception as e:
-                                    if self._is_rate_limit_error(e) and attempt < 3:
-                                        delay = (2**attempt) + (attempt * 2)
-                                        self.logger.warning(
-                                            f"批量向量化遇到429限流，等待{delay}秒后重试 "
-                                            f"provider_id={self.provider_id} attempt={attempt + 1}"
-                                        )
-                                        await asyncio.sleep(delay)
-                                        continue
-                                    raise
+                            return await self._get_embeddings_with_retry(
+                                provider, batch, retry_stats
+                            )
 
                     tasks = [run_batch(batch) for batch in batches]
 
@@ -962,6 +1021,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
                         self._validate_embedding_count(batch_embeddings, batch)
                         result.extend(batch_embeddings)
 
+                    self._log_retry_aggregate(retry_stats, start_time)
                     return result
             except Exception as e:
                 if self._is_batch_too_large_error(e) and batch_size > 1:
