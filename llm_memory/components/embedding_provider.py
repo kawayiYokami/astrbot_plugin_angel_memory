@@ -936,7 +936,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 return await provider.get_embeddings(texts)
             except Exception as exc:
                 if self._is_rate_limit_error(exc) and attempt < 3:
-                    delay = (2**attempt) + (attempt * 2)
+                    delay = (1, 4, 12)[attempt]
                     if retry_stats is not None:
                         retry_stats["retry_count"] += 1
                     self.logger.debug(
@@ -996,25 +996,13 @@ class APIEmbeddingProvider(EmbeddingProvider):
                     self._log_retry_aggregate(retry_stats, start_time)
                     return result
                 else:
-                    # 分批并发处理，但限制同时请求的批次数量，避免触发 429。
-                    sem = asyncio.Semaphore(1)
+                    # 串行逐批处理，避免并发触发 429；某一批失败时不会遗留排队中的旧请求。
                     batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
-
-                    async def run_batch(batch):
-                        """串行执行单个批次并在限流时重试。"""
-                        async with sem:
-                            return await self._get_embeddings_with_retry(
-                                provider, batch, retry_stats
-                            )
-
-                    tasks = [run_batch(batch) for batch in batches]
-
-                    # 并发执行所有批次
-                    batch_results = await asyncio.gather(*tasks)
-
-                    # 按顺序拼接结果
                     result = []
-                    for batch, batch_embeddings in zip(batches, batch_results):
+                    for batch in batches:
+                        batch_embeddings = await self._get_embeddings_with_retry(
+                            provider, batch, retry_stats
+                        )
                         batch_embeddings = self._expand_aggregated_embedding(
                             batch_embeddings, batch
                         )
