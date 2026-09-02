@@ -631,7 +631,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self._model_info = None
         self._available = None  # None表示未测试，True/False表示测试结果
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
-        self.batch_size = 64  # 程序启动时的批量大小，遇到413会自动减半并在本次生命周期内持久生效
+        # DashScope 等提供商限制单批不超过 10 条；使用较小默认值可避免 400。
+        self.batch_size = 10
         self._cache_enabled = True  # 缓存启用标志
         self._client_rebuild_lock = threading.RLock()
 
@@ -670,6 +671,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         return api_base
 
     def _provider_client_is_closed(self, provider) -> bool:
+        """判断上游 embedding provider 的 OpenAI client 是否已关闭。"""
         client = getattr(provider, "client", None)
         is_closed = getattr(client, "is_closed", None)
         if not callable(is_closed):
@@ -680,6 +682,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
             return False
 
     def _is_closed_client_error(self, error: Exception) -> bool:
+        """判断异常是否为上游 OpenAI client 已关闭导致的错误。"""
         message = str(error)
         if "Cannot send a request, as the client has been closed" in message:
             return True
@@ -761,6 +764,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 return False
 
     def _prepare_provider_for_request(self):
+        """刷新 provider 引用，并在 client 已关闭时尝试重建，返回可用实例。"""
         provider = self._refresh_provider_reference()
         if self._provider_client_is_closed(provider):
             self._rebuild_openai_embedding_client(provider)
@@ -911,42 +915,104 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         return full_embeddings
 
+    async def _get_embeddings_with_retry(
+        self,
+        provider: Any,
+        texts: List[str],
+        retry_stats: dict | None = None,
+    ) -> List[List[float]]:
+        """获取单个批次的向量嵌入，并在限流时进行指数退避重试。
+
+        Args:
+            provider: 提供 get_embeddings 方法的嵌入提供商实例。
+            texts: 当前批次的文本列表。
+            retry_stats: 可选的统计字典，用于聚合记录重试次数。
+
+        Returns:
+            当前批次的向量列表。
+
+        Raises:
+            Exception: 重试次数用尽后仍失败时抛出原始异常。
+        """
+        for attempt in range(4):
+            try:
+                return await provider.get_embeddings(texts)
+            except Exception as exc:
+                if self._is_rate_limit_error(exc) and attempt < 3:
+                    delay = (1, 4, 12)[attempt]
+                    if retry_stats is not None:
+                        retry_stats["retry_count"] += 1
+                    self.logger.debug(
+                        "批量向量化遇到429限流，等待%s秒后重试 "
+                        "provider_id=%s attempt=%s",
+                        delay,
+                        self.provider_id,
+                        attempt + 1,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+
+    def _log_retry_aggregate(self, retry_stats: dict, start_time: float) -> None:
+        """输出批量向量化过程中的聚合重试日志。
+
+        Args:
+            retry_stats: 包含 retry_count 和 text_count 的统计字典。
+            start_time: 开始时间戳，用于计算耗时毫秒。
+        """
+        if retry_stats["retry_count"] <= 0:
+            return
+        self.logger.warning(
+            "[睡眠维护] 任务名=批量向量化完成 provider_id=%s "
+            "重试次数=%s 文本数=%s 耗时毫秒=%s",
+            self.provider_id,
+            retry_stats["retry_count"],
+            retry_stats["text_count"],
+            int((time.time() - start_time) * 1000),
+        )
+
     async def _get_embeddings_with_batch(
         self, texts: List[str], batch_size: int
     ) -> List[List[float]]:
-        """使用指定批量大小并发获取向量嵌入，遇到413自动减半并在本次生命周期内持久化"""
+        """使用指定批量大小获取向量嵌入，遇到413自动减半并在本次生命周期内持久化。
 
+        Args:
+            texts: 需要向量化的文本列表。
+            batch_size: 单批最大文本数。
+
+        Returns:
+            全部文本的向量列表。
+        """
+        start_time = time.time()
+        retry_stats = {"retry_count": 0, "text_count": len(texts)}
         closed_client_retried = False
         while True:
             try:
                 provider = self._prepare_provider_for_request()
                 if batch_size >= len(texts):
-                    # 单批次处理
-                    result = await provider.get_embeddings(texts)
+                    # 单批次处理，同样走限流重试。
+                    result = await self._get_embeddings_with_retry(
+                        provider, texts, retry_stats
+                    )
                     result = self._expand_aggregated_embedding(result, texts)
                     self._validate_embedding_count(result, texts)
+                    self._log_retry_aggregate(retry_stats, start_time)
                     return result
                 else:
-                    # 分批并发处理
-                    tasks = []
-                    for i in range(0, len(texts), batch_size):
-                        batch = texts[i : i + batch_size]
-                        task = provider.get_embeddings(batch)
-                        tasks.append(task)
-
-                    # 并发执行所有批次
-                    batch_results = await asyncio.gather(*tasks)
-
-                    # 按顺序拼接结果
-                    result = []
+                    # 串行逐批处理，避免并发触发 429；某一批失败时不会遗留排队中的旧请求。
                     batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
-                    for batch, batch_embeddings in zip(batches, batch_results):
+                    result = []
+                    for batch in batches:
+                        batch_embeddings = await self._get_embeddings_with_retry(
+                            provider, batch, retry_stats
+                        )
                         batch_embeddings = self._expand_aggregated_embedding(
                             batch_embeddings, batch
                         )
                         self._validate_embedding_count(batch_embeddings, batch)
                         result.extend(batch_embeddings)
 
+                    self._log_retry_aggregate(retry_stats, start_time)
                     return result
             except Exception as e:
                 if self._is_batch_too_large_error(e) and batch_size > 1:
@@ -1019,7 +1085,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     @staticmethod
     def _is_batch_too_large_error(e: Exception) -> bool:
-        """判断异常是否为批量大小超限（HTTP 413）"""
+        """判断异常是否为批量大小超限（HTTP 413 或 provider 明确报批量过大）"""
         # openai.APIStatusError 或类似异常
         if hasattr(e, "status_code") and e.status_code == 413:
             return True
@@ -1029,14 +1095,38 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 hasattr(sub, "status_code") and sub.status_code == 413
                 for sub in e.exceptions
             )
-        # 兜底：检查错误消息中是否包含413相关关键词
+        # 兜底：检查错误消息中是否包含413或 provider 明确告知的批量上限错误。
         err_msg = str(e)
         if "413" in err_msg and "batch" in err_msg.lower():
+            return True
+        lowered = err_msg.lower()
+        if "batch size" in lowered and (
+            "should not be larger" in lowered or "batch size is invalid" in lowered
+        ):
             return True
         return False
 
     @staticmethod
+    def _is_rate_limit_error(e: Exception) -> bool:
+        """判断异常是否为请求速率/配额超限（HTTP 429）。"""
+        if hasattr(e, "status_code") and e.status_code == 429:
+            return True
+        if hasattr(e, "exceptions"):
+            return any(
+                APIEmbeddingProvider._is_rate_limit_error(sub)
+                for sub in e.exceptions
+            )
+        err_msg = str(e).lower()
+        return (
+            "429" in err_msg
+            or "rate limit" in err_msg
+            or "throttling" in err_msg
+            or "ratequota" in err_msg
+        )
+
+    @staticmethod
     def _meta_get(meta: Any, key: str, default: Any = None) -> Any:
+        """从字典或对象中安全获取指定元数据键。"""
         if isinstance(meta, dict):
             return meta.get(key, default)
         return getattr(meta, key, default)
