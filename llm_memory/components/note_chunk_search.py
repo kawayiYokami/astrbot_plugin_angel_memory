@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 import threading
@@ -167,14 +168,20 @@ class NoteChunkSearchEngine:
         self,
         index_dir: str,
         rerank_provider: Optional[Any] = None,
+        rerank_timeout: int | None = None,
     ):
         self._index_dir = Path(index_dir) / "tantivy_note_chunks"
         self._index_dir.mkdir(parents=True, exist_ok=True)
         self._rerank_provider = rerank_provider
+        try:
+            _to = int(rerank_timeout) if rerank_timeout is not None else 5
+        except Exception:
+            _to = 5
+        self._rerank_timeout = max(5, min(120, _to))
         self._lock = threading.RLock()
         self._schema = self._build_schema()
         self._index = tantivy.Index(self._schema, path=str(self._index_dir))
-        logger.info(f"笔记切片搜索引擎初始化完成: {self._index_dir}")
+        logger.info(f"笔记切片搜索引擎初始化完成: {self._index_dir} rerank_timeout={self._rerank_timeout}s")
 
     @staticmethod
     def _build_schema():
@@ -593,7 +600,7 @@ class NoteChunkSearchEngine:
         return merged
 
     def _apply_rerank(self, query: str, candidates: List[Dict], limit: int) -> List[Dict]:
-        """调用 rerank_provider 对候选重排"""
+        """调用 rerank_provider 对候选重排（同步路径，搜索超时走 rerank_timeout）"""
         if not candidates:
             return []
 
@@ -603,7 +610,6 @@ class NoteChunkSearchEngine:
             rerank_resp = rerank_method(query=query, documents=documents)
             # 处理异步
             if inspect.isawaitable(rerank_resp):
-                import asyncio
                 try:
                     loop = asyncio.get_running_loop()
                     del loop
@@ -611,7 +617,13 @@ class NoteChunkSearchEngine:
                         rerank_resp.close()
                     return candidates[:limit]
                 except RuntimeError:
-                    rerank_resp = asyncio.run(rerank_resp)
+                    try:
+                        rerank_resp = asyncio.run(
+                            asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[笔记切片] 重排超时，已降级为 BM25 排序 timeout={self._rerank_timeout}s")
+                        return candidates[:limit]
 
             scored = self._extract_rerank_scores(rerank_resp, candidates)
             if scored:
@@ -624,7 +636,7 @@ class NoteChunkSearchEngine:
         return candidates[:limit]
 
     async def _apply_rerank_async(self, query: str, candidates: List[Dict], limit: int) -> List[Dict]:
-        """异步调用 rerank_provider 对候选重排。"""
+        """异步调用 rerank_provider 对候选重排（搜索超时走 rerank_timeout）。"""
         if not candidates:
             return []
 
@@ -633,7 +645,11 @@ class NoteChunkSearchEngine:
             rerank_method = self._rerank_provider.rerank
             rerank_resp = rerank_method(query=query, documents=documents)
             if inspect.isawaitable(rerank_resp):
-                rerank_resp = await rerank_resp
+                try:
+                    rerank_resp = await asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(f"[笔记切片] 重排超时，已降级为 BM25 排序 timeout={self._rerank_timeout}s")
+                    return candidates[:limit]
 
             scored = self._extract_rerank_scores(rerank_resp, candidates)
             if scored:

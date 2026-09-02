@@ -159,6 +159,34 @@ class PluginContext:
                 return value
         return str(self.config.get("rerank_provider_id", "") or "").strip()
 
+    def get_embedding_batch_size(self) -> int:
+        """获取向量请求批次大小（兼容顶层旧字段，仅下限 1，不设上限）。"""
+        retrieval = self.config.get("retrieval", {}) or {}
+        raw = None
+        if isinstance(retrieval, dict) and "embedding_batch_size" in retrieval:
+            raw = retrieval.get("embedding_batch_size")
+        elif "embedding_batch_size" in self.config:
+            raw = self.config.get("embedding_batch_size")
+        try:
+            value = int(raw) if raw is not None else 50
+        except Exception:
+            return 50
+        return max(1, value)
+
+    def get_embedding_timeout(self) -> int:
+        """获取向量请求超时时间（秒，兼容顶层旧字段，夹逼到 5-120）。"""
+        retrieval = self.config.get("retrieval", {}) or {}
+        raw = None
+        if isinstance(retrieval, dict) and "embedding_timeout" in retrieval:
+            raw = retrieval.get("embedding_timeout")
+        elif "embedding_timeout" in self.config:
+            raw = self.config.get("embedding_timeout")
+        try:
+            value = int(raw) if raw is not None else 5
+        except Exception:
+            return 5
+        return max(5, min(120, value))
+
     def get_llm_provider_id(self) -> str:
         """获取LLM提供商ID"""
         return self.config.get("provider_id", "")

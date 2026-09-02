@@ -80,9 +80,18 @@ class ComponentFactory:
             self.logger.info("🏭 开始创建核心组件...")
             decay_config = build_decay_config(config)
             rerank_provider = self._resolve_rerank_provider()
+            try:
+                _search_timeout = self.plugin_context.get_embedding_timeout()
+            except Exception:
+                _search_timeout = 5
+            try:
+                _search_timeout = max(5, min(120, int(_search_timeout)))
+            except Exception:
+                _search_timeout = 5
             memory_sql_manager = self._create_memory_sql_manager(
                 decay_config,
                 rerank_provider=rerank_provider,
+                rerank_timeout=_search_timeout,
             )
             self._components["memory_sql_manager"] = memory_sql_manager
 
@@ -90,7 +99,7 @@ class ComponentFactory:
             note_chunk_store = self._create_note_chunk_store()
             self._components["note_chunk_store"] = note_chunk_store
 
-            note_chunk_search = self._create_note_chunk_search(rerank_provider)
+            note_chunk_search = self._create_note_chunk_search(rerank_provider, rerank_timeout=_search_timeout)
             self._components["note_chunk_search"] = note_chunk_search
 
             embedding_provider_id = self.plugin_context.get_embedding_provider_id()
@@ -143,6 +152,7 @@ class ComponentFactory:
             vector_store = self._create_vector_store(
                 embedding_provider,
                 rerank_provider=rerank_provider,
+                search_timeout=_search_timeout,
             )
             self._components["vector_store"] = vector_store
             self.plugin_context.set_vector_store(vector_store)
@@ -259,6 +269,8 @@ class ComponentFactory:
         embedding_provider = await factory.create_provider(
             embedding_provider_id,
             enable_local_embedding=self.plugin_context.get_enable_local_embedding(),
+            batch_size=self.plugin_context.get_embedding_batch_size(),
+            timeout=60,
         )
 
         provider_info = embedding_provider.get_model_info()
@@ -343,10 +355,17 @@ class ComponentFactory:
             "SQLite",
         )
 
-    def _create_vector_store(self, embedding_provider, rerank_provider=None):
+    def _create_vector_store(
+        self, embedding_provider, rerank_provider=None, search_timeout: int | None = None
+    ):
         """创建向量索引。"""
         backend_name, VectorStoreClass, index_dir, backend_label = self._select_vector_store_backend()
         self.logger.info(f"🗄️ 创建{backend_label}向量索引...")
+        if search_timeout is None:
+            try:
+                search_timeout = self.plugin_context.get_embedding_timeout()
+            except Exception:
+                search_timeout = 5
 
         self.logger.info(f"📁 使用{backend_label}索引路径: {index_dir}")
 
@@ -355,6 +374,7 @@ class ComponentFactory:
             index_dir=index_dir,
             provider_id=self.plugin_context.get_current_provider(),
             rerank_provider=rerank_provider,
+            search_timeout=search_timeout,
         )
 
         # 获取提供商类型用于日志
@@ -453,13 +473,20 @@ class ComponentFactory:
         self,
         decay_config: Optional[MemoryDecayConfig] = None,
         rerank_provider: Optional[Any] = None,
+        rerank_timeout: int | None = None,
     ) -> MemorySqlManager:
         """创建 SQL 记忆管理器（两种运行时共用）。"""
         simple_db_path = self.plugin_context.get_simple_memory_db_path()
+        if rerank_timeout is None:
+            try:
+                rerank_timeout = self.plugin_context.get_embedding_timeout()
+            except Exception:
+                rerank_timeout = 5
         manager = MemorySqlManager(
             simple_db_path,
             decay_config=decay_config,
             rerank_provider=rerank_provider,
+            rerank_timeout=rerank_timeout,
         )
         self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
         return manager
@@ -475,13 +502,21 @@ class ComponentFactory:
             self.logger.warning(f"笔记切片存储创建失败（不影响主流程）: {e}")
             return None
 
-    def _create_note_chunk_search(self, rerank_provider=None) -> Optional[NoteChunkSearchEngine]:
+    def _create_note_chunk_search(
+        self, rerank_provider=None, rerank_timeout: int | None = None
+    ) -> Optional[NoteChunkSearchEngine]:
         """创建笔记切片搜索引擎"""
         try:
             index_dir = str(self.plugin_context.get_memory_center_dir() / "index")
+            if rerank_timeout is None:
+                try:
+                    rerank_timeout = self.plugin_context.get_embedding_timeout()
+                except Exception:
+                    rerank_timeout = 5
             engine = NoteChunkSearchEngine(
                 index_dir=index_dir,
                 rerank_provider=rerank_provider,
+                rerank_timeout=rerank_timeout,
             )
             self.logger.info("✅ 笔记切片搜索引擎创建完成")
             return engine

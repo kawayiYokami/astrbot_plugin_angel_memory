@@ -34,6 +34,7 @@ class FaissTextIndex:
         provider_id: str,
         model_key: str,
         log=None,
+        search_timeout: int | None = None,
     ):
         self.name = str(name or "").strip()
         if not self.name:
@@ -44,6 +45,11 @@ class FaissTextIndex:
         self.provider_id = str(provider_id or "unknown").strip() or "unknown"
         self.model_key = str(model_key or "unknown").strip() or "unknown"
         self.logger = log or logger
+        try:
+            _to = int(search_timeout) if search_timeout is not None else 5
+        except Exception:
+            _to = 5
+        self._search_timeout = max(5, min(120, _to))
         self._lock = threading.RLock()
         self._index = None
 
@@ -213,19 +219,26 @@ class FaissTextIndex:
         texts: List[str],
         *,
         is_query: bool = False,
-        timeout: int = 3,
+        timeout: int | None = None,
     ) -> Optional[List[List[float]]]:
         if not texts:
             return []
+        _timeout = timeout
+        if _timeout is None:
+            _timeout = getattr(self, "_search_timeout", 5)
+        try:
+            _timeout = max(5, min(120, int(_timeout)))
+        except Exception:
+            _timeout = 5
         if is_query:
             try:
                 return await asyncio.wait_for(
                     self.embedding_provider.embed_documents(texts),
-                    timeout=timeout,
+                    timeout=_timeout,
                 )
             except asyncio.TimeoutError:
                 self.logger.warning(
-                    f"[FAISS向量索引] 查询向量化超时 index={self.name} timeout={timeout}s"
+                    f"[FAISS向量索引] 查询向量化超时 index={self.name} timeout={_timeout}s"
                 )
                 return None
             except Exception as e:
@@ -510,6 +523,7 @@ class FaissVectorStore:
         index_dir: Path,
         provider_id: str,
         rerank_provider: Optional[Any] = None,
+        search_timeout: int | None = None,
     ):
         if embedding_provider is None:
             raise ValueError("FaissVectorStore需要有效的embedding_provider")
@@ -517,6 +531,11 @@ class FaissVectorStore:
         self.index_dir = Path(index_dir)
         self.provider_id = str(provider_id or "unknown").strip() or "unknown"
         self.rerank_provider = rerank_provider
+        try:
+            _to = int(search_timeout) if search_timeout is not None else 5
+        except Exception:
+            _to = 5
+        self._search_timeout = max(5, min(120, _to))
         self.logger = logger
         self.client = f"faiss:{self.index_dir}"
         self._collections: Dict[str, FaissTextIndex] = {}
@@ -557,6 +576,7 @@ class FaissVectorStore:
                 provider_id=self.provider_id,
                 model_key=self.model_key,
                 log=self.logger,
+                search_timeout=self._search_timeout,
             )
             self._collections[safe_name] = collection
             return collection
@@ -568,21 +588,28 @@ class FaissVectorStore:
         self,
         documents: List[str],
         is_query: bool = False,
-        timeout: int = 3,
+        timeout: int | None = None,
     ) -> Optional[List[List[float]]]:
         texts = [str(doc or "").strip() for doc in (documents or [])]
         if not texts:
             return []
+        _timeout = timeout
+        if _timeout is None:
+            _timeout = getattr(self, "_search_timeout", 5)
+        try:
+            _timeout = max(5, min(120, int(_timeout)))
+        except Exception:
+            _timeout = 5
         if is_query:
             if any(not text for text in texts):
                 return None
             try:
                 return await asyncio.wait_for(
                     self.embedding_provider.embed_documents(texts),
-                    timeout=timeout,
+                    timeout=_timeout,
                 )
             except asyncio.TimeoutError:
-                self.logger.warning(f"[FAISS向量索引] 查询向量化超时 timeout={timeout}s")
+                self.logger.warning(f"[FAISS向量索引] 查询向量化超时 timeout={_timeout}s")
                 return None
             except Exception as e:
                 self.logger.warning(f"[FAISS向量索引] 查询向量化失败 异常={e}")
@@ -593,7 +620,7 @@ class FaissVectorStore:
         self,
         document: str,
         is_query: bool = False,
-        timeout: int = 3,
+        timeout: int | None = None,
     ) -> Optional[List[float]]:
         text = str(document or "").strip()
         if not text:

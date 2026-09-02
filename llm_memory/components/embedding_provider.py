@@ -615,6 +615,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
         provider_id: str,
         cache_size_mb: float = 100.0,
         context=None,
+        batch_size: int | None = None,
+        timeout: int | None = None,
     ):
         """
         初始化API嵌入提供商
@@ -623,6 +625,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
             provider: AstrBot提供商对象
             provider_id: 提供商ID
             cache_size_mb: 缓存大小（MB），默认100MB
+            batch_size: 向量请求批次大小（仅下限 1，不设上限），默认50
+            timeout: 写入链路超时（秒，5-120），默认60；搜索链路（查询/重排）为 5 秒固定
         """
         self.provider = provider
         self.provider_id = provider_id
@@ -631,15 +635,23 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self._model_info = None
         self._available = None  # None表示未测试，True/False表示测试结果
         self._cache = EmbeddingCache(max_memory_mb=cache_size_mb)
-        # DashScope 等提供商限制单批不超过 10 条；使用较小默认值可避免 400。
-        self.batch_size = 10
+        try:
+            _bs = int(batch_size) if batch_size is not None else 50
+        except Exception:
+            _bs = 50
+        self.batch_size = max(1, _bs)
+        try:
+            _to = int(timeout) if timeout is not None else 60
+        except Exception:
+            _to = 60
+        self._request_timeout = max(5, min(120, _to))
         self._cache_enabled = True  # 缓存启用标志
         self._client_rebuild_lock = threading.RLock()
 
         # 延迟测试可用性，避免在构造函数中进行异步操作
         self.logger.info(
             f"API嵌入提供商已初始化: {self.provider_id}, "
-            f"批量大小: {self.batch_size} (纯异步模式)"
+            f"批量大小: {self.batch_size} 超时: {self._request_timeout}s (纯异步模式)"
         )
 
     def _refresh_provider_reference(self):
@@ -741,10 +753,16 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 api_base = self._normalize_api_base(
                     provider_config.get("embedding_api_base", "https://api.openai.com/v1")
                 )
+                # 写入链路 60s 兜底，搜索/重排固定 5s 在上游 wait_for 控制
+                try:
+                    _timeout = int(getattr(self, "_request_timeout", 60))
+                except Exception:
+                    _timeout = 60
+                _timeout = max(5, min(120, _timeout))
                 provider.client = AsyncOpenAI(
                     api_key=provider_config.get("embedding_api_key"),
                     base_url=api_base,
-                    timeout=int(provider_config.get("timeout", 20)),
+                    timeout=_timeout,
                     http_client=http_client,
                 )
                 if hasattr(provider, "model"):
@@ -936,7 +954,14 @@ class APIEmbeddingProvider(EmbeddingProvider):
         """
         for attempt in range(4):
             try:
-                return await provider.get_embeddings(texts)
+                # 写入链路 60s 超时兜底（搜索链路 5s 由外层 wait_for 控制）
+                try:
+                    _to = max(5, min(120, int(getattr(self, "_request_timeout", 60))))
+                except Exception:
+                    _to = 60
+                return await asyncio.wait_for(provider.get_embeddings(texts), timeout=_to)
+            except asyncio.TimeoutError as exc:
+                raise TimeoutError(f"向量请求超时 provider_id={self.provider_id} timeout={_to}s") from exc
             except Exception as exc:
                 if self._is_rate_limit_error(exc) and attempt < 3:
                     delay = (1, 4, 12)[attempt]
@@ -1191,6 +1216,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         """获取缓存统计信息"""
         stats = self._cache.get_stats()
         stats["current_batch_size"] = self.batch_size  # 添加当前批量大小信息
+        stats["request_timeout"] = getattr(self, "_request_timeout", 60)
         return stats
 
     def clear_cache(self) -> None:
@@ -1239,6 +1265,8 @@ class EmbeddingProviderFactory:
         provider_id: Optional[str] = None,
         local_model_name: str = "BAAI/bge-small-zh-v1.5",
         enable_local_embedding: bool = True,
+        batch_size: int | None = None,
+        timeout: int | None = None,
     ) -> EmbeddingProvider:
         """
         创建嵌入提供商
@@ -1247,6 +1275,8 @@ class EmbeddingProviderFactory:
             provider_id: API提供商ID，如果为空则使用本地模型
             local_model_name: 本地模型名称
             enable_local_embedding: 是否启用本地嵌入模型
+            batch_size: 向量请求批次大小
+            timeout: 向量请求超时时间（秒）
 
         Returns:
             嵌入提供商实例
@@ -1265,6 +1295,8 @@ class EmbeddingProviderFactory:
                     provider,
                     normalized_provider_id,
                     context=self.context,
+                    batch_size=batch_size,
+                    timeout=timeout,
                 )
                 if await api_provider.check_availability():
                     self.logger.info(f"成功使用API嵌入提供商: {normalized_provider_id}")

@@ -28,6 +28,18 @@
         "description": "启用本地嵌入模型支持",
         "default": false,
         "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5）。并非必须，实测整体提升有限。"
+      },
+      "embedding_batch_size": {
+        "type": "int",
+        "description": "向量请求批次大小",
+        "default": 50,
+        "hint": "单次向量请求包含的文本条数。部分提供商（如 DashScope）限制较小，超限时会自动减半重试。"
+      },
+      "embedding_timeout": {
+        "type": "int",
+        "description": "向量请求超时时间（秒）",
+        "default": 5,
+        "hint": "单次向量请求的超时时间，超时后会重试或报错。范围 5-120 秒。"
       }
     }
   },
