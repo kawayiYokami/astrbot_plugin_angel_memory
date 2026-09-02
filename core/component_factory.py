@@ -30,6 +30,10 @@ from ..llm_memory.service.memory_decay_policy import (
 from ..llm_memory.service.note_service import NoteService
 from .memory_runtime import SimpleMemoryRuntime, VectorMemoryRuntime
 from .deepmind import DeepMind
+from .rerank_failover import (
+    CredentialBackedOpenAIRerankProvider,
+    FailoverRerankProvider,
+)
 
 
 class ComponentFactory:
@@ -421,44 +425,109 @@ class ComponentFactory:
         """
         try:
             rerank_provider_id = self.plugin_context.get_rerank_provider_id()
+            fallback_ids = self.plugin_context.get_rerank_fallback_provider_ids()
             llm_provider_id = self.plugin_context.get_llm_provider_id()
-            candidate_ids = [
-                pid
-                for pid in [
-                    rerank_provider_id,
-                    llm_provider_id,
-                ]
-                if pid
-            ]
+            candidate_ids = list(
+                dict.fromkeys(
+                    pid
+                    for pid in [
+                        rerank_provider_id,
+                        *fallback_ids,
+                        llm_provider_id,
+                    ]
+                    if pid
+                )
+            )
+            retrieval = self.plugin_context.get_all_config().get("retrieval", {}) or {}
+            if not isinstance(retrieval, dict):
+                retrieval = {}
 
-            # 先按显式 ID 查找
+            def bounded_number(key, default, minimum, maximum, cast):
+                try:
+                    value = cast(retrieval.get(key, default))
+                except (TypeError, ValueError):
+                    value = cast(default)
+                return max(minimum, min(maximum, value))
+
+            remote_timeout = bounded_number(
+                "rerank_primary_timeout", 8.0, 2.0, 60.0, float
+            )
+            resolved: list[tuple[str, Any]] = []
+
+            # 显式链中的专用 rerank Provider 优先；普通 OpenAI-compatible
+            # Provider 仅在模型名明确为 reranker 时适配其 /rerank 端点。
             for pid in candidate_ids:
+                provider = None
                 if hasattr(self.context, "get_rerank_provider_by_id"):
                     provider = self.context.get_rerank_provider_by_id(pid)
                     if provider and hasattr(provider, "rerank"):
                         self.logger.info(f"✅ 使用上游重排提供商: {pid}")
-                        return provider
+                        resolved.append((pid, provider))
+                        continue
 
-                if hasattr(self.context, "get_provider_by_id"):
-                    provider = self.context.get_provider_by_id(pid)
-                    if provider and hasattr(provider, "rerank"):
-                        self.logger.info(f"✅ 使用上游可重排提供商: {pid}")
-                        return provider
+                if not hasattr(self.context, "get_provider_by_id"):
+                    continue
+                provider = self.context.get_provider_by_id(pid)
+                if provider and hasattr(provider, "rerank"):
+                    self.logger.info(f"✅ 使用上游可重排提供商: {pid}")
+                    resolved.append((pid, provider))
+                    continue
 
-            # 再从列表中兜底挑选
+                model_getter = getattr(provider, "get_model", None)
+                model = model_getter() if callable(model_getter) else ""
+                if provider and "reranker" in str(model).lower():
+                    resolved.append(
+                        (
+                            pid,
+                            CredentialBackedOpenAIRerankProvider(
+                                pid,
+                                provider,
+                                timeout=remote_timeout,
+                            ),
+                        )
+                    )
+                    self.logger.info(f"✅ 使用 OpenAI 兼容重排端点: {pid}/rerank")
+
+            if resolved:
+                if len(resolved) == 1:
+                    return resolved[0][1]
+                self.logger.info(
+                    "✅ 启用重排故障转移链: %s",
+                    " -> ".join(provider_id for provider_id, _ in resolved),
+                )
+                return FailoverRerankProvider(
+                    resolved,
+                    failure_threshold=bounded_number(
+                        "rerank_failure_threshold", 3, 1, 20, int
+                    ),
+                    cooldown_seconds=bounded_number(
+                        "rerank_cooldown_seconds", 60.0, 5.0, 3600.0, float
+                    ),
+                    fallback_max_documents=bounded_number(
+                        "rerank_fallback_max_documents", 0, 0, 200, int
+                    ),
+                    fallback_max_document_chars=bounded_number(
+                        "rerank_fallback_max_document_chars", 0, 0, 100000, int
+                    ),
+                    fallback_retry_document_chars=bounded_number(
+                        "rerank_fallback_retry_document_chars", 0, 0, 100000, int
+                    ),
+                )
+
+            # 未配置显式链时再从 AstrBot 的专用列表自动选择单一 Provider。
             if hasattr(self.context, "get_all_rerank_providers"):
                 providers = self.context.get_all_rerank_providers() or []
-                for p in providers:
-                    if hasattr(p, "rerank"):
+                for provider in providers:
+                    if hasattr(provider, "rerank"):
                         self.logger.info("✅ 使用上游重排提供商: <auto>")
-                        return p
+                        return provider
 
             if hasattr(self.context, "get_all_providers"):
                 providers = self.context.get_all_providers() or []
-                for p in providers:
-                    if hasattr(p, "rerank"):
+                for provider in providers:
+                    if hasattr(provider, "rerank"):
                         self.logger.info("✅ 使用上游可重排提供商: <auto>")
-                        return p
+                        return provider
 
             self.logger.info("ℹ️ 未启用记忆二阶段重排，当前使用 FAISS 向量相似度排序结果")
             return None

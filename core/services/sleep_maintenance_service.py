@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict
@@ -293,12 +295,53 @@ class SleepMaintenanceService:
 
         center_dir = plugin_context.get_memory_center_dir()
         backup_dir = Path(center_dir) / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            backup_dir.chmod(0o700)
+        except OSError:
+            # Windows and some mounted filesystems do not expose POSIX modes.
+            pass
         backup_file = backup_dir / f"memory_backup_{today}.json"
 
         snapshot = await memory_sql_manager.export_backup_snapshot()
-        with backup_file.open("w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
+        temp_fd, temp_name = tempfile.mkstemp(
+            prefix=f".{backup_file.name}.",
+            suffix=".tmp",
+            dir=backup_dir,
+        )
+        try:
+            try:
+                os.fchmod(temp_fd, 0o600)
+            except (AttributeError, OSError):
+                pass
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as file_handle:
+                temp_fd = -1
+                json.dump(snapshot, file_handle, ensure_ascii=False, indent=2)
+                file_handle.flush()
+                os.fsync(file_handle.fileno())
+            os.replace(temp_name, backup_file)
+            try:
+                backup_file.chmod(0o600)
+            except OSError:
+                pass
+
+            # Persist the rename on filesystems that support directory fsync.
+            directory_flags = os.O_RDONLY
+            directory_flags |= getattr(os, "O_DIRECTORY", 0)
+            directory_flags |= getattr(os, "O_CLOEXEC", 0)
+            try:
+                directory_fd = os.open(backup_dir, directory_flags)
+            except OSError:
+                directory_fd = -1
+            if directory_fd >= 0:
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+            Path(temp_name).unlink(missing_ok=True)
 
         backup_files = sorted(backup_dir.glob("memory_backup_*.json"))
         while len(backup_files) > 3:
