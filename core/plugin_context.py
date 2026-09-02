@@ -187,6 +187,34 @@ class PluginContext:
             return 5
         return max(5, min(120, value))
 
+    def get_rerank_max_docs(self) -> int:
+        """获取重排候选数量上限（兼容顶层旧字段，夹逼 1-200）。"""
+        retrieval = self.config.get("retrieval", {}) or {}
+        raw = None
+        if isinstance(retrieval, dict) and "rerank_max_docs" in retrieval:
+            raw = retrieval.get("rerank_max_docs")
+        elif "rerank_max_docs" in self.config:
+            raw = self.config.get("rerank_max_docs")
+        try:
+            value = int(raw) if raw is not None else 64
+        except Exception:
+            return 64
+        return max(1, min(200, value))
+
+    def get_rerank_max_tokens_per_doc(self) -> int:
+        """获取重排单段 token 上限（兼容顶层旧字段，夹逼 128-8192）。"""
+        retrieval = self.config.get("retrieval", {}) or {}
+        raw = None
+        if isinstance(retrieval, dict) and "rerank_max_tokens_per_doc" in retrieval:
+            raw = retrieval.get("rerank_max_tokens_per_doc")
+        elif "rerank_max_tokens_per_doc" in self.config:
+            raw = self.config.get("rerank_max_tokens_per_doc")
+        try:
+            value = int(raw) if raw is not None else 1024
+        except Exception:
+            return 1024
+        return max(128, min(8192, value))
+
     def get_llm_provider_id(self) -> str:
         """获取LLM提供商ID"""
         return self.config.get("provider_id", "")

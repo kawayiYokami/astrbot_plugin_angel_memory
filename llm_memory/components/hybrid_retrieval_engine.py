@@ -21,6 +21,8 @@ class HybridRetrievalEngine:
         retriever: Any,
         rerank_provider: Optional[Any] = None,
         rerank_timeout: int | None = None,
+        rerank_max_docs: int | None = None,
+        rerank_max_tokens_per_doc: int | None = None,
     ):
         self.retriever = retriever
         self.rerank_provider = rerank_provider
@@ -29,6 +31,16 @@ class HybridRetrievalEngine:
         except Exception:
             _to = 5
         self._rerank_timeout = max(5, min(120, _to))
+        try:
+            _md = int(rerank_max_docs) if rerank_max_docs is not None else 64
+        except Exception:
+            _md = 64
+        self._rerank_max_docs = max(1, min(200, _md))
+        try:
+            _mt = int(rerank_max_tokens_per_doc) if rerank_max_tokens_per_doc is not None else 1024
+        except Exception:
+            _mt = 1024
+        self._rerank_max_tokens_per_doc = max(128, min(8192, _mt))
 
     def has_rerank(self) -> bool:
         return self.rerank_provider is not None and hasattr(self.rerank_provider, "rerank")
@@ -74,6 +86,58 @@ class HybridRetrievalEngine:
                 )
         return normalized
 
+    def _resolve_provider_id(self) -> str:
+        raw = str(getattr(self.rerank_provider, "provider_id", "") or getattr(self.rerank_provider, "id", "") or "").strip()
+        if raw:
+            return raw
+        try:
+            return type(self.rerank_provider).__name__ or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _prepare_rerank_inputs(self, query: str, ordered_ids: List[str], doc_text_map: Dict[str, str]):
+        """按 docs 上限与单段 token 预算裁剪后返回 passages/documents。"""
+        # docs 限流
+        if len(ordered_ids) > self._rerank_max_docs:
+            ordered_ids = ordered_ids[: self._rerank_max_docs]
+        passages: List[Dict[str, str]] = []
+        documents: List[str] = []
+        # 懒导入，避免循环
+        try:
+            from ..utils.token_utils import truncate_by_tokens
+        except Exception:
+            truncate_by_tokens = lambda t, n: t  # type: ignore
+        # query 也按预算截断（bge 每对 8192，query 1024 足够）
+        safe_query = str(query or "")
+        try:
+            if truncate_by_tokens is not None:
+                # 仅当 query 超限才截
+                from ..utils.token_utils import count_tokens
+
+                if count_tokens(safe_query) > self._rerank_max_tokens_per_doc:
+                    safe_query = truncate_by_tokens(safe_query, self._rerank_max_tokens_per_doc)
+        except Exception:
+            pass
+        truncated_count = 0
+        for item_id in ordered_ids:
+            text = str(doc_text_map.get(item_id, "") or "").strip()
+            if not text:
+                text = item_id
+            orig_text = text
+            try:
+                # 单段 token 截断
+                from ..utils.token_utils import count_tokens
+
+                if count_tokens(text) > self._rerank_max_tokens_per_doc:
+                    text = truncate_by_tokens(text, self._rerank_max_tokens_per_doc)
+                    if text != orig_text:
+                        truncated_count += 1
+            except Exception:
+                pass
+            passages.append({"id": item_id, "text": text})
+            documents.append(text)
+        return safe_query, ordered_ids, passages, documents, truncated_count
+
     async def rerank_candidates(
         self,
         query: str,
@@ -84,19 +148,23 @@ class HybridRetrievalEngine:
             return []
 
         try:
-            passages: List[Dict[str, str]] = []
-            documents: List[str] = []
-            for item_id in ordered_ids:
-                text = str(doc_text_map.get(item_id, "") or "").strip()
-                if not text:
-                    text = item_id
-                passages.append({"id": item_id, "text": text})
-                documents.append(text)
+            orig_docs = len(ordered_ids)
+            safe_query, ordered_ids, passages, documents, truncated_count = self._prepare_rerank_inputs(
+                query, ordered_ids, doc_text_map
+            )
+            if orig_docs > len(documents):
+                logger.debug(
+                    f"[混合检索] 重排候选截断 orig_docs={orig_docs} kept={len(documents)} max_docs={self._rerank_max_docs}"
+                )
+            if truncated_count:
+                logger.debug(
+                    f"[混合检索] 重排单段截断 count={truncated_count} max_tokens={self._rerank_max_tokens_per_doc}"
+                )
 
             rerank_method = self.rerank_provider.rerank
-            provider_id = str(getattr(self.rerank_provider, "provider_id", "") or getattr(self.rerank_provider, "id", "") or "unknown").strip() or "unknown"
+            provider_id = self._resolve_provider_id()
             start_ts = time.time()
-            rerank_resp = rerank_method(query=str(query or ""), documents=documents)
+            rerank_resp = rerank_method(query=safe_query, documents=documents)
             if inspect.isawaitable(rerank_resp):
                 try:
                     rerank_resp = await asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
@@ -104,7 +172,7 @@ class HybridRetrievalEngine:
                     elapsed_ms = int((time.time() - start_ts) * 1000)
                     logger.warning(
                         f"[混合检索] 重排超时，已降级为融合/ BM25 排序 "
-                        f"provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(str(query or ''))}"
+                        f"provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(safe_query)}"
                     )
                     return []
             elapsed_ms = int((time.time() - start_ts) * 1000)
@@ -158,8 +226,12 @@ class HybridRetrievalEngine:
             return scored
         except Exception as e:
             elapsed_ms = int((time.time() - start_ts) * 1000) if "start_ts" in locals() else -1
+            try:
+                provider_id = self._resolve_provider_id()
+            except Exception:
+                provider_id = "unknown"
             logger.warning(
-                f"[混合检索] 重排异常，已降级 provider=unknown elapsed={elapsed_ms}ms 异常={e}",
+                f"[混合检索] 重排异常，已降级 provider={provider_id} elapsed={elapsed_ms}ms 异常={e}",
                 exc_info=True,
             )
             return []

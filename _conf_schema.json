@@ -40,6 +40,18 @@
         "description": "向量请求超时时间（秒）",
         "default": 5,
         "hint": "单次向量请求的超时时间，超时后会重试或报错。范围 5-120 秒。"
+      },
+      "rerank_max_docs": {
+        "type": "int",
+        "description": "重排候选数量上限",
+        "default": 64,
+        "hint": "送入重排模型的候选数上限，超过按 BM25 顺序截断。bge-reranker-v2-m3 建议 ≤64，实测 90 段 1.1s 可过，243 段 2s 超时。"
+      },
+      "rerank_max_tokens_per_doc": {
+        "type": "int",
+        "description": "重排单段 token 上限",
+        "default": 1024,
+        "hint": "单段送入重排前的 token 截断预算，bge-reranker-v2-m3 硬上限 8192/对，推荐 1024，超限按 0.25/0.48 估算截断。"
       }
     }
   },

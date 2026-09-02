@@ -170,6 +170,8 @@ class NoteChunkSearchEngine:
         index_dir: str,
         rerank_provider: Optional[Any] = None,
         rerank_timeout: int | None = None,
+        rerank_max_docs: int | None = None,
+        rerank_max_tokens_per_doc: int | None = None,
     ):
         self._index_dir = Path(index_dir) / "tantivy_note_chunks"
         self._index_dir.mkdir(parents=True, exist_ok=True)
@@ -179,10 +181,23 @@ class NoteChunkSearchEngine:
         except Exception:
             _to = 5
         self._rerank_timeout = max(5, min(120, _to))
+        try:
+            _md = int(rerank_max_docs) if rerank_max_docs is not None else 64
+        except Exception:
+            _md = 64
+        self._rerank_max_docs = max(1, min(200, _md))
+        try:
+            _mt = int(rerank_max_tokens_per_doc) if rerank_max_tokens_per_doc is not None else 1024
+        except Exception:
+            _mt = 1024
+        self._rerank_max_tokens_per_doc = max(128, min(8192, _mt))
         self._lock = threading.RLock()
         self._schema = self._build_schema()
         self._index = tantivy.Index(self._schema, path=str(self._index_dir))
-        logger.info(f"笔记切片搜索引擎初始化完成: {self._index_dir} rerank_timeout={self._rerank_timeout}s")
+        logger.info(
+            f"笔记切片搜索引擎初始化完成: {self._index_dir} rerank_timeout={self._rerank_timeout}s "
+            f"rerank_max_docs={self._rerank_max_docs} rerank_max_tokens={self._rerank_max_tokens_per_doc}"
+        )
 
     @staticmethod
     def _build_schema():
@@ -201,6 +216,47 @@ class NoteChunkSearchEngine:
 
     def has_rerank(self) -> bool:
         return self._rerank_provider is not None and hasattr(self._rerank_provider, "rerank")
+
+    def _resolve_provider_id(self) -> str:
+        raw = str(getattr(self._rerank_provider, "provider_id", "") or getattr(self._rerank_provider, "id", "") or "").strip()
+        if raw:
+            return raw
+        try:
+            return type(self._rerank_provider).__name__ or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _prepare_rerank_candidates(self, query: str, candidates: List[Dict], limit: int):
+        """按 max_docs 与单段 token 预算裁剪候选，供 _apply_rerank 复用。"""
+        if not candidates:
+            return query, [], 0, 0
+        orig_len = len(candidates)
+        # docs 限流：保留 BM25 顺序前 N
+        if len(candidates) > self._rerank_max_docs:
+            candidates = candidates[: self._rerank_max_docs]
+        kept = len(candidates)
+        # query 截断
+        safe_query = str(query or "")
+        try:
+            from ..utils.token_utils import count_tokens, truncate_by_tokens
+
+            if count_tokens(safe_query) > self._rerank_max_tokens_per_doc:
+                safe_query = truncate_by_tokens(safe_query, self._rerank_max_tokens_per_doc)
+        except Exception:
+            pass
+        # 单段截断
+        truncated = 0
+        try:
+            from ..utils.token_utils import count_tokens, truncate_by_tokens
+
+            for c in candidates:
+                txt = str(c.get("content") or "")
+                if count_tokens(txt) > self._rerank_max_tokens_per_doc:
+                    c["content"] = truncate_by_tokens(txt, self._rerank_max_tokens_per_doc)
+                    truncated += 1
+        except Exception:
+            pass
+        return safe_query, candidates, orig_len, truncated
 
     # ============================================================
     # 索引写入
@@ -604,13 +660,19 @@ class NoteChunkSearchEngine:
         """调用 rerank_provider 对候选重排（同步路径，搜索超时走 rerank_timeout）"""
         if not candidates:
             return []
+        # 预算裁剪
+        safe_query, candidates, orig_len, truncated = self._prepare_rerank_candidates(query, list(candidates), limit)
+        if orig_len > len(candidates):
+            logger.debug(f"[笔记切片] 重排候选截断 orig={orig_len} kept={len(candidates)} max_docs={self._rerank_max_docs}")
+        if truncated:
+            logger.debug(f"[笔记切片] 重排单段截断 count={truncated} max_tokens={self._rerank_max_tokens_per_doc}")
 
         documents = [str(c.get("content") or "") for c in candidates]
-        provider_id = str(getattr(self._rerank_provider, "provider_id", "") or getattr(self._rerank_provider, "id", "") or "unknown").strip() or "unknown"
+        provider_id = self._resolve_provider_id()
         start_ts = time.time()
         try:
             rerank_method = self._rerank_provider.rerank
-            rerank_resp = rerank_method(query=query, documents=documents)
+            rerank_resp = rerank_method(query=safe_query, documents=documents)
             # 处理异步
             if inspect.isawaitable(rerank_resp):
                 try:
@@ -630,7 +692,7 @@ class NoteChunkSearchEngine:
                     except asyncio.TimeoutError:
                         elapsed_ms = int((time.time() - start_ts) * 1000)
                         logger.warning(
-                            f"[笔记切片] 重排超时，已降级为 BM25 排序 provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(query)}"
+                            f"[笔记切片] 重排超时，已降级为 BM25 排序 provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(safe_query)}"
                         )
                         return candidates[:limit]
 
@@ -652,20 +714,25 @@ class NoteChunkSearchEngine:
         """异步调用 rerank_provider 对候选重排（搜索超时走 rerank_timeout）。"""
         if not candidates:
             return []
+        safe_query, candidates, orig_len, truncated = self._prepare_rerank_candidates(query, list(candidates), limit)
+        if orig_len > len(candidates):
+            logger.debug(f"[笔记切片] 重排候选截断 orig={orig_len} kept={len(candidates)} max_docs={self._rerank_max_docs}")
+        if truncated:
+            logger.debug(f"[笔记切片] 重排单段截断 count={truncated} max_tokens={self._rerank_max_tokens_per_doc}")
 
         documents = [str(c.get("content") or "") for c in candidates]
-        provider_id = str(getattr(self._rerank_provider, "provider_id", "") or getattr(self._rerank_provider, "id", "") or "unknown").strip() or "unknown"
+        provider_id = self._resolve_provider_id()
         start_ts = time.time()
         try:
             rerank_method = self._rerank_provider.rerank
-            rerank_resp = rerank_method(query=query, documents=documents)
+            rerank_resp = rerank_method(query=safe_query, documents=documents)
             if inspect.isawaitable(rerank_resp):
                 try:
                     rerank_resp = await asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
                 except asyncio.TimeoutError:
                     elapsed_ms = int((time.time() - start_ts) * 1000)
                     logger.warning(
-                        f"[笔记切片] 重排超时，已降级为 BM25 排序 provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(query)}"
+                        f"[笔记切片] 重排超时，已降级为 BM25 排序 provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(safe_query)}"
                     )
                     return candidates[:limit]
 
