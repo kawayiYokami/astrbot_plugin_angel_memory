@@ -115,6 +115,7 @@
 | `provider_id` | "" | 记忆整理LLM提供商ID（建议有思考能力的模型） |
 | `retrieval.embedding_provider_id` | "" | 嵌入模型提供商ID（可选，实测提升有限） |
 | `retrieval.rerank_provider_id` | "" | 重排提供商ID（推荐，效果提升明显） |
+| `retrieval.rerank_fallback_provider_ids` | `[]` | 主重排失败时依序尝试的备用 Provider；支持熔断与本地负载限制 |
 | `conversation_scope_map` | "{}" | 记忆分类映射（先按人格名匹配，再按会话ID匹配，未命中为public） |
 | `memory_behavior.min_message_length` | 5 | 触发记忆处理的最小消息长度 |
 | `memory_behavior.sleep_interval` | 3600 | 记忆巩固间隔（秒） |
