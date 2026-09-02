@@ -2,6 +2,11 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.6.7] - 2026-09-02
+
+### Features
+- `feat(webui)`: 功能调试卡重排探针同步重排预算（`rerank_max_docs` / `rerank_max_tokens_per_doc` 单次覆盖，默认 64 / 1024，兼容全局配置），`POST /debug/rerank` 按 `token_utils(0.25/0.48)` 执行 `docs` 限流与单段 `1024` 截断并回透 `original_docs/kept_docs/doc_truncated/query_truncated`，与主链路 `Hybrid/NoteChunkSearch` 保持一致；前端 `DebugView.vue` 新增两输入并展示截断统计，产物重建至 `pages/memory-dashboard/assets/index-C842LgMg.js`。
+
 ## [1.6.6] - 2026-09-02
 
 ### Features

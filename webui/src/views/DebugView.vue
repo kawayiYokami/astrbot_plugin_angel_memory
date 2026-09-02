@@ -74,21 +74,34 @@
           :rows="5"
           placeholder="documents，每行一条，例如：&#10;记忆系统会记住你的偏好&#10;笔记系统会整理你的知识&#10;向量检索负责召回"
         />
-        <n-space align="center">
-          <n-input-number v-model:value="rerankTimeout" :min="5" :max="120" style="width: 150px">
+        <n-space align="center" :wrap="true">
+          <n-input-number v-model:value="rerankTimeout" :min="5" :max="120" style="width: 140px">
             <template #prefix>超时</template>
+          </n-input-number>
+          <n-input-number v-model:value="rerankMaxDocs" :min="1" :max="200" style="width: 150px">
+            <template #prefix>候选上限</template>
+          </n-input-number>
+          <n-input-number v-model:value="rerankMaxTokens" :min="128" :max="8192" :step="128" style="width: 170px">
+            <template #prefix>单段Token</template>
           </n-input-number>
           <n-button type="primary" :loading="rerankLoading" :disabled="!rerankQuery.trim() || !rerankDocsText.trim()" @click="doRerankProbe">测试重排</n-button>
           <span v-if="rerankHasProvider === false" class="muted">未配置重排提供商，将走 BM25 降级</span>
         </n-space>
+        <n-alert v-if="rerankMaxDocs !== null && rerankMaxTokens !== null" type="default" :bordered="false" style="font-size: 12px; opacity: 0.7">
+          仅本次生效，不改全局配置。默认 64 / 1024，bge-reranker-v2-m3 单对硬上限 8192
+        </n-alert>
         <n-space v-if="rerankResult" vertical :size="8">
           <n-alert v-if="rerankResult.timed_out" type="warning" :bordered="false">重排超时（>{{ rerankResult.timeout }}s），已降级</n-alert>
           <n-alert v-if="rerankResult.error && !rerankResult.timed_out" :type="rerankResult.has_rerank ? 'error' : 'warning'" :bordered="false">{{ rerankResult.error }}</n-alert>
           <template v-if="rerankResult.scores?.length">
-            <n-space size="small">
+            <n-space size="small" :wrap="true">
               <n-tag size="small" :bordered="false">耗时 {{ rerankResult.elapsed_ms }}ms</n-tag>
               <n-tag size="small" :bordered="false">返回 {{ rerankResult.scores.length }} 条</n-tag>
               <n-tag v-if="rerankResult.provider_id" size="small" :bordered="false">{{ rerankResult.provider_id }}</n-tag>
+              <n-tag v-if="rerankResult.original_docs !== undefined" size="small" :bordered="false">候选 {{ rerankResult.original_docs }}→{{ rerankResult.kept_docs }}/{{ rerankResult.rerank_max_docs }}</n-tag>
+              <n-tag v-if="rerankResult.rerank_max_tokens_per_doc" size="small" :bordered="false">Token {{ rerankResult.rerank_max_tokens_per_doc }}</n-tag>
+              <n-tag v-if="rerankResult.doc_truncated" type="warning" size="small" :bordered="false">截断 {{ rerankResult.doc_truncated }} 段</n-tag>
+              <n-tag v-if="rerankResult.query_truncated" type="warning" size="small" :bordered="false">query已截断</n-tag>
             </n-space>
             <n-data-table
               :columns="rerankColumns"
@@ -198,6 +211,8 @@ async function doEmbedProbe() {
 const rerankQuery = ref('')
 const rerankDocsText = ref('')
 const rerankTimeout = ref<number | null>(5)
+const rerankMaxDocs = ref<number | null>(64)
+const rerankMaxTokens = ref<number | null>(1024)
 const rerankLoading = ref(false)
 const rerankResult = ref<any>(null)
 const rerankHasProvider = ref<boolean | null>(null)
@@ -221,6 +236,8 @@ async function doRerankProbe() {
       query: rerankQuery.value.trim(),
       documents,
       timeout: rerankTimeout.value ?? 5,
+      rerank_max_docs: rerankMaxDocs.value ?? 64,
+      rerank_max_tokens_per_doc: rerankMaxTokens.value ?? 1024,
     })
     rerankResult.value = data
     rerankHasProvider.value = data.has_rerank ?? null

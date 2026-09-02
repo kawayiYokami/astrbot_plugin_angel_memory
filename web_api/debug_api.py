@@ -108,6 +108,22 @@ class DebugAPI:
         return max(1, v)
 
     @staticmethod
+    def _clamp_rerank_docs(raw: Any, default: int = 64) -> int:
+        try:
+            v = int(raw) if raw is not None else default
+        except Exception:
+            return default
+        return max(1, min(200, v))
+
+    @staticmethod
+    def _clamp_rerank_tokens(raw: Any, default: int = 1024) -> int:
+        try:
+            v = int(raw) if raw is not None else default
+        except Exception:
+            return default
+        return max(128, min(8192, v))
+
+    @staticmethod
     def _extract_rerank_items(resp: Any) -> List[Dict[str, Any]]:
         if resp is None:
             return []
@@ -347,6 +363,58 @@ class DebugAPI:
             return jsonify({"error": f"documents 过多（{len(documents)} 行），上限 100 行"}), 400
 
         timeout = self._clamp_timeout(data.get("timeout"), 5)
+        # 预算：默认走全局配置，仅本次覆盖
+        try:
+            _default_docs = self.plugin_context.get_rerank_max_docs()
+        except Exception:
+            _default_docs = 64
+        try:
+            _default_tokens = self.plugin_context.get_rerank_max_tokens_per_doc()
+        except Exception:
+            _default_tokens = 1024
+        # 兼容前端两种命名
+        _raw_docs = data.get("rerank_max_docs")
+        if _raw_docs is None:
+            _raw_docs = data.get("max_docs", data.get("rerank_docs"))
+        _raw_tokens = data.get("rerank_max_tokens_per_doc")
+        if _raw_tokens is None:
+            _raw_tokens = data.get("max_tokens_per_doc", data.get("rerank_tokens", data.get("max_tokens")))
+        rerank_max_docs = self._clamp_rerank_docs(_raw_docs, _default_docs)
+        rerank_max_tokens = self._clamp_rerank_tokens(_raw_tokens, _default_tokens)
+
+        # 记录原始长度
+        _orig_docs_len = len(documents)
+        _orig_query = query
+        # docs 限流
+        if len(documents) > rerank_max_docs:
+            documents = documents[:rerank_max_docs]
+        kept_docs_len = len(documents)
+        # token 预算：按 0.25/0.48 截断
+        query_truncated = False
+        doc_truncated = 0
+        try:
+            from ..llm_memory.utils.token_utils import count_tokens, truncate_by_tokens
+
+            if count_tokens(query) > rerank_max_tokens:
+                query = truncate_by_tokens(query, rerank_max_tokens)
+                query_truncated = True
+            new_docs: List[str] = []
+            for d in documents:
+                if count_tokens(d) > rerank_max_tokens:
+                    d = truncate_by_tokens(d, rerank_max_tokens)
+                    doc_truncated += 1
+                new_docs.append(d)
+            documents = new_docs
+        except Exception:
+            pass
+        if _orig_docs_len != kept_docs_len:
+            logger.debug(
+                f"[WebUI-探针] 重排候选截断 orig={_orig_docs_len} kept={kept_docs_len} max_docs={rerank_max_docs}"
+            )
+        if query_truncated or doc_truncated:
+            logger.debug(
+                f"[WebUI-探针] 重排 token 截断 query_truncated={query_truncated} doc_truncated={doc_truncated} max_tokens={rerank_max_tokens}"
+            )
 
         provider = self._get_rerank_provider()
         if provider is None or not hasattr(provider, "rerank"):
@@ -399,6 +467,12 @@ class DebugAPI:
                     "timed_out": True,
                     "error": f"重排超时（>{timeout}s），已降级",
                     "scores": [],
+                    "rerank_max_docs": rerank_max_docs,
+                    "rerank_max_tokens_per_doc": rerank_max_tokens,
+                    "original_docs": _orig_docs_len,
+                    "kept_docs": kept_docs_len,
+                    "query_truncated": query_truncated,
+                    "doc_truncated": doc_truncated,
                 }
             )
 
@@ -413,6 +487,12 @@ class DebugAPI:
                     "timed_out": False,
                     "error": error,
                     "scores": [],
+                    "rerank_max_docs": rerank_max_docs,
+                    "rerank_max_tokens_per_doc": rerank_max_tokens,
+                    "original_docs": _orig_docs_len,
+                    "kept_docs": kept_docs_len,
+                    "query_truncated": query_truncated,
+                    "doc_truncated": doc_truncated,
                 }
             )
 
@@ -459,5 +539,11 @@ class DebugAPI:
                 "timed_out": False,
                 "scores": scores,
                 "raw_item_count": len(items),
+                "rerank_max_docs": rerank_max_docs,
+                "rerank_max_tokens_per_doc": rerank_max_tokens,
+                "original_docs": _orig_docs_len,
+                "kept_docs": kept_docs_len,
+                "query_truncated": query_truncated,
+                "doc_truncated": doc_truncated,
             }
         )
