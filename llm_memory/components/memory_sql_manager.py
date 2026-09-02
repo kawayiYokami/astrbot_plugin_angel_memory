@@ -35,6 +35,7 @@ class MemorySqlManager:
         db_path: Path,
         decay_config: Optional[MemoryDecayConfig] = None,
         rerank_provider: Optional[Any] = None,
+        rerank_timeout: int | None = None,
     ):
         self.logger = logger
         self.db_path = Path(db_path)
@@ -45,6 +46,11 @@ class MemorySqlManager:
         self._fts_rebuild_required = False
         self.decay_policy = MemoryDecayPolicy(decay_config)
         self._rerank_provider = rerank_provider
+        try:
+            _to = int(rerank_timeout) if rerank_timeout is not None else 5
+        except Exception:
+            _to = 5
+        self._rerank_timeout = max(5, min(120, _to))
         self._fts_retriever = TantivyBM25Retriever(
             db_path=str(self.db_path),
             memory_threshold=0.5,
@@ -53,6 +59,7 @@ class MemorySqlManager:
         self._hybrid_engine = HybridRetrievalEngine(
             retriever=self._fts_retriever,
             rerank_provider=self._rerank_provider,
+            rerank_timeout=self._rerank_timeout,
         )
         self._fts_ready = False
 

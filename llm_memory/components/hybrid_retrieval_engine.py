@@ -1,15 +1,33 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any, Callable, Dict, List, Optional
+
+try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+
+    logger = logging.getLogger(__name__)
 
 
 class HybridRetrievalEngine:
     """统一混合检索策略引擎（按能力分档）。"""
 
-    def __init__(self, retriever: Any, rerank_provider: Optional[Any] = None):
+    def __init__(
+        self,
+        retriever: Any,
+        rerank_provider: Optional[Any] = None,
+        rerank_timeout: int | None = None,
+    ):
         self.retriever = retriever
         self.rerank_provider = rerank_provider
+        try:
+            _to = int(rerank_timeout) if rerank_timeout is not None else 5
+        except Exception:
+            _to = 5
+        self._rerank_timeout = max(5, min(120, _to))
 
     def has_rerank(self) -> bool:
         return self.rerank_provider is not None and hasattr(self.rerank_provider, "rerank")
@@ -77,7 +95,11 @@ class HybridRetrievalEngine:
             rerank_method = self.rerank_provider.rerank
             rerank_resp = rerank_method(query=str(query or ""), documents=documents)
             if inspect.isawaitable(rerank_resp):
-                rerank_resp = await rerank_resp
+                try:
+                    rerank_resp = await asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(f"[混合检索] 重排超时，已降级为融合/ BM25 排序 timeout={self._rerank_timeout}s")
+                    return []
             items = self._extract_rerank_results(rerank_resp)
             if not items:
                 return []

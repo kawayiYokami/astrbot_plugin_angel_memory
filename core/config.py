@@ -174,6 +174,25 @@ class MemoryConfig:
             or ""
         )
 
+        # 向量请求参数（retrieval 下，兼容顶层旧字段）
+        if "embedding_batch_size" in retrieval:
+            _raw_batch = retrieval.get("embedding_batch_size")
+        else:
+            _raw_batch = config_get("embedding_batch_size", 50)
+        self._embedding_batch_size = ConfigValidator.validate_positive_int(
+            _raw_batch,
+            "retrieval.embedding_batch_size",
+        )
+        if "embedding_timeout" in retrieval:
+            _raw_timeout = retrieval.get("embedding_timeout")
+        else:
+            _raw_timeout = config_get("embedding_timeout", 5)
+        self._embedding_timeout = ConfigValidator.validate_positive_int(
+            _raw_timeout,
+            "retrieval.embedding_timeout",
+            max_value=120,
+        )
+
         # 笔记 Top-K 配置（候选固定为注入的 7 倍）
         note_assistant = config_get("note_assistant", {})
         if not isinstance(note_assistant, dict):
@@ -345,6 +364,16 @@ class MemoryConfig:
         return self._rerank_provider_id
 
     @property
+    def embedding_batch_size(self) -> int:
+        """获取向量请求批次大小"""
+        return self._embedding_batch_size
+
+    @property
+    def embedding_timeout(self) -> int:
+        """获取向量请求超时时间（秒）"""
+        return self._embedding_timeout
+
+    @property
     def note_candidate_top_k(self) -> int:
         """获取候选笔记数量上限"""
         return self._note_candidate_top_k
@@ -427,6 +456,8 @@ class MemoryConfig:
             "data_directory": self.data_directory,
             "provider_id": self.provider_id,
             "rerank_provider_id": self.rerank_provider_id,
+            "embedding_batch_size": self.embedding_batch_size,
+            "embedding_timeout": self.embedding_timeout,
             "note_top_k": self.note_top_k,
             "note_candidate_top_k": self.note_candidate_top_k,
             "note_inject_top_k": self.note_inject_top_k,

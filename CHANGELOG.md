@@ -2,6 +2,12 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.6.3] - 2026-09-02
+
+### Features
+- `feat(retrieval)`: 新增向量请求批次大小 `retrieval.embedding_batch_size`（默认 50，仅下限 1，不设上限）与超时 `retrieval.embedding_timeout`（默认 5s，范围 5-120s，仅用于搜索/重排）；写入链路批量向量化默认 60s（`APIEmbeddingProvider` 固定，不走该配置），支持 `AsyncOpenAI` 重建与 `wait_for` 双层超时分流；批次超限触发 413 时自动减半重试。
+- `fix(retrieval)`: 搜索链路（`FaissTextIndex` / `SqliteTextIndex` / `FaissVectorStore` / `SqliteVectorStore`）查询与重排超时由硬编码 3s 提升为可配置，默认 5s，由 `retrieval.embedding_timeout` 驱动（`ComponentFactory` 注入，经 `search_timeout`/`rerank_timeout` 分发），超时自动降级为融合/BM25 排序。
+
 ## [1.5.1] - 2026-08-07
 
 ### Fixed
