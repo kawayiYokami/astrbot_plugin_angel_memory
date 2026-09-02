@@ -2,6 +2,12 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.6.5] - 2026-09-02
+
+### Fixed
+- `fix(retrieval)`: 重排日志补全详细上下文（`provider`/`timeout`/`elapsed`/`docs`/`query_len`）与异常堆栈，区分超时与业务异常，便于定位“永远超时/不够 5 秒”问题。
+- `fix(retrieval)`: `HybridRetrievalEngine` 与 `NoteChunkSearchEngine` 同步/异步两条重排路径均记录耗时与降级原因。
+
 ## [1.6.4] - 2026-09-02
 
 ### Features
