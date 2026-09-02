@@ -23,6 +23,50 @@
         "default": "",
         "hint": "推荐使用，检索效果提升明显；不依赖嵌入模型，BM25 候选也可以直接重排。留空则自动尝试复用 provider_id，若不可用则降级为非重排策略。"
       },
+      "rerank_fallback_provider_ids": {
+        "type": "list",
+        "description": "检索重排备用提供商ID",
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "hint": "主重排服务失败或返回空结果时按顺序回退；不会改变主检索模型。"
+      },
+      "rerank_primary_timeout": {
+        "type": "float",
+        "description": "OpenAI 兼容重排端点超时（秒）",
+        "default": 8.0,
+        "hint": "仅用于把现有 OpenAI 兼容 Provider 适配到 /rerank 的请求，范围 2-60 秒。"
+      },
+      "rerank_failure_threshold": {
+        "type": "int",
+        "description": "重排熔断失败次数",
+        "default": 3,
+        "hint": "同一主重排连续失败达到此次数后，在冷却期内暂时跳过。"
+      },
+      "rerank_cooldown_seconds": {
+        "type": "float",
+        "description": "重排熔断冷却时间（秒）",
+        "default": 60.0
+      },
+      "rerank_fallback_max_documents": {
+        "type": "int",
+        "description": "备用重排最大候选数",
+        "default": 0,
+        "hint": "仅限制第二个及后续备用重排服务；0 表示继续沿用全局 rerank_max_docs。小显存本地服务可设为 24。"
+      },
+      "rerank_fallback_max_document_chars": {
+        "type": "int",
+        "description": "备用重排单篇最大字符数",
+        "default": 0,
+        "hint": "仅限制第二个及后续备用重排服务；超长片段会保留开头和结尾，0 表示不额外限制。"
+      },
+      "rerank_fallback_retry_document_chars": {
+        "type": "int",
+        "description": "备用重排溢出重试字符数",
+        "default": 0,
+        "hint": "备用服务因物理批次不足返回 500 时，缩短单篇内容并自动重试一次；0 表示不重试。"
+      },
       "enable_local_embedding": {
         "type": "bool",
         "description": "启用本地嵌入模型支持",
