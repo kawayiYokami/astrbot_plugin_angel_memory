@@ -17,6 +17,7 @@ import asyncio
 import inspect
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -605,6 +606,8 @@ class NoteChunkSearchEngine:
             return []
 
         documents = [str(c.get("content") or "") for c in candidates]
+        provider_id = str(getattr(self._rerank_provider, "provider_id", "") or getattr(self._rerank_provider, "id", "") or "unknown").strip() or "unknown"
+        start_ts = time.time()
         try:
             rerank_method = self._rerank_provider.rerank
             rerank_resp = rerank_method(query=query, documents=documents)
@@ -615,6 +618,9 @@ class NoteChunkSearchEngine:
                     del loop
                     if hasattr(rerank_resp, "close"):
                         rerank_resp.close()
+                    logger.debug(
+                        f"[笔记切片] 同步路径存在运行中事件循环，已跳过异步重排 provider={provider_id} docs={len(documents)}"
+                    )
                     return candidates[:limit]
                 except RuntimeError:
                     try:
@@ -622,15 +628,22 @@ class NoteChunkSearchEngine:
                             asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
                         )
                     except asyncio.TimeoutError:
-                        logger.warning(f"[笔记切片] 重排超时，已降级为 BM25 排序 timeout={self._rerank_timeout}s")
+                        elapsed_ms = int((time.time() - start_ts) * 1000)
+                        logger.warning(
+                            f"[笔记切片] 重排超时，已降级为 BM25 排序 provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(query)}"
+                        )
                         return candidates[:limit]
 
+            elapsed_ms = int((time.time() - start_ts) * 1000)
             scored = self._extract_rerank_scores(rerank_resp, candidates)
             if scored:
                 scored.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+                logger.debug(f"[笔记切片] 重排完成 provider={provider_id} elapsed={elapsed_ms}ms docs={len(documents)} scored={len(scored)}")
                 return scored[:limit]
+            logger.debug(f"[笔记切片] 重排无有效结果 provider={provider_id} elapsed={elapsed_ms}ms docs={len(documents)}")
         except Exception as e:
-            logger.warning(f"笔记切片重排失败，降级为 BM25 排序: {e}")
+            elapsed_ms = int((time.time() - start_ts) * 1000) if "start_ts" in locals() else -1
+            logger.warning(f"[笔记切片] 重排失败，已降级 provider={provider_id} elapsed={elapsed_ms}ms 异常={e}", exc_info=True)
 
         # 降级：按原始 BM25 分数排序
         return candidates[:limit]
@@ -641,6 +654,8 @@ class NoteChunkSearchEngine:
             return []
 
         documents = [str(c.get("content") or "") for c in candidates]
+        provider_id = str(getattr(self._rerank_provider, "provider_id", "") or getattr(self._rerank_provider, "id", "") or "unknown").strip() or "unknown"
+        start_ts = time.time()
         try:
             rerank_method = self._rerank_provider.rerank
             rerank_resp = rerank_method(query=query, documents=documents)
@@ -648,15 +663,22 @@ class NoteChunkSearchEngine:
                 try:
                     rerank_resp = await asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
                 except asyncio.TimeoutError:
-                    logger.warning(f"[笔记切片] 重排超时，已降级为 BM25 排序 timeout={self._rerank_timeout}s")
+                    elapsed_ms = int((time.time() - start_ts) * 1000)
+                    logger.warning(
+                        f"[笔记切片] 重排超时，已降级为 BM25 排序 provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(query)}"
+                    )
                     return candidates[:limit]
 
+            elapsed_ms = int((time.time() - start_ts) * 1000)
             scored = self._extract_rerank_scores(rerank_resp, candidates)
             if scored:
                 scored.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+                logger.debug(f"[笔记切片] 重排完成 provider={provider_id} elapsed={elapsed_ms}ms docs={len(documents)} scored={len(scored)}")
                 return scored[:limit]
+            logger.debug(f"[笔记切片] 重排无有效结果 provider={provider_id} elapsed={elapsed_ms}ms docs={len(documents)}")
         except Exception as e:
-            logger.warning(f"笔记切片重排失败，降级为 BM25 排序: {e}")
+            elapsed_ms = int((time.time() - start_ts) * 1000) if "start_ts" in locals() else -1
+            logger.warning(f"[笔记切片] 重排失败，已降级 provider={provider_id} elapsed={elapsed_ms}ms 异常={e}", exc_info=True)
 
         return candidates[:limit]
 

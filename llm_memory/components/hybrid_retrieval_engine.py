@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 try:
@@ -93,13 +94,22 @@ class HybridRetrievalEngine:
                 documents.append(text)
 
             rerank_method = self.rerank_provider.rerank
+            provider_id = str(getattr(self.rerank_provider, "provider_id", "") or getattr(self.rerank_provider, "id", "") or "unknown").strip() or "unknown"
+            start_ts = time.time()
             rerank_resp = rerank_method(query=str(query or ""), documents=documents)
             if inspect.isawaitable(rerank_resp):
                 try:
                     rerank_resp = await asyncio.wait_for(rerank_resp, timeout=self._rerank_timeout)
                 except asyncio.TimeoutError:
-                    logger.warning(f"[混合检索] 重排超时，已降级为融合/ BM25 排序 timeout={self._rerank_timeout}s")
+                    elapsed_ms = int((time.time() - start_ts) * 1000)
+                    logger.warning(
+                        f"[混合检索] 重排超时，已降级为融合/ BM25 排序 "
+                        f"provider={provider_id} timeout={self._rerank_timeout}s elapsed={elapsed_ms}ms docs={len(documents)} query_len={len(str(query or ''))}"
+                    )
                     return []
+            elapsed_ms = int((time.time() - start_ts) * 1000)
+            if elapsed_ms > self._rerank_timeout * 1000:
+                logger.debug(f"[混合检索] 重排同步耗时偏长 provider={provider_id} elapsed={elapsed_ms}ms timeout={self._rerank_timeout}s")
             items = self._extract_rerank_results(rerank_resp)
             if not items:
                 return []
@@ -128,6 +138,9 @@ class HybridRetrievalEngine:
                     }
                 )
             if not scored:
+                logger.debug(
+                    f"[混合检索] 重排无有效结果 provider={provider_id} elapsed={elapsed_ms}ms docs={len(documents)} raw_items={len(items)}"
+                )
                 return []
 
             max_score = max(float(x["rerank_score"]) for x in scored)
@@ -141,8 +154,14 @@ class HybridRetrievalEngine:
                 key=lambda x: (float(x.get("final_score", 0.0)), -int(x.get("rank_index", 0))),
                 reverse=True,
             )
+            logger.debug(f"[混合检索] 重排完成 provider={provider_id} elapsed={elapsed_ms}ms docs={len(documents)} scored={len(scored)}")
             return scored
-        except Exception:
+        except Exception as e:
+            elapsed_ms = int((time.time() - start_ts) * 1000) if "start_ts" in locals() else -1
+            logger.warning(
+                f"[混合检索] 重排异常，已降级 provider=unknown elapsed={elapsed_ms}ms 异常={e}",
+                exc_info=True,
+            )
             return []
 
     @staticmethod
