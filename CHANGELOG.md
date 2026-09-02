@@ -2,6 +2,13 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.6.6] - 2026-09-02
+
+### Features
+- `feat(retrieval)`: 新增重排预算 `retrieval.rerank_max_docs` 默认 64（1-200）与 `retrieval.rerank_max_tokens_per_doc` 默认 1024（128-8192），在 `HybridRetrievalEngine` 与 `NoteChunkSearchEngine` 重排入口按 BM25 顺序截断候选并按 `token_utils` 单段截断（bge-reranker-v2-m3 硬上限 8192/对，推荐 1024），解决 `docs=243` 2s 超时问题。
+- `fix(token)`: `llm_memory/utils/token_utils.py` 轻量估算系数由 `0.3/0.6` 校准为 `0.25/0.48`（对齐 deepseek-harness `CHARS_PER_TOKEN=4` 与 README 实测 2946 token），`count_tokens` 误差由 +27% 收敛至 +3.6% 偏保守。
+- `fix(retrieval)`: 重排 `provider=unknown` 改为类名兜底透出，`query_len` 按截断后统计，`docs` 截断与单段截断均有 DEBUG 日志。
+
 ## [1.6.5] - 2026-09-02
 
 ### Fixed

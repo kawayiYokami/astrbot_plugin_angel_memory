@@ -88,10 +88,20 @@ class ComponentFactory:
                 _search_timeout = max(5, min(120, int(_search_timeout)))
             except Exception:
                 _search_timeout = 5
+            try:
+                _rerank_max_docs = self.plugin_context.get_rerank_max_docs()
+            except Exception:
+                _rerank_max_docs = 64
+            try:
+                _rerank_max_tokens = self.plugin_context.get_rerank_max_tokens_per_doc()
+            except Exception:
+                _rerank_max_tokens = 1024
             memory_sql_manager = self._create_memory_sql_manager(
                 decay_config,
                 rerank_provider=rerank_provider,
                 rerank_timeout=_search_timeout,
+                rerank_max_docs=_rerank_max_docs,
+                rerank_max_tokens_per_doc=_rerank_max_tokens,
             )
             self._components["memory_sql_manager"] = memory_sql_manager
 
@@ -99,7 +109,12 @@ class ComponentFactory:
             note_chunk_store = self._create_note_chunk_store()
             self._components["note_chunk_store"] = note_chunk_store
 
-            note_chunk_search = self._create_note_chunk_search(rerank_provider, rerank_timeout=_search_timeout)
+            note_chunk_search = self._create_note_chunk_search(
+                rerank_provider,
+                rerank_timeout=_search_timeout,
+                rerank_max_docs=_rerank_max_docs,
+                rerank_max_tokens_per_doc=_rerank_max_tokens,
+            )
             self._components["note_chunk_search"] = note_chunk_search
 
             embedding_provider_id = self.plugin_context.get_embedding_provider_id()
@@ -474,6 +489,8 @@ class ComponentFactory:
         decay_config: Optional[MemoryDecayConfig] = None,
         rerank_provider: Optional[Any] = None,
         rerank_timeout: int | None = None,
+        rerank_max_docs: int | None = None,
+        rerank_max_tokens_per_doc: int | None = None,
     ) -> MemorySqlManager:
         """创建 SQL 记忆管理器（两种运行时共用）。"""
         simple_db_path = self.plugin_context.get_simple_memory_db_path()
@@ -482,11 +499,23 @@ class ComponentFactory:
                 rerank_timeout = self.plugin_context.get_embedding_timeout()
             except Exception:
                 rerank_timeout = 5
+        if rerank_max_docs is None:
+            try:
+                rerank_max_docs = self.plugin_context.get_rerank_max_docs()
+            except Exception:
+                rerank_max_docs = 64
+        if rerank_max_tokens_per_doc is None:
+            try:
+                rerank_max_tokens_per_doc = self.plugin_context.get_rerank_max_tokens_per_doc()
+            except Exception:
+                rerank_max_tokens_per_doc = 1024
         manager = MemorySqlManager(
             simple_db_path,
             decay_config=decay_config,
             rerank_provider=rerank_provider,
             rerank_timeout=rerank_timeout,
+            rerank_max_docs=rerank_max_docs,
+            rerank_max_tokens_per_doc=rerank_max_tokens_per_doc,
         )
         self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
         return manager
@@ -503,7 +532,11 @@ class ComponentFactory:
             return None
 
     def _create_note_chunk_search(
-        self, rerank_provider=None, rerank_timeout: int | None = None
+        self,
+        rerank_provider=None,
+        rerank_timeout: int | None = None,
+        rerank_max_docs: int | None = None,
+        rerank_max_tokens_per_doc: int | None = None,
     ) -> Optional[NoteChunkSearchEngine]:
         """创建笔记切片搜索引擎"""
         try:
@@ -513,10 +546,22 @@ class ComponentFactory:
                     rerank_timeout = self.plugin_context.get_embedding_timeout()
                 except Exception:
                     rerank_timeout = 5
+            if rerank_max_docs is None:
+                try:
+                    rerank_max_docs = self.plugin_context.get_rerank_max_docs()
+                except Exception:
+                    rerank_max_docs = 64
+            if rerank_max_tokens_per_doc is None:
+                try:
+                    rerank_max_tokens_per_doc = self.plugin_context.get_rerank_max_tokens_per_doc()
+                except Exception:
+                    rerank_max_tokens_per_doc = 1024
             engine = NoteChunkSearchEngine(
                 index_dir=index_dir,
                 rerank_provider=rerank_provider,
                 rerank_timeout=rerank_timeout,
+                rerank_max_docs=rerank_max_docs,
+                rerank_max_tokens_per_doc=rerank_max_tokens_per_doc,
             )
             self.logger.info("✅ 笔记切片搜索引擎创建完成")
             return engine

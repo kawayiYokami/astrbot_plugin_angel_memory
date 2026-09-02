@@ -192,6 +192,24 @@ class MemoryConfig:
             "retrieval.embedding_timeout",
             max_value=120,
         )
+        if "rerank_max_docs" in retrieval:
+            _raw_rerank_docs = retrieval.get("rerank_max_docs")
+        else:
+            _raw_rerank_docs = config_get("rerank_max_docs", 64)
+        self._rerank_max_docs = ConfigValidator.validate_positive_int(
+            _raw_rerank_docs,
+            "retrieval.rerank_max_docs",
+            max_value=200,
+        )
+        if "rerank_max_tokens_per_doc" in retrieval:
+            _raw_rerank_tokens = retrieval.get("rerank_max_tokens_per_doc")
+        else:
+            _raw_rerank_tokens = config_get("rerank_max_tokens_per_doc", 1024)
+        self._rerank_max_tokens_per_doc = ConfigValidator.validate_positive_int(
+            _raw_rerank_tokens,
+            "retrieval.rerank_max_tokens_per_doc",
+            max_value=8192,
+        )
 
         # 笔记 Top-K 配置（候选固定为注入的 7 倍）
         note_assistant = config_get("note_assistant", {})
@@ -374,6 +392,16 @@ class MemoryConfig:
         return self._embedding_timeout
 
     @property
+    def rerank_max_docs(self) -> int:
+        """获取重排候选数量上限"""
+        return self._rerank_max_docs
+
+    @property
+    def rerank_max_tokens_per_doc(self) -> int:
+        """获取重排单段 token 上限"""
+        return self._rerank_max_tokens_per_doc
+
+    @property
     def note_candidate_top_k(self) -> int:
         """获取候选笔记数量上限"""
         return self._note_candidate_top_k
@@ -458,6 +486,8 @@ class MemoryConfig:
             "rerank_provider_id": self.rerank_provider_id,
             "embedding_batch_size": self.embedding_batch_size,
             "embedding_timeout": self.embedding_timeout,
+            "rerank_max_docs": self.rerank_max_docs,
+            "rerank_max_tokens_per_doc": self.rerank_max_tokens_per_doc,
             "note_top_k": self.note_top_k,
             "note_candidate_top_k": self.note_candidate_top_k,
             "note_inject_top_k": self.note_inject_top_k,

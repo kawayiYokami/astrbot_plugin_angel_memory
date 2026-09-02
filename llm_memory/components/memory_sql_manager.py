@@ -36,6 +36,8 @@ class MemorySqlManager:
         decay_config: Optional[MemoryDecayConfig] = None,
         rerank_provider: Optional[Any] = None,
         rerank_timeout: int | None = None,
+        rerank_max_docs: int | None = None,
+        rerank_max_tokens_per_doc: int | None = None,
     ):
         self.logger = logger
         self.db_path = Path(db_path)
@@ -51,6 +53,16 @@ class MemorySqlManager:
         except Exception:
             _to = 5
         self._rerank_timeout = max(5, min(120, _to))
+        try:
+            _md = int(rerank_max_docs) if rerank_max_docs is not None else 64
+        except Exception:
+            _md = 64
+        self._rerank_max_docs = max(1, min(200, _md))
+        try:
+            _mt = int(rerank_max_tokens_per_doc) if rerank_max_tokens_per_doc is not None else 1024
+        except Exception:
+            _mt = 1024
+        self._rerank_max_tokens_per_doc = max(128, min(8192, _mt))
         self._fts_retriever = TantivyBM25Retriever(
             db_path=str(self.db_path),
             memory_threshold=0.5,
@@ -60,6 +72,8 @@ class MemorySqlManager:
             retriever=self._fts_retriever,
             rerank_provider=self._rerank_provider,
             rerank_timeout=self._rerank_timeout,
+            rerank_max_docs=self._rerank_max_docs,
+            rerank_max_tokens_per_doc=self._rerank_max_tokens_per_doc,
         )
         self._fts_ready = False
 
