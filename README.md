@@ -61,6 +61,18 @@
 - **主动学习优先**：通过笔记工具主动整理与归档知识，而非被动RAG注入
 - **短条目优化**：推荐100字以内的结构化条目，避免长文档污染上下文
 
+## 🌟 天使五件套
+
+同一只粉毛天使的五个能力化身，合在一起就是一个完整的灵魂：
+
+| 插件 | 能力 |
+|------|------|
+| [天使之心](https://github.com/kawayiYokami/astrbot_plugin_angel_heart) | 智能群聊/私聊交互，懂分寸、知进退 |
+| [天使之眼](https://github.com/kawayiYokami/astrbot_plugin_angel_eye) | 聊天记录查询，随时翻旧账 |
+| [天使之笑](https://github.com/kawayiYokami/astrbot_plugin_angel_smile) | 表情包管理，看见好看的就想收进库存 |
+| [天使之魂](https://github.com/kawayiYokami/astrbot_plugin_angel_memory) | AI 记忆与认知，越用越懂你 |
+| [天使的画笔](https://github.com/kawayiYokami/astrbot_plugin_angel_brush) | 说话出图、发图改图 |
+
 ## 🚀 快速开始
 
 ### 前置要求
