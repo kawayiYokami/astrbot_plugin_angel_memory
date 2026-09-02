@@ -27,6 +27,9 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
     tags_api = TagsAPI(plugin_context)
     maintenance_api = MaintenanceAPI(plugin_context)
     profile_api = ProfileAPI(plugin_context)
+    from .debug_api import DebugAPI
+
+    debug_api = DebugAPI(plugin_context)
 
     routes = [
         # 总览
@@ -57,6 +60,9 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         # 用户画像
         (f"/{PLUGIN_NAME}/profiles", profile_api.list_users, ["GET"], "用户画像列表"),
         (f"/{PLUGIN_NAME}/profiles/detail", profile_api.get_user_profile, ["GET"], "用户画像详情"),
+        # 功能调试（探针）
+        (f"/{PLUGIN_NAME}/debug/embedding", debug_api.embedding_probe, ["POST"], "嵌入探针（自定义批次/超时）"),
+        (f"/{PLUGIN_NAME}/debug/rerank", debug_api.rerank_probe, ["POST"], "重排探针（自定义超时）"),
     ]
 
     if plugin is not None:

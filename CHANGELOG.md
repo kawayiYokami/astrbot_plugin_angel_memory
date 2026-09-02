@@ -2,6 +2,12 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.6.4] - 2026-09-02
+
+### Features
+- `feat(webui)`: 新增“功能调试”页面（`webui/src/views/DebugView.vue`，路由 `/debug`），提供嵌入与重排探针，支持自定义批次（仅下限 1，无上限，>200 二次确认）与超时（5-120 秒），仅对本次请求生效，便于探测供应商上限；后端新增 `web_api/debug_api.py`（`POST /debug/embedding` 与 `POST /debug/rerank`），整体探针预算 90 秒，单批超时与 413/429 错误分类透出。
+- `fix(doc)`: 更新 WebUI 构建产物至 `pages/memory-dashboard/`（`index-Tiyy-A3O.js`）。
+
 ## [1.6.3] - 2026-09-02
 
 ### Features
