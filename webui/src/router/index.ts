@@ -9,6 +9,7 @@ import ImportExportView from '@/views/ImportExportView.vue'
 import MaintenanceView from '@/views/MaintenanceView.vue'
 import UserProfileView from '@/views/UserProfileView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import DebugView from '@/views/DebugView.vue'
 
 export const routes: RouteRecordRaw[] = [
   {
@@ -64,6 +65,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'maintenance',
     component: MaintenanceView,
     meta: { title: '维护状态', icon: 'lucide:wrench' },
+  },
+  {
+    path: '/debug',
+    name: 'debug',
+    component: DebugView,
+    meta: { title: '功能调试', icon: 'lucide:flask-conical' },
   },
   {
     path: '/settings',
