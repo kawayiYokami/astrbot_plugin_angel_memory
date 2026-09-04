@@ -7,7 +7,7 @@
           <template v-if="state">
             <pre class="code-block">{{ JSON.stringify(state, null, 2) }}</pre>
           </template>
-          <n-empty v-else description="未找到维护状态文件或文件为空" size="small" />
+          <n-empty v-else description="未找到维护状态文件或文件为空" />
         </n-card>
 
         <!-- 备份文件 -->
@@ -18,10 +18,9 @@
               :data="backups"
               :pagination="{ pageSize: 10 }"
               :bordered="false"
-              size="small"
             />
           </template>
-          <n-empty v-else description="暂无备份文件" size="small" />
+          <n-empty v-else description="暂无备份文件" />
         </n-card>
       </n-space>
     </n-spin>
@@ -99,7 +98,7 @@ onMounted(async () => {
   padding: 12px;
   overflow-x: auto;
   white-space: pre-wrap;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
 }
 </style>

@@ -28,7 +28,6 @@
                 v-for="tag in hitResult.matched_tags"
                 :key="tag"
                 type="success"
-                size="small"
                 :bordered="false"
                 class="chip-item"
               >
@@ -45,12 +44,11 @@
                 v-for="mem in hitResult.memory_hits"
                 :key="mem.id"
                 embedded
-                size="small"
               >
                 <n-space size="small">
-                  <n-tag size="small" type="primary" :bordered="false">{{ mem.memory_type }}</n-tag>
-                  <n-tag size="small" type="warning" :bordered="false">命中{{ mem.hit_count }}个标签</n-tag>
-                  <n-tag size="small" :bordered="false">强度 {{ mem.strength }}</n-tag>
+                  <n-tag type="primary" :bordered="false">{{ mem.memory_type }}</n-tag>
+                  <n-tag type="warning" :bordered="false">命中{{ mem.hit_count }}个标签</n-tag>
+                  <n-tag :bordered="false">强度 {{ mem.strength }}</n-tag>
                 </n-space>
                 <div class="mem-judgment">{{ mem.judgment }}</div>
                 <div v-if="mem.reasoning" class="muted mem-reasoning">{{ mem.reasoning }}</div>
@@ -156,13 +154,13 @@ onMounted(() => loadTags())
 }
 
 .mem-reasoning {
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.7;
   margin-top: 2px;
 }
 
 .muted {
   opacity: 0.6;
-  font-size: 13px;
+  font-size: 12px;
 }
 </style>

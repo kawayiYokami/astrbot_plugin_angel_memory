@@ -18,7 +18,7 @@
       v-model:model-value="values"
       :providers="providers"
     />
-    <n-spin v-else size="small" style="margin-top: 40px" />
+    <n-spin v-else style="margin-top: 40px" />
 
     <!-- 悬浮保存按钮：仅存在草稿变更时浮出 -->
     <Transition name="fab">

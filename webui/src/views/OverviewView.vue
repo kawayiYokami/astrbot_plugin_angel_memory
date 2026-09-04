@@ -39,7 +39,7 @@
             <!-- 配置信息 -->
             <n-grid-item span="2 m:1">
             <n-card title="配置信息" embedded>
-              <n-descriptions label-placement="left" :column="1" size="small">
+              <n-descriptions label-placement="left" :column="1">
                 <n-descriptions-item label="嵌入提供商">
                   {{ overview.provider_id || '-' }}
                 </n-descriptions-item>
@@ -65,14 +65,13 @@
                     v-for="scope in overview.scopes"
                     :key="scope"
                     type="primary"
-                    size="small"
                     class="chip-item"
                     :bordered="false"
                   >
                     {{ scope }}
                   </n-tag>
                 </template>
-                <n-empty v-else description="暂无 scope" size="small" />
+                <n-empty v-else description="暂无 scope" />
               </n-card>
 
               <n-card v-if="overview.vector_collections?.length" title="向量集合" embedded>
@@ -80,7 +79,6 @@
                   v-for="col in overview.vector_collections"
                   :key="col"
                   type="info"
-                  size="small"
                   class="chip-item"
                   :bordered="false"
                 >
@@ -132,14 +130,14 @@ onMounted(async () => {
 }
 
 .stat-value {
-  font-size: 28px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1.2;
 }
 
 .stat-label {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.65;
 }
 

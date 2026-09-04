@@ -104,7 +104,7 @@ async function doImport() {
 
 <style scoped>
 .desc {
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.75;
   margin-bottom: 12px;
 }

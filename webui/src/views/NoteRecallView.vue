@@ -114,12 +114,12 @@ onMounted(() => loadFiles())
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
-  font-size: 13px;
+  font-size: 12px;
   margin: 0;
 }
 
 .muted {
   opacity: 0.65;
-  font-size: 13px;
+  font-size: 12px;
 }
 </style>

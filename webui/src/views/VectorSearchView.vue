@@ -22,9 +22,9 @@
     <!-- 检索结果 -->
     <n-card v-if="results.length" title="检索结果" embedded>
       <n-space vertical size="small">
-        <n-card v-for="(item, idx) in results" :key="idx" embedded size="small">
+        <n-card v-for="(item, idx) in results" :key="idx" embedded>
           <n-space align="center" size="small">
-            <n-tag size="small" type="primary" :bordered="false">
+            <n-tag type="primary" :bordered="false">
               score: {{ item.score?.toFixed(4) }}
             </n-tag>
             <span class="muted">{{ item.id }}</span>
@@ -185,7 +185,7 @@ onMounted(async () => {
 <style scoped>
 .doc-code {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
 }

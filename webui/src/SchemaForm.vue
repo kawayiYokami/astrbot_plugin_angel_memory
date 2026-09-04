@@ -64,7 +64,6 @@
             <n-switch
               v-else-if="row.meta.type === 'bool'"
               :value="!!getIn(row.path)"
-              size="small"
               @update:value="(v: unknown) => setIn(row.path, v)"
             />
             <n-input-number
@@ -406,7 +405,7 @@ function providerOptions(path: string[]) {
 }
 
 .field-label {
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--sf-title);
   line-height: 1.45;
 }
@@ -473,7 +472,7 @@ function providerOptions(path: string[]) {
 
 .subsection-title {
   padding: 14px 0 6px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--sf-title);
 }

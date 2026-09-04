@@ -24,7 +24,6 @@
                       <n-tag
                         v-for="plat in user.platforms"
                         :key="String(plat)"
-                        size="small"
                         :bordered="false"
                         class="chip-item"
                       >
@@ -37,7 +36,6 @@
                   <n-tag
                     v-for="(count, attr) in user.attributes"
                     :key="String(attr)"
-                    size="small"
                     :type="attrType(String(attr))"
                     class="chip-item"
                     :bordered="false"
@@ -54,7 +52,7 @@
         <!-- 群聊账本 -->
         <n-grid v-if="!selectedUser && groups.length" :cols="3" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
           <n-grid-item v-for="group in groups" :key="group.group_id" span="3 s:2 m:1">
-            <n-card embedded size="small" class="group-card">
+            <n-card embedded class="group-card">
               <div class="group-name">{{ group.group_name || '未知群名' }}</div>
               <div class="user-id">群 ID: {{ group.group_id }}</div>
               <div class="mem-time">最近活跃: {{ formatTime(group.last_seen_at) }}</div>
@@ -93,7 +91,7 @@
               >
               <template #header>
                 <div class="group-header">
-                  <n-tag size="small" :type="attrType(attr)" :bordered="false">{{ attr }}</n-tag>
+                  <n-tag :type="attrType(attr)" :bordered="false">{{ attr }}</n-tag>
                   <span class="group-count">{{ groupedMemories[attr]?.length || 0 }} 条</span>
                 </div>
               </template>
@@ -104,7 +102,7 @@
                     :icon="mem.is_active ? 'lucide:star' : 'lucide:star'"
                     :style="{ color: mem.is_active ? '#f0a020' : '#888', fontSize: '14px' }"
                   />
-                  <n-tag size="small" :type="strengthType(mem.strength)" :bordered="false">
+                  <n-tag :type="strengthType(mem.strength)" :bordered="false">
                     强度 {{ mem.strength }}
                   </n-tag>
                   <span class="mem-time">{{ formatTime(mem.updated_at) }}</span>
@@ -115,7 +113,6 @@
                   <n-tag
                     v-for="tag in parseTags(mem.tags)"
                     :key="tag"
-                    size="small"
                     :type="tagType(tag)"
                     class="chip-item"
                     :bordered="false"
@@ -292,12 +289,12 @@ onMounted(async () => {
 }
 
 .detail-name {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
 }
 
 .detail-sub {
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.65;
 }
 
@@ -308,7 +305,7 @@ onMounted(async () => {
 }
 
 .group-count {
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.6;
 }
 
@@ -337,7 +334,7 @@ onMounted(async () => {
 }
 
 .mem-reasoning {
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.7;
   margin-top: 2px;
 }

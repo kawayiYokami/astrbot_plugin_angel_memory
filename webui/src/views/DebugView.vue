@@ -25,8 +25,8 @@
           >
             <template #prefix>超时</template>
           </n-input-number>
-          <n-button size="small" quaternary @click="embedTimeout = 5">5s</n-button>
-          <n-button size="small" quaternary @click="embedTimeout = 60">60s</n-button>
+          <n-button quaternary @click="embedTimeout = 5">5s</n-button>
+          <n-button quaternary @click="embedTimeout = 60">60s</n-button>
           <n-button type="primary" :loading="embedLoading" :disabled="!embedText.trim()" @click="doEmbedProbe">测试嵌入</n-button>
         </n-space>
         <n-input
@@ -39,12 +39,12 @@
           <n-alert v-if="embedResult.error" type="error" :bordered="false">{{ embedResult.error }}</n-alert>
           <template v-else>
             <n-space size="small" align="center">
-              <n-tag type="success" size="small" :bordered="false">总计 {{ embedResult.total }} 条 / {{ embedResult.batches }} 批</n-tag>
-              <n-tag size="small" :bordered="false">耗时 {{ embedResult.elapsed_ms }}ms</n-tag>
-              <n-tag size="small" :bordered="false">平均 {{ embedResult.avg_ms_per_text }}ms/条</n-tag>
-              <n-tag size="small" :bordered="false">维度 {{ embedResult.dimension }}</n-tag>
-              <n-tag v-if="embedResult.failed_batches" type="error" size="small" :bordered="false">失败 {{ embedResult.failed_batches }} 批</n-tag>
-              <n-tag v-if="embedResult.timed_out_batches" type="warning" size="small" :bordered="false">超时 {{ embedResult.timed_out_batches }} 批</n-tag>
+              <n-tag type="success" :bordered="false">总计 {{ embedResult.total }} 条 / {{ embedResult.batches }} 批</n-tag>
+              <n-tag :bordered="false">耗时 {{ embedResult.elapsed_ms }}ms</n-tag>
+              <n-tag :bordered="false">平均 {{ embedResult.avg_ms_per_text }}ms/条</n-tag>
+              <n-tag :bordered="false">维度 {{ embedResult.dimension }}</n-tag>
+              <n-tag v-if="embedResult.failed_batches" type="error" :bordered="false">失败 {{ embedResult.failed_batches }} 批</n-tag>
+              <n-tag v-if="embedResult.timed_out_batches" type="warning" :bordered="false">超时 {{ embedResult.timed_out_batches }} 批</n-tag>
             </n-space>
             <n-space v-if="embedResult.provider" size="small">
               <span class="muted">provider: {{ embedResult.provider.provider_id || '—' }} / {{ embedResult.provider.model_name || '—' }} ({{ embedResult.provider.type || '—' }})</span>
@@ -53,10 +53,9 @@
               :columns="embedColumns"
               :data="embedResult.batch_details || []"
               :pagination="false"
-              size="small"
               :bordered="false"
             />
-            <n-card v-if="embedResult.preview?.length" size="small" embedded title="预览（前 3 条向量片段）">
+            <n-card v-if="embedResult.preview?.length" embedded title="预览（前 3 条向量片段）">
               <pre class="code-block">{{ JSON.stringify(embedResult.preview, null, 2) }}</pre>
             </n-card>
           </template>
@@ -95,19 +94,18 @@
           <n-alert v-if="rerankResult.error && !rerankResult.timed_out" :type="rerankResult.has_rerank ? 'error' : 'warning'" :bordered="false">{{ rerankResult.error }}</n-alert>
           <template v-if="rerankResult.scores?.length">
             <n-space size="small" :wrap="true">
-              <n-tag size="small" :bordered="false">耗时 {{ rerankResult.elapsed_ms }}ms</n-tag>
-              <n-tag size="small" :bordered="false">返回 {{ rerankResult.scores.length }} 条</n-tag>
-              <n-tag v-if="rerankResult.provider_id" size="small" :bordered="false">{{ rerankResult.provider_id }}</n-tag>
-              <n-tag v-if="rerankResult.original_docs !== undefined" size="small" :bordered="false">候选 {{ rerankResult.original_docs }}→{{ rerankResult.kept_docs }}/{{ rerankResult.rerank_max_docs }}</n-tag>
-              <n-tag v-if="rerankResult.rerank_max_tokens_per_doc" size="small" :bordered="false">Token {{ rerankResult.rerank_max_tokens_per_doc }}</n-tag>
-              <n-tag v-if="rerankResult.doc_truncated" type="warning" size="small" :bordered="false">截断 {{ rerankResult.doc_truncated }} 段</n-tag>
-              <n-tag v-if="rerankResult.query_truncated" type="warning" size="small" :bordered="false">query已截断</n-tag>
+              <n-tag :bordered="false">耗时 {{ rerankResult.elapsed_ms }}ms</n-tag>
+              <n-tag :bordered="false">返回 {{ rerankResult.scores.length }} 条</n-tag>
+              <n-tag v-if="rerankResult.provider_id" :bordered="false">{{ rerankResult.provider_id }}</n-tag>
+              <n-tag v-if="rerankResult.original_docs !== undefined" :bordered="false">候选 {{ rerankResult.original_docs }}→{{ rerankResult.kept_docs }}/{{ rerankResult.rerank_max_docs }}</n-tag>
+              <n-tag v-if="rerankResult.rerank_max_tokens_per_doc" :bordered="false">Token {{ rerankResult.rerank_max_tokens_per_doc }}</n-tag>
+              <n-tag v-if="rerankResult.doc_truncated" type="warning" :bordered="false">截断 {{ rerankResult.doc_truncated }} 段</n-tag>
+              <n-tag v-if="rerankResult.query_truncated" type="warning" :bordered="false">query已截断</n-tag>
             </n-space>
             <n-data-table
               :columns="rerankColumns"
               :data="rerankResult.scores"
               :pagination="false"
-              size="small"
               :bordered="false"
             />
           </template>

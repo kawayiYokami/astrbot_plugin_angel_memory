@@ -1,8 +1,7 @@
 /**
- * 全局主题系统：以 iOS 26 Liquid Glass 为基准。
- * - 光/暗两套 Naive UI themeOverrides（主色 = iOS 系统蓝）
- * - 圆角体系：xs=8 小件 / sm=10 控件 / md=14 卡片 / lg=20 弹窗与面板 / full=胶囊
- * - 玻璃材质变量在 App.vue 的 :root[data-theme] 中定义，供自定义类使用
+ * 全局主题系统：实色卡片基准，对齐 angel_brush。
+ * - A 色（边框/分隔线）唯一真相源：tokens.light/dark.divider
+ * - 背景/侧栏/卡片三色统一：bgPage / bgSider / bgCard
  */
 import type { GlobalThemeOverrides } from 'naive-ui'
 import type { ComputedRef, InjectionKey, Ref } from 'vue'
@@ -20,7 +19,6 @@ export interface ThemeApi {
 
 export const themeKey: InjectionKey<ThemeApi> = Symbol('app-theme')
 
-/** 读取持久化主题；默认光。localStorage 不可用（隐私模式等）时静默回退 */
 export function loadThemeMode(): ThemeMode {
   try {
     return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'
@@ -49,71 +47,57 @@ export function createThemeApi(): ThemeApi {
   }
 }
 
-// iOS 系统蓝：光 #007AFF / 暗 #0A84FF
 const brand = {
   light: { base: '#007aff', hover: '#3395ff', pressed: '#0062cc', suppl: '#3395ff' },
   dark: { base: '#0a84ff', hover: '#409cff', pressed: '#0069cc', suppl: '#409cff' },
 }
 
-/**
- * 构建对应模式的 Naive UI 覆盖：
- * - 主色与圆角走 common，全部组件统一生效
- * - cardColor 直接给玻璃底色（NCard 与 preset="card" 的 NModal 共用）
- * - Layout/Sider/Menu 底色置透明，露出页面的液态玻璃氛围层
- */
+// A 色与面色：亮/暗各一套，theme.ts 为唯一真相源，App.vue 的 CSS 变量需与此对齐
+const tokens = {
+  light: {
+    bgPage: '#F5F5F5',
+    bgSider: '#ffffff',
+    bgCard: '#ffffff',
+    divider: 'rgba(60, 60, 67, 0.12)',
+  },
+  dark: {
+    bgPage: '#101014',
+    bgSider: '#18181c',
+    bgCard: '#18181c',
+    divider: 'rgba(84, 84, 88, 0.4)',
+  },
+} as const
+
 export function buildThemeOverrides(mode: ThemeMode): GlobalThemeOverrides {
   const c = brand[mode]
-  const glassCard = mode === 'light' ? 'rgba(255, 255, 255, 0.88)' : 'rgba(44, 44, 46, 0.85)'
-  // default 型按钮的玻璃胶囊底（iOS 26：无纯线框按钮）
-  const btnGlass =
-    mode === 'light'
-      ? {
-          color: 'rgba(255, 255, 255, 0.55)',
-          colorHover: 'rgba(255, 255, 255, 0.78)',
-          colorPressed: 'rgba(255, 255, 255, 0.5)',
-          colorFocus: 'rgba(255, 255, 255, 0.55)',
-          border: '1px solid rgba(255, 255, 255, 0.65)',
-          borderHover: '1px solid rgba(255, 255, 255, 0.95)',
-          borderPressed: '1px solid rgba(255, 255, 255, 0.5)',
-          borderFocus: '1px solid rgba(255, 255, 255, 0.65)',
-        }
-      : {
-          color: 'rgba(44, 44, 46, 0.5)',
-          colorHover: 'rgba(72, 72, 76, 0.62)',
-          colorPressed: 'rgba(40, 40, 42, 0.55)',
-          colorFocus: 'rgba(44, 44, 46, 0.5)',
-          border: '1px solid rgba(255, 255, 255, 0.14)',
-          borderHover: '1px solid rgba(255, 255, 255, 0.28)',
-          borderPressed: '1px solid rgba(255, 255, 255, 0.12)',
-          borderFocus: '1px solid rgba(255, 255, 255, 0.14)',
-        }
+  const t = tokens[mode]
   return {
     common: {
       primaryColor: c.base,
       primaryColorHover: c.hover,
       primaryColorPressed: c.pressed,
       primaryColorSuppl: c.suppl,
+      fontSize: '15px',
       borderRadius: '10px',
       borderRadiusSmall: '8px',
-      cardColor: glassCard,
+      bodyColor: t.bgPage,
+      cardColor: t.bgCard,
+      modalColor: t.bgCard,
+      popoverColor: t.bgCard,
+      dividerColor: t.divider,
+      borderColor: t.divider,
     },
     Button: {
-      // iOS 26 bordered 按钮 = 胶囊形，全部按钮统一
       borderRadius: '999px',
-      ...btnGlass,
-    },
-    Card: {
-      // embedded 卡片与常规卡同走玻璃底
-      colorEmbedded: glassCard,
     },
     Layout: {
-      color: 'transparent',
-      siderColor: 'transparent',
-      headerColor: 'transparent',
-      footerColor: 'transparent',
+      color: t.bgPage,
+      siderColor: t.bgSider,
     },
-    Menu: {
-      color: 'transparent',
+    Card: {
+      color: t.bgCard,
+      colorEmbedded: t.bgCard,
+      borderColor: t.divider,
     },
   }
 }

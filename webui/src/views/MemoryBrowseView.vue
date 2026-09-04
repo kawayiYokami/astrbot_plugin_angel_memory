@@ -46,7 +46,7 @@
       :bordered="false"
     >
       <template v-if="selectedItem">
-        <n-descriptions label-placement="left" :column="1" size="small">
+        <n-descriptions label-placement="left" :column="1">
           <n-descriptions-item label="ID">{{ selectedItem.id }}</n-descriptions-item>
           <n-descriptions-item label="类型">{{ selectedItem.memory_type }}</n-descriptions-item>
           <n-descriptions-item label="Judgment">{{ selectedItem.judgment }}</n-descriptions-item>
@@ -56,7 +56,6 @@
               <n-tag
                 v-for="tag in parseTags(selectedItem.tags)"
                 :key="tag"
-                size="small"
                 :bordered="false"
               >
                 {{ tag }}
@@ -278,7 +277,7 @@ onMounted(async () => {
 <style scoped>
 .delete-preview {
   margin-top: 10px;
-  font-size: 13px;
+  font-size: 12px;
   opacity: 0.65;
 }
 </style>
