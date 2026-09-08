@@ -2,7 +2,45 @@
 
 from __future__ import annotations
 
+import logging
+import sys
 import threading
+import types
+from pathlib import Path
+
+
+def _install_astrbot_stubs() -> None:
+    if "astrbot.api" in sys.modules:
+        return
+
+    astrbot = types.ModuleType("astrbot")
+    api = types.ModuleType("astrbot.api")
+    api.logger = logging.getLogger("astrbot-test")
+    event = types.ModuleType("astrbot.api.event")
+
+    class AstrMessageEvent:
+        pass
+
+    event.AstrMessageEvent = AstrMessageEvent
+
+    sys.modules["astrbot"] = astrbot
+    sys.modules["astrbot.api"] = api
+    sys.modules["astrbot.api.event"] = event
+
+
+_install_astrbot_stubs()
+
+PACKAGE_NAME = "astrbot_plugin_angel_memory"
+if PACKAGE_NAME not in sys.modules:
+    package = types.ModuleType(PACKAGE_NAME)
+    package.__path__ = [str(Path(__file__).resolve().parents[1])]
+    sys.modules[PACKAGE_NAME] = package
+
+CORE_PACKAGE = f"{PACKAGE_NAME}.core"
+if CORE_PACKAGE not in sys.modules:
+    package = types.ModuleType(CORE_PACKAGE)
+    package.__path__ = [str(Path(__file__).resolve().parents[1] / "core")]
+    sys.modules[CORE_PACKAGE] = package
 
 from astrbot_plugin_angel_memory.core.reflection_trace import ReflectionTraceBuffer
 

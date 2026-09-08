@@ -189,23 +189,9 @@ class PathManager:
     # === 对外路径方法（提示词路径） ===
 
     @classmethod
-    def get_prompt_path(cls) -> Path:
-        """获取旧提示词主文件路径。
-
-        Returns:
-            历史主文件路径
-        """
-        return (
-            cls._get_plugin_root()
-            / "llm_memory"
-            / "prompts"
-            / "memory_system_guide_async.md"
-        )
-
-    @classmethod
-    def get_prompt_sections_dir(cls) -> Path:
-        """获取模块化提示词 sections 目录。"""
-        return cls._get_plugin_root() / "llm_memory" / "prompts" / "sections"
+    def get_prompt_guide_path(cls) -> Path:
+        """获取记忆系统指南文件（单一合并版，反思提示词的真相源）。"""
+        return cls._get_plugin_root() / "llm_memory" / "prompts" / "memory_system_guide.md"
 
     # === 便捷方法 ===
 

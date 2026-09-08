@@ -64,8 +64,8 @@ def test_prompt_assembler_contains_critical_sections():
     assert prompt.count("```json") == 1
 
 
-def test_prompt_assembler_reads_all_declared_sections():
-    section_paths = PromptAssembler.get_section_paths()
+def test_prompt_guide_file_exists():
+    guide_path = Path(PromptAssembler.get_guide_path())
 
-    assert len(section_paths) == len(PromptAssembler.SECTION_FILES)
-    assert all(path.exists() for path in section_paths)
+    assert guide_path.exists()
+    assert guide_path.name == "memory_system_guide.md"
