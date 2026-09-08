@@ -60,7 +60,7 @@ class CoreMemoryRememberTool(FunctionTool):
                         "tags": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "检索锚点列表。每项必须是独立、紧凑、稳定、可检索的词元。",
+                            "description": "检索锚点列表：主体锚点与隐形关键字。每项独立、紧凑、稳定、可检索。",
                             "minItems": 1,
                         },
                     },

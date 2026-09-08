@@ -183,3 +183,17 @@ class DeepMindInjectionService:
                     "_no_save": True,
                 }
             )
+
+        memory_guide = (
+            "【记忆系统】\n"
+            "你拥有长期记忆，应主动使用：\n"
+            "- 对话牵涉过去的事、拿不准的细节，先用 angel_recall 检索再回答\n"
+            "- 出现值得长期记住的信息（群友稳定特征、重要约定、关键事实）时，用 angel_remember 记下："
+            "新信息 create，发现错误或过时及时 update，重复 merge\n"
+            "- 宁可多记一条后续修正，不可漏记\n"
+            "- 想起的内容自然融入当前回答，对话焦点始终跟随用户\n"
+            "- 表现得这些信息你本来就知道，工具和系统提示只是获取手段"
+        )
+        request.system_prompt = (
+            f"{request.system_prompt}\n\n{memory_guide}" if request.system_prompt else memory_guide
+        )

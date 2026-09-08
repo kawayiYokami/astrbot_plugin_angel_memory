@@ -172,7 +172,7 @@ async def test_injection_hydrates_latest_memory_and_removes_missing_refs():
         ],
     )
 
-    request = types.SimpleNamespace(contexts=[], extra_user_content_parts=[])
+    request = types.SimpleNamespace(contexts=[], extra_user_content_parts=[], system_prompt="")
     await DeepMindInjectionService(deepmind).inject_memories_to_request(
         request=request,
         session_id="s1",
@@ -195,7 +195,7 @@ async def test_injection_always_uses_no_save_contexts_even_with_secretary_decisi
     deepmind = _DeepMind(_Runtime([latest]))
     deepmind.session_memory_manager.add_memories_to_session("s1", [latest])
 
-    request = types.SimpleNamespace(contexts=[], extra_user_content_parts=[])
+    request = types.SimpleNamespace(contexts=[], extra_user_content_parts=[], system_prompt="")
     await DeepMindInjectionService(deepmind).inject_memories_to_request(
         request=request,
         session_id="s1",
