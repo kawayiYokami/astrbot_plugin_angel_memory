@@ -113,64 +113,16 @@
         </n-space>
       </n-space>
     </n-card>
-
-    <!-- 反思归纳记录 -->
-    <n-card title="反思归纳记录（最近10次）" embedded>
-      <template #header-extra>
-        <n-button quaternary size="small" :loading="traceLoading" @click="loadReflectionTraces">刷新</n-button>
-      </template>
-      <n-space vertical :size="12">
-        <n-alert type="warning" :bordered="false" style="font-size: 12px">
-          内存记录，重启插件后清空。提示词含对话原文，仅本机调试用；出问题时可复制整条反馈。
-        </n-alert>
-        <n-empty
-          v-if="!traceRecords.length && !traceLoading"
-          description="暂无反思记录，触发几轮对话后自动生成"
-        />
-        <n-card v-for="r in traceRecords" :key="r.id" size="small" embedded>
-          <template #header>
-            <n-space align="center" :size="8">
-              <n-tag :type="traceStatusType(r.status)" size="small" :bordered="false">{{
-                traceStatusText(r.status)
-              }}</n-tag>
-              <span class="muted">{{ r.time }}</span>
-              <span
-                class="muted"
-                style="max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
-                >{{ r.session_id || '无会话ID' }}</span
-              >
-            </n-space>
-          </template>
-          <template #header-extra>
-            <n-button size="tiny" secondary @click="copyTrace(r)">复制</n-button>
-          </template>
-          <n-collapse>
-            <n-collapse-item title="提示词" name="prompt">
-              <pre class="code-block">{{ r.prompt }}</pre>
-            </n-collapse-item>
-            <n-collapse-item v-if="r.status !== 'pending'" title="LLM 返回" name="response">
-              <n-alert v-if="r.error" type="error" :bordered="false" style="white-space: pre-wrap">{{
-                r.error
-              }}</n-alert>
-              <pre v-if="r.result" class="code-block">{{ JSON.stringify(r.result, null, 2) }}</pre>
-              <div v-if="!r.result && !r.error" class="muted">无返回内容</div>
-            </n-collapse-item>
-          </n-collapse>
-        </n-card>
-      </n-space>
-    </n-card>
   </n-space>
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue'
+import { h, ref } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import {
   NAlert,
   NButton,
   NCard,
-  NCollapse,
-  NCollapseItem,
   NDataTable,
   NEmpty,
   NInput,
@@ -182,7 +134,7 @@ import {
 } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
-const { apiGet, apiPost } = useBridge()
+const { apiPost } = useBridge()
 const message = useMessage()
 const dialog = useDialog()
 
@@ -302,45 +254,6 @@ async function doRerankProbe() {
     rerankLoading.value = false
   }
 }
-
-// 反思归纳记录
-const traceRecords = ref<any[]>([])
-const traceLoading = ref(false)
-
-function traceStatusType(status: string) {
-  if (status === 'success') return 'success'
-  if (status === 'failed') return 'error'
-  return 'warning'
-}
-
-function traceStatusText(status: string) {
-  if (status === 'success') return '成功'
-  if (status === 'failed') return '失败'
-  return '处理中'
-}
-
-async function loadReflectionTraces() {
-  traceLoading.value = true
-  try {
-    const data: any = await apiGet('trace/reflection')
-    traceRecords.value = Array.isArray(data && data.records) ? data.records : []
-  } catch (e: any) {
-    message.error(e.message || '获取反思记录失败')
-  } finally {
-    traceLoading.value = false
-  }
-}
-
-async function copyTrace(r: any) {
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(r, null, 2))
-    message.success('已复制整条记录')
-  } catch {
-    message.error('复制失败，请手动选择文本')
-  }
-}
-
-onMounted(loadReflectionTraces)
 </script>
 
 <style scoped>
