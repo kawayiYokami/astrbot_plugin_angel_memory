@@ -66,8 +66,8 @@ class _ProviderWithoutTopN:
         assert query == "query"
         assert documents == ["one", "two"]
         return [
-            {"index": 0, "relevance_score": 0.9},
-            {"index": 1, "relevance_score": 0.8},
+            {"index": 0, "relevance_score": 0.1},
+            {"index": 1, "relevance_score": 0.9},
         ]
 
 
@@ -140,11 +140,11 @@ def test_local_batch_overflow_retries_with_shorter_documents():
     assert fallback.document_lengths == [[500], [220]]
 
 
-def test_provider_without_top_n_parameter_remains_compatible():
+def test_provider_without_top_n_parameter_uses_highest_scores():
     underlying = _ProviderWithoutTopN()
     provider = FailoverRerankProvider([("legacy", underlying)])
 
     result = asyncio.run(provider.rerank("query", ["one", "two"], top_n=1))
 
     assert underlying.calls == 1
-    assert [item["index"] for item in result] == [0]
+    assert [item["index"] for item in result] == [1]

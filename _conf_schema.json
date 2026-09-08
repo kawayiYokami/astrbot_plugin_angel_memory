@@ -53,13 +53,13 @@
         "type": "int",
         "description": "备用重排最大候选数",
         "default": 0,
-        "hint": "仅限制第二个及后续备用重排服务；0 表示继续沿用全局 rerank_max_docs。小显存本地服务可设为 24。"
+        "hint": "仅限制备用重排服务（不影响主重排）；0 表示继续沿用全局 rerank_max_docs。小显存本地服务可设为 24。"
       },
       "rerank_fallback_max_document_chars": {
         "type": "int",
         "description": "备用重排单篇最大字符数",
         "default": 0,
-        "hint": "仅限制第二个及后续备用重排服务；超长片段会保留开头和结尾，0 表示不额外限制。"
+        "hint": "仅限制备用重排服务（不影响主重排）；超长片段会保留开头和结尾，0 表示不额外限制。"
       },
       "rerank_fallback_retry_document_chars": {
         "type": "int",

@@ -75,7 +75,8 @@ async def _call_provider(
     if not normalized:
         raise RuntimeError("Rerank Provider 返回空结果")
     if top_n is not None:
-        return normalized[: max(0, int(top_n))]
+        ranked = sorted(normalized, key=lambda item: item["score"], reverse=True)
+        return ranked[: max(0, int(top_n))]
     return normalized
 
 
@@ -83,7 +84,11 @@ def _should_retry_with_shorter_documents(exc: Exception) -> bool:
     """Retry local server errors that may be llama.cpp physical-batch overflow."""
     status = getattr(exc, "status", None)
     message = str(exc).lower()
-    return status == 500 or "too large to process" in message or "physical batch" in message
+    return (
+        status == 500
+        or "too large to process" in message
+        or "physical batch" in message
+    )
 
 
 def _normalize_results(response: Any) -> list[dict[str, Any]]:
@@ -226,8 +231,9 @@ class FailoverRerankProvider:
             is_last = index == len(self.providers) - 1
             if not is_last and self._cooldown_until.get(provider_id, 0.0) > now:
                 continue
+            attempt_started = time.monotonic()
+            provider_documents = documents
             try:
-                provider_documents = documents
                 provider_top_n = top_n
                 if index > 0:
                     provider_documents = _limit_fallback_documents(
@@ -251,7 +257,10 @@ class FailoverRerankProvider:
                     can_retry = (
                         index > 0
                         and retry_chars > 0
-                        and any(len(str(doc or "")) > retry_chars for doc in provider_documents)
+                        and any(
+                            len(str(doc or "")) > retry_chars
+                            for doc in provider_documents
+                        )
                         and _should_retry_with_shorter_documents(first_exc)
                     )
                     if not can_retry:
@@ -262,9 +271,13 @@ class FailoverRerankProvider:
                         max_document_chars=retry_chars,
                     )
                     logger.warning(
-                        "Rerank Provider %s 输入超过本地处理能力，单篇缩短至 %s 字后重试",
+                        "[重排] 重试 任务名=候选重排 Provider=%s "
+                        "触发条件=输入超过本地处理能力 单篇字符上限=%s "
+                        "候选数=%s 耗时毫秒=%s",
                         provider_id,
                         retry_chars,
+                        len(retry_documents),
+                        int((time.monotonic() - attempt_started) * 1000),
                     )
                     normalized = await _call_provider(
                         provider,
@@ -288,11 +301,25 @@ class FailoverRerankProvider:
                     self.providers[index + 1][0] if not is_last else "BM25/向量排序"
                 )
                 logger.warning(
-                    "Rerank Provider %s 失败，回退到 %s: %s",
+                    "[重排] 失败 任务名=候选重排 Provider=%s 回退目标=%s "
+                    "候选数=%s 耗时毫秒=%s 异常=%s",
                     provider_id,
                     next_provider,
+                    len(provider_documents),
+                    int((time.monotonic() - attempt_started) * 1000),
                     exc,
+                    exc_info=True,
                 )
         if last_error:
-            logger.warning("全部 Rerank Provider 均不可用: %s", last_error)
+            logger.error(
+                "[重排] 失败 任务名=重排故障转移 候选总数=%s "
+                "处理=降级为BM25/向量排序 异常=%s",
+                len(self.providers),
+                last_error,
+                exc_info=(
+                    type(last_error),
+                    last_error,
+                    last_error.__traceback__,
+                ),
+            )
         return []
