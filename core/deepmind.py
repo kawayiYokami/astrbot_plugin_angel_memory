@@ -27,6 +27,7 @@ from .services.injection_service import DeepMindInjectionService
 from .services.sleep_service import DeepMindSleepService
 from .services.user_profile_service import UserProfileService
 from .utils.feedback_queue import get_feedback_queue
+from .reflection_trace import ReflectionTraceBuffer
 
 try:
     from astrbot.api import logger
@@ -103,6 +104,8 @@ class DeepMind:
         # 从全局容器获取logger
         self.logger = logger
         self.json_parser = JsonParser()
+        # 反思归纳过程追踪（内存保留最近 10 次，供 WebUI 查看与反馈）
+        self.reflection_trace = ReflectionTraceBuffer(maxlen=10)
 
         # 获取配置值（嵌套配置）
         # 当前格式：memory_behavior.*, note_topk.*
@@ -1049,6 +1052,7 @@ class DeepMind:
         Args:
             reflection_input: 反思输入纯数据
         """
+        trace_id = None
         try:
             session_id = str(getattr(reflection_input, "session_id", "") or "").strip()
             if not session_id:
@@ -1118,12 +1122,20 @@ class DeepMind:
                 f"[反思执行] 最终提示词 session={session_id} "
                 f"prompt_len={len(prompt)}\n{prompt}"
             )
+            trace_id = self.reflection_trace.record_start(
+                session_id, self.provider_id, prompt
+            )
 
             # 调用小模型进行分析（在后台线程中同步调用）
             provider = self.context.get_provider_by_id(self.provider_id)
             if not provider:
                 self.logger.error(
                     f"找不到提供者: {self.provider_id}，会话: {session_id}"
+                )
+                self.reflection_trace.complete(
+                    trace_id,
+                    status="failed",
+                    error=f"找不到提供者: {self.provider_id}",
                 )
                 return
 
@@ -1135,10 +1147,16 @@ class DeepMind:
                     f"会话 {session_id} 的LLM调用失败，跳过记忆整理: {e}",
                     exc_info=True,
                 )
+                self.reflection_trace.complete(
+                    trace_id, status="failed", error=f"LLM调用失败: {e}"
+                )
                 return
 
             if not llm_response or not getattr(llm_response, "completion_text", ""):
                 self.logger.error(f"会话 {session_id} 的LLM API调用失败")
+                self.reflection_trace.complete(
+                    trace_id, status="failed", error="LLM API调用返回空响应"
+                )
                 return
 
             # 提取响应文本
@@ -1150,6 +1168,9 @@ class DeepMind:
             if not isinstance(full_json_data, dict):
                 self.logger.error(
                     f"会话 {session_id} 的JSON解析失败或未返回字典"
+                )
+                self.reflection_trace.complete(
+                    trace_id, status="failed", error="JSON解析失败或未返回字典"
                 )
                 return
 
@@ -1264,9 +1285,20 @@ class DeepMind:
                 f"[反思执行] 完成 session={session_id} "
                 f"useful={len(useful_ids)} new={len(newly_created_memories)}"
             )
+            self.reflection_trace.complete(
+                trace_id,
+                status="success",
+                response=response_text,
+                result=full_json_data,
+            )
 
         except Exception as e:
             import traceback
+            self.reflection_trace.complete(
+                trace_id,
+                status="failed",
+                error=f"反思执行异常: {e}",
+            )
 
             self.logger.error(f"异步记忆分析失败 - 会话={session_id}: {e}")
             self.logger.error(f"错误详情: {traceback.format_exc()}")
