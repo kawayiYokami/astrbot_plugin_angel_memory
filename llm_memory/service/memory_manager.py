@@ -65,37 +65,24 @@ class MemoryManager:
 
     # ===== 记忆巩固和强化 =====
 
-    async def consolidate_memories(self):
-        """
-        执行记忆清理过程（睡眠模式）。
+    async def decay_tier0_memories(self) -> int:
+        """睡眠第一步：T0 时间衰减，只降强度，不删除。"""
+        return await self.memory_sql_manager.decay_tier0_memories()
 
-        清理规则：
-        - 删除被动记忆中强度 ≤ 0 的记忆
-        - 主动记忆永不删除（不受强度影响）
-        """
-        self.logger.debug("开始记忆清理过程...")
+    async def list_retirement_candidates(self) -> List[BaseMemory]:
+        """睡眠第二步：取出强度归零、等待裁决的被动记忆。"""
+        return await self.memory_sql_manager.list_retirement_candidates()
 
-        if self.memory_sql_manager is not None:
-            await self.memory_sql_manager.consolidate_memories()
-            return
-
-        try:
-            # 删除被动记忆中强度 ≤ 0 的记忆
-            weak_results = self.collection.get(
-                where={"$and": [{"strength": {"$lte": 0}}, {"is_active": False}]},
-                include=["metadatas"]
-            )
-            deleted_count = 0
-            if weak_results and weak_results["ids"]:
-                self.collection.delete(ids=weak_results["ids"])
-                deleted_count = len(weak_results["ids"])
-                self.logger.debug(f"已删除 {deleted_count} 条被动记忆（强度≤0）")
-
-            self.logger.debug(f"记忆清理完成: 删除{deleted_count}条被动记忆")
-
-        except Exception as e:
-            self.logger.error(f"记忆清理过程失败: {str(e)}")
-            raise
+    async def apply_retirement_decisions(
+        self,
+        delete_ids: List[str],
+        keep_ids: List[str],
+    ) -> Dict[str, int]:
+        """睡眠第三步：按裁决执行删除与永久化。"""
+        return await self.memory_sql_manager.apply_retirement_decisions(
+            delete_ids,
+            keep_ids,
+        )
 
     async def reinforce_memories(self, memory_ids: List[str]):
         """

@@ -116,17 +116,8 @@ class BackgroundInitializer:
 
             deepmind = components.get("deepmind")
             if deepmind and deepmind.is_enabled():
-                async def _trigger_sleep_once_after_init():
-                    try:
-                        self.logger.info(
-                            f"[simple_backup] trigger_sleep_after_init provider={self.plugin_context.get_current_provider()}"
-                        )
-                        # 启动后无条件执行一次睡眠维护，便于立即完成迁移/备份校验。
-                        await deepmind.sleep()
-                    except Exception as e:
-                        self.logger.error(f"初始化后触发睡眠失败: {e}", exc_info=True)
-
-                task = asyncio.create_task(_trigger_sleep_once_after_init())
+                # 启动睡眠调度：每天凌晨 4 点一次，不做启动补偿
+                task = asyncio.create_task(deepmind.start_sleep_scheduler())
                 self._post_init_tasks.append(task)
             else:
                 self.logger.warning("⚠️ DeepMind未启用")

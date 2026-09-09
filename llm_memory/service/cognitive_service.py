@@ -192,9 +192,24 @@ class CognitiveService:
             memory_scope=memory_scope,
         )
 
-    async def consolidate_memories(self):
-        """执行记忆巩固过程（睡眠模式）"""
-        return await self.memory_manager.consolidate_memories()
+    async def decay_tier0_memories(self) -> int:
+        """睡眠第一步：T0 时间衰减（只降强度，不删除）"""
+        return await self.memory_manager.decay_tier0_memories()
+
+    async def list_retirement_candidates(self) -> List[BaseMemory]:
+        """睡眠第二步：取出强度归零、等待裁决的被动记忆"""
+        return await self.memory_manager.list_retirement_candidates()
+
+    async def apply_retirement_decisions(
+        self,
+        delete_ids: List[str],
+        keep_ids: List[str],
+    ) -> Dict[str, int]:
+        """睡眠第三步：按裁决执行删除与永久化"""
+        return await self.memory_manager.apply_retirement_decisions(
+            delete_ids,
+            keep_ids,
+        )
 
     async def chained_recall(
         self,

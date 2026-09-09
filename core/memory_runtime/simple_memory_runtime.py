@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ...llm_memory.components.memory_sql_manager import MemorySqlManager
 from ...llm_memory.models.data_models import BaseMemory
@@ -114,8 +114,21 @@ class SimpleMemoryRuntime:
             memory_scope=memory_scope,
         )
 
-    async def consolidate_memories(self) -> None:
-        await self._manager.consolidate_memories()
+    async def decay_tier0_memories(self) -> int:
+        return await self._manager.decay_tier0_memories()
+
+    async def list_retirement_candidates(self) -> List[BaseMemory]:
+        return await self._manager.list_retirement_candidates()
+
+    async def apply_retirement_decisions(
+        self,
+        delete_ids: List[str],
+        keep_ids: List[str],
+    ) -> Dict[str, int]:
+        return await self._manager.apply_retirement_decisions(
+            delete_ids=delete_ids,
+            keep_ids=keep_ids,
+        )
 
     def shutdown(self) -> None:
         return None

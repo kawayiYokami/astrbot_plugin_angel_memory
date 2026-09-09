@@ -79,7 +79,6 @@ class MemoryConstants:
 
     MIN_MESSAGE_LENGTH = 5
     SHORT_TERM_MEMORY_CAPACITY = 1.0
-    SLEEP_INTERVAL = 3600  # 默认睡眠间隔（秒）
     DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
     NOTE_TOP_K = 3  # 默认注入笔记数量（候选固定为 7 倍）
 
@@ -113,7 +112,7 @@ class MemoryConfig:
     """记忆插件配置类
 
     负责管理插件的用户可配置参数，与llm_memory的系统配置形成分层结构：
-    - 本类：用户级别的插件配置（min_message_length, sleep_interval等）
+    - 本类：用户级别的插件配置（min_message_length, short_term_memory_capacity等）
     - system_config：系统级别的技术配置（向量存储、嵌入模型等）
 
     配置验证确保用户输入的参数在合理范围内，防止异常配置导致系统不稳定。
@@ -151,11 +150,6 @@ class MemoryConfig:
             memory_behavior.get("short_term_memory_capacity") or config_get("short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY),
             "short_term_memory_capacity",
             max_value=10.0,
-        )
-        self._sleep_interval = ConfigValidator.validate_non_negative_int(
-            memory_behavior.get("sleep_interval") or config_get("sleep_interval", MemoryConstants.SLEEP_INTERVAL),
-            "sleep_interval",
-            max_value=86400,
         )
         self._default_passive_strength = ConfigValidator.validate_positive_int(
             memory_behavior.get("default_passive_strength") or config_get("default_passive_strength", 10),
@@ -357,11 +351,6 @@ class MemoryConfig:
         return self._short_term_memory_capacity
 
     @property
-    def sleep_interval(self) -> int:
-        """获取睡眠间隔（秒）"""
-        return self._sleep_interval
-
-    @property
     def default_passive_strength(self) -> int:
         """获取被动记忆默认强度"""
         return self._default_passive_strength
@@ -476,7 +465,6 @@ class MemoryConfig:
         return {
             "min_message_length": self.min_message_length,
             "short_term_memory_capacity": self.short_term_memory_capacity,
-            "sleep_interval": self.sleep_interval,
             "default_passive_strength": self.default_passive_strength,
             "enable_local_embedding": self.enable_local_embedding,
             "conversation_scope_map": self.conversation_scope_map,

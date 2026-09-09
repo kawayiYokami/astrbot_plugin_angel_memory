@@ -89,30 +89,49 @@
           </n-grid-item>
         </n-grid>
 
-        <!-- 反思归纳记录 -->
-        <n-card title="反思归纳记录（最近10次）" embedded>
+        <!-- 过程追踪记录 -->
+        <n-card title="过程追踪记录（最近20次）" embedded>
           <template #header-extra>
-            <n-button quaternary size="small" :loading="traceLoading" @click="loadReflectionTraces">刷新</n-button>
+            <n-space :size="8">
+              <n-button
+                v-if="traceSelected.length"
+                size="small"
+                type="error"
+                secondary
+                :loading="traceDeleting"
+                @click="deleteSelectedTraces"
+                >删除选中（{{ traceSelected.length }}）</n-button
+              >
+              <n-button quaternary size="small" :loading="traceLoading" @click="loadTraces">刷新</n-button>
+            </n-space>
           </template>
           <n-space vertical :size="12">
             <n-alert type="warning" :bordered="false" style="font-size: 12px">
-              内存记录，重启插件后清空。提示词含对话原文，仅本机调试用；出问题时可复制整条反馈。
+              持久化到本地 JSONL，重启插件不丢失，也不会自动清理；需要时勾选后自行删除。提示词含对话原文，仅本机调试用。
             </n-alert>
             <n-empty
               v-if="!traceRecords.length && !traceLoading"
-              description="暂无反思记录，触发几轮对话后自动生成"
+              description="暂无记录，触发几轮对话或等待睡眠后自动生成"
             />
             <n-card v-for="r in traceRecords" :key="r.id" size="small" embedded>
               <template #header>
                 <n-space align="center" :size="8">
+                  <n-checkbox
+                    v-if="r.status !== 'pending'"
+                    :checked="traceSelected.includes(r.id)"
+                    @update:checked="(checked: boolean) => toggleTraceSelect(r.id, checked)"
+                  />
+                  <n-tag :type="r.type === 'sleep' ? 'info' : 'default'" size="small" :bordered="false">{{
+                    traceTypeText(r.type)
+                  }}</n-tag>
                   <n-tag :type="traceStatusType(r.status)" size="small" :bordered="false">{{
                     traceStatusText(r.status)
                   }}</n-tag>
                   <span class="muted">{{ r.time }}</span>
                   <span
                     class="muted"
-                    style="max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
-                    >{{ r.session_id || '无会话ID' }}</span
+                    style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
+                    >{{ traceMetaText(r) }}</span
                   >
                 </n-space>
               </template>
@@ -121,14 +140,18 @@
               </template>
               <n-collapse>
                 <n-collapse-item title="提示词" name="prompt">
-                  <pre class="code-block">{{ r.prompt }}</pre>
+                  <pre class="code-block">{{ r.prompt || '（无）' }}</pre>
                 </n-collapse-item>
                 <n-collapse-item v-if="r.status !== 'pending'" title="LLM 返回" name="response">
                   <n-alert v-if="r.error" type="error" :bordered="false" style="white-space: pre-wrap">{{
                     r.error
                   }}</n-alert>
                   <pre v-if="r.result" class="code-block">{{ JSON.stringify(r.result, null, 2) }}</pre>
-                  <div v-if="!r.result && !r.error" class="muted">无返回内容</div>
+                  <pre v-else-if="r.response" class="code-block">{{ r.response }}</pre>
+                  <div v-if="!r.result && !r.response && !r.error" class="muted">无返回内容</div>
+                </n-collapse-item>
+                <n-collapse-item v-if="r.summary" title="摘要" name="summary">
+                  <pre class="code-block">{{ JSON.stringify(r.summary, null, 2) }}</pre>
                 </n-collapse-item>
               </n-collapse>
             </n-card>
@@ -145,6 +168,7 @@ import {
   NAlert,
   NButton,
   NCard,
+  NCheckbox,
   NCollapse,
   NCollapseItem,
   NDescriptions,
@@ -159,15 +183,29 @@ import {
 } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
 
-const { apiGet } = useBridge()
+const { apiGet, apiPost } = useBridge()
 const message = useMessage()
 
 const loading = ref(true)
 const overview = ref<Record<string, any>>({})
 
-// 反思归纳记录
+// 过程追踪记录
 const traceRecords = ref<any[]>([])
 const traceLoading = ref(false)
+const traceDeleting = ref(false)
+const traceSelected = ref<string[]>([])
+
+function traceTypeText(type: string) {
+  return type === 'sleep' ? '睡眠' : '反思'
+}
+
+function traceMetaText(r: any) {
+  if (r.type === 'sleep') {
+    const s = r.summary || {}
+    return `候选 ${s.candidates ?? '-'}　判删 ${s.deleted ?? '-'}　判留 ${s.promoted ?? '-'}`
+  }
+  return r.session_id || '无会话ID'
+}
 
 function traceStatusType(status: string) {
   if (status === 'success') return 'success'
@@ -181,15 +219,45 @@ function traceStatusText(status: string) {
   return '处理中'
 }
 
-async function loadReflectionTraces() {
+function toggleTraceSelect(id: string, checked: boolean) {
+  if (checked) {
+    if (!traceSelected.value.includes(id)) traceSelected.value.push(id)
+  } else {
+    traceSelected.value = traceSelected.value.filter((item) => item !== id)
+  }
+}
+
+async function loadTraces() {
   traceLoading.value = true
   try {
     const data: any = await apiGet('trace/reflection')
     traceRecords.value = Array.isArray(data && data.records) ? data.records : []
+    traceSelected.value = traceSelected.value.filter((id) =>
+      traceRecords.value.some((r) => r.id === id && r.status !== 'pending'),
+    )
   } catch (e: any) {
-    message.error(e.message || '获取反思记录失败')
+    message.error(e.message || '获取过程记录失败')
   } finally {
     traceLoading.value = false
+  }
+}
+
+async function deleteSelectedTraces() {
+  if (!traceSelected.value.length) return
+  traceDeleting.value = true
+  try {
+    const data: any = await apiPost('trace/delete', { ids: traceSelected.value })
+    if (data && data.ok) {
+      message.success(`已删除 ${data.deleted ?? 0} 条记录`)
+    } else {
+      message.error((data && data.note) || '删除失败')
+    }
+    traceSelected.value = []
+    await loadTraces()
+  } catch (e: any) {
+    message.error(e.message || '删除失败')
+  } finally {
+    traceDeleting.value = false
   }
 }
 
@@ -210,7 +278,7 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-  loadReflectionTraces()
+  loadTraces()
 })
 </script>
 

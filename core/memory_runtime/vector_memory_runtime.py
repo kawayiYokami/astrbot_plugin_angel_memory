@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ...llm_memory.models.data_models import BaseMemory
 from ...llm_memory.service.cognitive_service import CognitiveService
@@ -106,8 +106,21 @@ class VectorMemoryRuntime:
             memory_scope=memory_scope,
         )
 
-    async def consolidate_memories(self) -> None:
-        await self._cognitive_service.consolidate_memories()
+    async def decay_tier0_memories(self) -> int:
+        return await self._cognitive_service.decay_tier0_memories()
+
+    async def list_retirement_candidates(self) -> List[BaseMemory]:
+        return await self._cognitive_service.list_retirement_candidates()
+
+    async def apply_retirement_decisions(
+        self,
+        delete_ids: List[str],
+        keep_ids: List[str],
+    ) -> Dict[str, int]:
+        return await self._cognitive_service.apply_retirement_decisions(
+            delete_ids=delete_ids,
+            keep_ids=keep_ids,
+        )
 
     def shutdown(self) -> None:
         return None

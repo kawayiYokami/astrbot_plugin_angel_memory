@@ -28,6 +28,8 @@ from .services.sleep_service import DeepMindSleepService
 from .services.user_profile_service import UserProfileService
 from .utils.feedback_queue import get_feedback_queue
 from .reflection_trace import ReflectionTraceBuffer
+from .sleep_schedule import seconds_until_next_sleep, should_run_sleep, today_key
+from .trace_store import TraceStore
 
 try:
     from astrbot.api import logger
@@ -106,6 +108,8 @@ class DeepMind:
         self.json_parser = JsonParser()
         # 反思归纳过程追踪（内存保留最近 10 次，供 WebUI 查看与反馈）
         self.reflection_trace = ReflectionTraceBuffer(maxlen=10)
+        # 过程追踪持久化（反思与睡眠共用一份 JSONL，追加写入、永不自动删除）
+        self.trace_store = TraceStore(self._resolve_trace_base_dir(plugin_context))
 
         # 获取配置值（嵌套配置）
         # 当前格式：memory_behavior.*, note_topk.*
@@ -114,7 +118,6 @@ class DeepMind:
         memory_behavior = getattr(config, "memory_behavior", {})
         self.min_message_length = memory_behavior.get("min_message_length") if isinstance(memory_behavior, dict) else getattr(config, "min_message_length", 5)
         self.short_term_memory_capacity = memory_behavior.get("short_term_memory_capacity") if isinstance(memory_behavior, dict) else getattr(config, "short_term_memory_capacity", 1.0)
-        self.sleep_interval = memory_behavior.get("sleep_interval") if isinstance(memory_behavior, dict) else getattr(config, "sleep_interval", 3600)
 
         # 笔记 Top-K 参数（候选固定为注入的 7 倍）
         note_assistant = getattr(config, "note_assistant", {})
@@ -140,8 +143,10 @@ class DeepMind:
             capacity_multiplier=self.short_term_memory_capacity
         )
 
-        # 睡眠状态管理
-        self.last_sleep_time = None  # 上次睡眠时间戳
+        # 睡眠调度状态：每天 04:00 一次，按运行环境本地时间，不做启动补偿
+        self._sleep_tick_task: Optional[asyncio.Task] = None
+        self._sleep_stop_event = asyncio.Event()
+        self._last_sleep_day = ""
 
         # 初始化工具类
         self.prompt_builder = SmallModelPromptBuilder()
@@ -643,17 +648,96 @@ class DeepMind:
 
     # _resolve_memory_ids 方法已移至 MemoryIDResolver 类中
 
-    async def check_and_sleep_if_needed(self, sleep_interval: int) -> bool:
-        """
-        检查是否需要睡眠，如果需要则触发睡眠
+    async def start_sleep_scheduler(self) -> None:
+        """启动睡眠调度循环：每天 04:00 执行一次，不做启动补偿。"""
+        if not self.is_enabled():
+            self.logger.info("[睡眠] 调度 跳过（DeepMind 未启用）")
+            return
+        if self._sleep_tick_task and not self._sleep_tick_task.done():
+            return
+        self._sleep_stop_event.clear()
+        self._sleep_tick_task = asyncio.create_task(self._sleep_tick_loop())
+        next_at = time.time() + seconds_until_next_sleep()
+        self.logger.info(
+            "[睡眠] 调度 开始 下次执行="
+            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(next_at))}"
+        )
 
-        Args:
-            sleep_interval: 睡眠间隔（秒），0表示禁用睡眠
+    async def _sleep_tick_loop(self) -> None:
+        """常驻循环：等到下一个 04:00 触发一次睡眠，漏跑不补偿。"""
+        while not self._sleep_stop_event.is_set():
+            delay = seconds_until_next_sleep()
+            try:
+                await asyncio.wait_for(self._sleep_stop_event.wait(), timeout=delay)
+                return
+            except asyncio.TimeoutError:
+                pass
+            if self._sleep_stop_event.is_set():
+                return
+            await self._run_scheduled_sleep()
 
-        Returns:
-            bool: 是否执行了睡眠
-        """
-        return await self.sleep_service.check_and_sleep_if_needed(sleep_interval)
+    async def _run_scheduled_sleep(self) -> None:
+        if not should_run_sleep(self._last_sleep_day):
+            self.logger.info(f"[睡眠] 调度 跳过（今日已执行）date={today_key()}")
+            return
+        self.logger.info(f"[睡眠] 调度 触发 date={today_key()}")
+        try:
+            await self.sleep_service.sleep()
+        finally:
+            self._last_sleep_day = today_key()
+
+    def _complete_reflection_trace(
+        self,
+        trace_id: Optional[int],
+        *,
+        status: str,
+        response: str = "",
+        result: Any = None,
+        error: str = "",
+    ) -> None:
+        """回填内存 trace 并落盘一份持久化记录，落盘失败不影响主流程。"""
+        self.reflection_trace.complete(
+            trace_id,
+            status=status,
+            response=response,
+            result=result,
+            error=error,
+        )
+        if trace_id is None:
+            return
+        try:
+            entry = next(
+                (
+                    item
+                    for item in self.reflection_trace.snapshot()
+                    if item.get("id") == trace_id
+                ),
+                None,
+            )
+            if entry is None:
+                return
+            self.trace_store.append_sync(
+                {
+                    "type": "reflection",
+                    "status": entry.get("status", status),
+                    "timestamp": entry.get("timestamp", 0.0),
+                    "session_id": entry.get("session_id", ""),
+                    "provider_id": entry.get("provider_id", ""),
+                    "prompt": entry.get("prompt", ""),
+                    "response": entry.get("response", ""),
+                    "result": entry.get("result"),
+                    "error": entry.get("error", ""),
+                }
+            )
+        except Exception as e:
+            self.logger.warning(f"[过程追踪] 反思记录落盘失败: {e}")
+
+    @staticmethod
+    def _resolve_trace_base_dir(plugin_context) -> str:
+        try:
+            return str(plugin_context.get_memory_center_dir())
+        except Exception:
+            return "."
 
     async def _sleep(self):
         """AI睡觉整理记忆：重要内容加强，无用内容清理"""
@@ -669,6 +753,9 @@ class DeepMind:
             self._reflection_stop_event.set()
             if self._reflection_tick_task and not self._reflection_tick_task.done():
                 self._reflection_tick_task.cancel()
+            self._sleep_stop_event.set()
+            if self._sleep_tick_task and not self._sleep_tick_task.done():
+                self._sleep_tick_task.cancel()
         except Exception:
             pass
 
@@ -1132,7 +1219,7 @@ class DeepMind:
                 self.logger.error(
                     f"找不到提供者: {self.provider_id}，会话: {session_id}"
                 )
-                self.reflection_trace.complete(
+                self._complete_reflection_trace(
                     trace_id,
                     status="failed",
                     error=f"找不到提供者: {self.provider_id}",
@@ -1147,14 +1234,14 @@ class DeepMind:
                     f"会话 {session_id} 的LLM调用失败，跳过记忆整理: {e}",
                     exc_info=True,
                 )
-                self.reflection_trace.complete(
+                self._complete_reflection_trace(
                     trace_id, status="failed", error=f"LLM调用失败: {e}"
                 )
                 return
 
             if not llm_response or not getattr(llm_response, "completion_text", ""):
                 self.logger.error(f"会话 {session_id} 的LLM API调用失败")
-                self.reflection_trace.complete(
+                self._complete_reflection_trace(
                     trace_id, status="failed", error="LLM API调用返回空响应"
                 )
                 return
@@ -1169,7 +1256,7 @@ class DeepMind:
                 self.logger.error(
                     f"会话 {session_id} 的JSON解析失败或未返回字典"
                 )
-                self.reflection_trace.complete(
+                self._complete_reflection_trace(
                     trace_id, status="failed", error="JSON解析失败或未返回字典"
                 )
                 return
@@ -1285,7 +1372,7 @@ class DeepMind:
                 f"[反思执行] 完成 session={session_id} "
                 f"useful={len(useful_ids)} new={len(newly_created_memories)}"
             )
-            self.reflection_trace.complete(
+            self._complete_reflection_trace(
                 trace_id,
                 status="success",
                 response=response_text,
@@ -1294,7 +1381,7 @@ class DeepMind:
 
         except Exception as e:
             import traceback
-            self.reflection_trace.complete(
+            self._complete_reflection_trace(
                 trace_id,
                 status="failed",
                 error=f"反思执行异常: {e}",

@@ -1654,24 +1654,100 @@ class MemorySqlManager:
             conn.commit()
             return int(cur.rowcount or 0)
 
-    async def consolidate_memories(self) -> None:
-        # T0 时间衰减（T1/T2 不参与自然遗忘）
-        await self.natural_decay_tier0()
-        deleted_ids: List[str] = []
+    async def decay_tier0_memories(self) -> int:
+        """睡眠第一步：T0 时间衰减，只降强度，不删除任何记录。"""
+        return await self.natural_decay_tier0()
+
+    def _list_retirement_candidates_sync(self) -> List[BaseMemory]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id FROM memory_records WHERE is_active = 0 AND strength <= 0"
+                """
+                SELECT id, memory_type, judgment, reasoning, strength,
+                       is_active, useful_count, useful_score, last_recalled_at,
+                       memory_scope, created_at
+                FROM memory_records
+                WHERE is_active = 0 AND strength <= 0
+                ORDER BY created_at ASC
+                """
             ).fetchall()
-            deleted_ids = [str(row["id"]) for row in rows]
-            conn.execute("DELETE FROM memory_records WHERE is_active = 0 AND strength <= 0")
-            conn.execute(
-                """
-                DELETE FROM memory_tag_rel
-                WHERE memory_id NOT IN (SELECT id FROM memory_records)
-                """
+            tags_map = self._fetch_tags_for_memory_ids(
+                conn, [str(row["id"]) for row in rows]
             )
+        return [
+            self._row_to_memory(row, tags_map.get(str(row["id"]), []))
+            for row in rows
+        ]
+
+    async def list_retirement_candidates(self) -> List[BaseMemory]:
+        """睡眠第二步：取出强度归零、等待裁决的被动记忆。"""
+        return await asyncio.to_thread(self._list_retirement_candidates_sync)
+
+    def _apply_retirement_decisions_sync(
+        self,
+        delete_ids: List[str],
+        keep_ids: List[str],
+    ) -> Dict[str, int]:
+        delete_list = [str(mid).strip() for mid in (delete_ids or []) if str(mid).strip()]
+        keep_list = [str(mid).strip() for mid in (keep_ids or []) if str(mid).strip()]
+        deleted = 0
+        promoted = 0
+        deleted_ids: List[str] = []
+        now = time.time()
+        with self._connect() as conn:
+            if delete_list:
+                placeholders = ",".join(["?" for _ in delete_list])
+                rows = conn.execute(
+                    f"""
+                    SELECT id FROM memory_records
+                    WHERE id IN ({placeholders})
+                      AND is_active = 0
+                      AND strength <= 0
+                    """,
+                    tuple(delete_list),
+                ).fetchall()
+                deleted_ids = [str(row["id"]) for row in rows]
+                if deleted_ids:
+                    delete_placeholders = ",".join(["?" for _ in deleted_ids])
+                    cur = conn.execute(
+                        f"DELETE FROM memory_records WHERE id IN ({delete_placeholders})",
+                        tuple(deleted_ids),
+                    )
+                    deleted = int(cur.rowcount or 0)
+            if keep_list:
+                placeholders = ",".join(["?" for _ in keep_list])
+                cur = conn.execute(
+                    f"""
+                    UPDATE memory_records
+                    SET is_active = 1, updated_at = ?
+                    WHERE id IN ({placeholders})
+                      AND is_active = 0
+                    """,
+                    tuple([now, *keep_list]),
+                )
+                promoted = int(cur.rowcount or 0)
+            if delete_list:
+                conn.execute(
+                    """
+                    DELETE FROM memory_tag_rel
+                    WHERE memory_id NOT IN (SELECT id FROM memory_records)
+                    """
+                )
             conn.commit()
-        self._sync_memory_fts_batch_sync(delete_ids=deleted_ids)
+        if deleted_ids:
+            self._sync_memory_fts_batch_sync(delete_ids=deleted_ids)
+        return {"deleted": deleted, "promoted": promoted}
+
+    async def apply_retirement_decisions(
+        self,
+        delete_ids: List[str],
+        keep_ids: List[str],
+    ) -> Dict[str, int]:
+        """睡眠第三步：按裁决执行删除与永久化，返回实际生效条数。"""
+        return await asyncio.to_thread(
+            self._apply_retirement_decisions_sync,
+            delete_ids,
+            keep_ids,
+        )
 
     def _get_memories_by_ids_sync(self, memory_ids: List[str]) -> List[BaseMemory]:
         ids = [str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()]

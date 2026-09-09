@@ -34,6 +34,7 @@ class ReflectionTraceBuffer:
             self._next_id += 1
             entry: Dict[str, Any] = {
                 "id": trace_id,
+                "timestamp": time.time(),
                 "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
                 "session_id": str(session_id or ""),
                 "provider_id": str(provider_id or ""),

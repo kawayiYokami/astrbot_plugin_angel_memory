@@ -117,7 +117,6 @@
 | `retrieval.rerank_provider_id` | "" | 重排提供商ID（推荐，效果提升明显） |
 | `conversation_scope_map` | "{}" | 记忆分类映射（先按人格名匹配，再按会话ID匹配，未命中为public） |
 | `memory_behavior.min_message_length` | 5 | 触发记忆处理的最小消息长度 |
-| `memory_behavior.sleep_interval` | 3600 | 记忆巩固间隔（秒） |
 | `enable_soul_system.*` | - | 灵魂系统各维度的默认值 |
 
 `conversation_scope_map` 示例：
@@ -386,7 +385,7 @@ retrieval:
 - **记忆向量库同步**：睡眠前维护阶段执行
 - **每日JSON备份**：每天1次，最多保留3份
 
-频率由 `sleep_interval` 控制（默认3600秒）。
+睡眠每天凌晨 4 点执行一次（按运行环境本地时间），与反思链路无关；进程在该时刻未运行时当天不补跑。
 
 ### 灵魂系统调优
 
@@ -409,7 +408,6 @@ note_assistant:
 
 memory_behavior:
   short_term_memory_capacity: 1 # 短期记忆容量倍数
-  sleep_interval: 3600          # 巩固间隔（秒）
 ```
 
 ## 🐛 故障排查

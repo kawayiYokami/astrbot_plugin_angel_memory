@@ -193,6 +193,16 @@ class PathManager:
         """获取记忆系统指南文件（单一合并版，反思提示词的真相源）。"""
         return cls._get_plugin_root() / "llm_memory" / "prompts" / "memory_system_guide.md"
 
+    @classmethod
+    def get_prompt_retirement_review_path(cls) -> Path:
+        """获取记忆淘汰审查提示词文件。"""
+        return (
+            cls._get_plugin_root()
+            / "llm_memory"
+            / "prompts"
+            / "memory_retirement_review.md"
+        )
+
     # === 便捷方法 ===
 
     def list_databases(self) -> Dict[str, Path]:

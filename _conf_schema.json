@@ -87,12 +87,6 @@
         "default": 1,
         "hint": "设置为2则容量翻倍，设置为3则容量变为3倍。"
       },
-      "sleep_interval": {
-        "type": "int",
-        "description": "记忆巩固（睡眠）的执行间隔（秒）",
-        "default": 3600,
-        "hint": "默认1小时执行一次。设置为0则禁用定期睡眠。"
-      },
       "decay_policy_override": {
         "type": "object",
         "description": "【可选高级项】遗忘/巩固参数覆盖",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 from ...llm_memory.models.data_models import BaseMemory
 
@@ -67,5 +67,18 @@ class MemoryRuntime(Protocol):
     ) -> List[BaseMemory]:
         ...
 
-    async def consolidate_memories(self) -> None:
+    async def decay_tier0_memories(self) -> int:
+        """睡眠第一步：T0 时间衰减，只降强度，不删除。"""
+        ...
+
+    async def list_retirement_candidates(self) -> List[BaseMemory]:
+        """睡眠第二步：取出强度归零、等待裁决的被动记忆。"""
+        ...
+
+    async def apply_retirement_decisions(
+        self,
+        delete_ids: List[str],
+        keep_ids: List[str],
+    ) -> Dict[str, int]:
+        """睡眠第三步：按裁决执行删除与永久化。"""
         ...

@@ -250,16 +250,6 @@ class PluginManager:
                     await deepmind.async_analyze_and_update_memory(event, response)
                     self.logger.debug("记忆整理执行完成")
 
-                    # 记忆整理完成后，检查是否需要睡眠
-                    try:
-                        sleep_interval = self.config.get("sleep_interval", 3600)
-                        slept = await deepmind.check_and_sleep_if_needed(sleep_interval)
-                        if slept:
-                            self.logger.info("睡眠（记忆巩固）已执行")
-                    except Exception as sleep_error:
-                        # 睡眠失败不影响记忆整理的成功状态
-                        self.logger.error(f"睡眠检查失败: {sleep_error}")
-
                     return {
                         "status": "success",
                         "message": "记忆整理完成",

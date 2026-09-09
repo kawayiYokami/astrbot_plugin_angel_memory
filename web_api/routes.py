@@ -66,8 +66,9 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         # 功能调试（探针）
         (f"/{PLUGIN_NAME}/debug/embedding", debug_api.embedding_probe, ["POST"], "嵌入探针（自定义批次/超时）"),
         (f"/{PLUGIN_NAME}/debug/rerank", debug_api.rerank_probe, ["POST"], "重排探针（自定义超时）"),
-        # 反思记录
-        (f"/{PLUGIN_NAME}/trace/reflection", trace_api.get_records, ["GET"], "反思归纳过程记录（最近10次）"),
+        # 反思与睡眠记录
+        (f"/{PLUGIN_NAME}/trace/reflection", trace_api.get_records, ["GET"], "反思与睡眠过程记录（最近20次）"),
+        (f"/{PLUGIN_NAME}/trace/delete", trace_api.delete_records, ["POST"], "删除指定的过程记录"),
     ]
 
     if plugin is not None:
