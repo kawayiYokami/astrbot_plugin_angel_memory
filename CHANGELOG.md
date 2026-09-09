@@ -2,6 +2,14 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [1.6.13] - 2026-09-10
+
+### Fixed
+- `fix(retrieval)`: 删除记忆后，关键词检索索引里仍残留这条记忆，被删掉的记忆会一直留在检索候选池中；现在删除会同步清理索引（该问题自 2026-02-22 的检索重构起存在）。
+
+### Core Changes
+- `chore(memory)`: 启动不再每次全量重建检索索引，索引格式一致时直接复用、格式升级时自动重建一次；升级到本版本后首次启动会重建一次索引。
+
 ## [1.6.12] - 2026-09-10
 
 ### Features

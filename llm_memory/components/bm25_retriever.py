@@ -30,6 +30,11 @@ import tantivy
 class TantivyBM25Retriever:
     """Tantivy BM25 + 向量融合检索器。"""
 
+    # 索引格式版本：字段 schema 或分词方式变更时递增。
+    # 启动时版本不符会清空索引目录，由上层从真相源重建一次。
+    INDEX_FORMAT_VERSION = "2"
+    _INDEX_FORMAT_FILE = ".index_format_version"
+
     def __init__(
         self,
         db_path: str,
@@ -45,15 +50,39 @@ class TantivyBM25Retriever:
         base_dir = Path(self.db_path).parent / "tantivy_indexes"
         self._memory_dir = base_dir / "memory"
         self._memory_dir.mkdir(parents=True, exist_ok=True)
+        self.memory_index_reusable = self._prepare_memory_index_format()
 
         # 使用 TEXT 字段存储预分词文本，检索时直接按 token 查询。
+        # item_id 必须用 raw 分词：UUID 含连字符，default 分词会把它切成多段词项，
+        # 按整串删除时匹配不到词项，删除会静默失效。
         memory_builder = tantivy.SchemaBuilder()
-        memory_builder.add_text_field("item_id", stored=True)
+        memory_builder.add_text_field("item_id", stored=True, tokenizer_name="raw")
         memory_builder.add_text_field("tags_text", stored=False)
         memory_builder.add_text_field("judgment_text", stored=False)
         self._memory_schema = memory_builder.build()
 
         self._memory_index = tantivy.Index(self._memory_schema, path=str(self._memory_dir))
+
+    def _prepare_memory_index_format(self) -> bool:
+        """索引格式版本一致时复用已有索引，否则清空目录交由上层重建。"""
+        version_file = self._memory_dir / self._INDEX_FORMAT_FILE
+        try:
+            current = version_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            current = ""
+        if current == self.INDEX_FORMAT_VERSION:
+            return True
+        for child in self._memory_dir.iterdir():
+            if child.is_file():
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+        try:
+            version_file.write_text(self.INDEX_FORMAT_VERSION, encoding="utf-8")
+        except OSError:
+            pass
+        return False
 
     @staticmethod
     def _normalize_token(token: str) -> str:

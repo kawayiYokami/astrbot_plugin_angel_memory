@@ -80,11 +80,11 @@ class MemorySqlManager:
         self._init_db()
         self._load_tag_cache()
         self._init_short_id_registry()
-        # 启动阶段主动完成一次 FTS5 索引构建，避免首次查询触发冷启动延迟。
+        # 启动阶段检查检索索引：格式版本一致时直接复用，避免每次启动全量重建。
         start_ts = time.time()
-        self._ensure_fts_ready_sync(force_rebuild=True)
+        self._ensure_fts_ready_sync()
         elapsed_ms = int((time.time() - start_ts) * 1000)
-        self.logger.info(f"[FTS5重建] 启动预构建完成 耗时={elapsed_ms}ms")
+        self.logger.info(f"[检索索引] 启动就绪检查完成 耗时={elapsed_ms}ms")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=30.0)
@@ -539,6 +539,10 @@ class MemorySqlManager:
         with self._fts_lock:
             effective_force_rebuild = bool(force_rebuild or self._fts_rebuild_required)
             if self._fts_ready and not effective_force_rebuild:
+                return
+            if not effective_force_rebuild and self._fts_retriever.memory_index_reusable:
+                self._fts_ready = True
+                self.logger.info("[检索索引] 复用已有索引 跳过重建")
                 return
             previous_ready = self._fts_ready
             try:
