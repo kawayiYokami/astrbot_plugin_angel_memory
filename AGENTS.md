@@ -289,6 +289,12 @@ LLM响应 → DeepMind.async_analyze_and_update_memory()
 - 归档需要根据最新实现情况修正计划书，进行归档报告。
 - 归档文件命名必须带日期，如20260220_重启FTS5混合检索计划
 
+### 测试与验证
+- 插件运行在 Docker 容器内，测试必须在容器内执行；宿主机环境不代表运行环境（可能缺 tantivy 等依赖）。
+- 容器需处于运行状态（`docker ps` 可见 `astrbot`），执行：
+  `docker exec astrbot bash -lc 'cd /AstrBot/data/plugins/astrbot_plugin_angel_memory && python -m pytest -q'`
+- 必须用 `python -m pytest` 而不是 `pytest`：可执行脚本不会把当前目录加入 `sys.path`，会导致 `llm_memory` 导入失败、测试收集报错。
+
 ### 日志标准
 - 日志文案默认使用中文，避免中英混杂；仅在必要时保留英文标识（如集合名、配置键名、异常类名）。
 - 任务型日志统一前缀：`[睡眠维护]`、`[睡眠]`、`[简单记忆回灌]`，便于平台日志检索。
