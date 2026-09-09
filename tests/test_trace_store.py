@@ -50,7 +50,9 @@ def test_read_recent_supports_offset(tmp_path):
 def test_long_text_compressed_on_disk_and_restored(tmp_path):
     store = TraceStore(tmp_path)
     text = "记忆内容" * 4000
-    store.append_sync({"type": "sleep", "prompt": text, "response": "模型返回"})
+    store.append_sync(
+        {"type": "sleep", "prompt": text, "system_prompt": "固定规则", "response": "模型返回"}
+    )
 
     raw_line = store.path.read_text(encoding="utf-8").strip()
     payload = json.loads(raw_line)
@@ -60,6 +62,7 @@ def test_long_text_compressed_on_disk_and_restored(tmp_path):
 
     record = store.read_recent_sync(limit=1)[0]
     assert record["prompt"] == text
+    assert record["system_prompt"] == "固定规则"
     assert record["response"] == "模型返回"
 
 

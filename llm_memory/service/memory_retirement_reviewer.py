@@ -22,9 +22,17 @@ from ..prompts.prompt_assembler import PromptAssembler
 class RetirementReviewError(Exception):
     """淘汰审查失败，携带已发出的提示词与已收到的返回，供 trace 记录。"""
 
-    def __init__(self, message: str, *, prompt: str = "", response: str = ""):
+    def __init__(
+        self,
+        message: str,
+        *,
+        prompt: str = "",
+        system_prompt: str = "",
+        response: str = "",
+    ):
         super().__init__(message)
         self.prompt = str(prompt or "")
+        self.system_prompt = str(system_prompt or "")
         self.response = str(response or "")
 
 
@@ -34,6 +42,7 @@ class RetirementReviewOutcome:
 
     decisions: Dict[str, str]
     prompt: str
+    system_prompt: str
     response: str
     candidate_count: int
 
@@ -61,44 +70,60 @@ class MemoryRetirementReviewer:
         """审查候选列表；失败抛 RetirementReviewError，成功返回裁决表。"""
         candidate_list = [mem for mem in (candidates or []) if getattr(mem, "id", None)]
         short_ids = self._build_short_ids(len(candidate_list))
-        prompt = self.build_prompt(candidate_list, short_ids)
+        system_prompt = self.build_system_prompt()
+        user_prompt = self.build_user_prompt(candidate_list, short_ids)
 
         provider = (
             self.context.get_provider_by_id(self.provider_id) if self.context else None
         )
         if provider is None:
             raise RetirementReviewError(
-                f"找不到提供者: {self.provider_id}", prompt=prompt
+                f"找不到提供者: {self.provider_id}",
+                prompt=user_prompt,
+                system_prompt=system_prompt,
             )
 
         try:
             llm_response = await asyncio.wait_for(
-                provider.text_chat(prompt=prompt),
+                provider.text_chat(prompt=user_prompt, system_prompt=system_prompt),
                 timeout=self.REVIEW_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
             raise RetirementReviewError(
-                f"审查调用超时（{int(self.REVIEW_TIMEOUT_SECONDS)} 秒）", prompt=prompt
+                f"审查调用超时（{int(self.REVIEW_TIMEOUT_SECONDS)} 秒）",
+                prompt=user_prompt,
+                system_prompt=system_prompt,
             )
         except Exception as e:
-            raise RetirementReviewError(f"审查调用失败: {e}", prompt=prompt)
+            raise RetirementReviewError(
+                f"审查调用失败: {e}",
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+            )
 
         response_text = str(getattr(llm_response, "completion_text", "") or "")
         if not response_text.strip():
             raise RetirementReviewError(
-                "审查调用返回空响应", prompt=prompt, response=response_text
+                "审查调用返回空响应",
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                response=response_text,
             )
 
         try:
             decisions = self._parse_decisions(response_text, candidate_list, short_ids)
         except ValueError as e:
             raise RetirementReviewError(
-                str(e), prompt=prompt, response=response_text
+                str(e),
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                response=response_text,
             )
 
         return RetirementReviewOutcome(
             decisions=decisions,
-            prompt=prompt,
+            prompt=user_prompt,
+            system_prompt=system_prompt,
             response=response_text,
             candidate_count=len(candidate_list),
         )
@@ -106,16 +131,18 @@ class MemoryRetirementReviewer:
     def _build_short_ids(self, count: int) -> List[str]:
         return [f"m{index}-{self._id_token}" for index in range(count)]
 
-    def build_prompt(
+    def build_system_prompt(self) -> str:
+        """审查规则，内容固定，便于命中提示词缓存。"""
+        return PromptAssembler.build_memory_retirement_review()
+
+    def build_user_prompt(
         self,
         candidates: Sequence[BaseMemory],
         short_ids: Sequence[str],
     ) -> str:
-        """提示词 = 审查规则 + 本次候选清单。"""
-        guide = PromptAssembler.build_memory_retirement_review()
+        """本次候选清单与输出要求。"""
         listing = self._build_listing(candidates, short_ids)
         return (
-            f"{guide}\n"
             "# 记忆清单\n\n"
             f"{listing}\n\n"
             "请按以上规则逐条裁决，仅输出 JSON。\n"

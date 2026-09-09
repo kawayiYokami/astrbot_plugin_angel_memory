@@ -51,10 +51,12 @@ class _FakeProvider:
         self.delay = delay
         self.calls = 0
         self.prompts = []
+        self.system_prompts = []
 
-    async def text_chat(self, prompt: str):
+    async def text_chat(self, prompt: str, system_prompt: str = None):
         self.calls += 1
         self.prompts.append(prompt)
+        self.system_prompts.append(system_prompt)
         if self.delay:
             await asyncio.sleep(self.delay)
         if self.error is not None:
@@ -160,7 +162,7 @@ def test_prompt_contains_candidate_fields():
     assert "我的外貌是银色长发" in outcome.prompt
     assert f"`{_short(0)}`" in outcome.prompt
     assert "`外貌`" in outcome.prompt
-    assert "拥有长期记忆能力的高级人工智能" in outcome.prompt
+    assert "`依据内容`" in outcome.prompt
 
 
 def test_repeated_example_json_does_not_map_to_real_candidate():
@@ -242,3 +244,31 @@ def test_review_raises_when_decisions_missing():
         asyncio.run(_reviewer(provider).review([_memory("mem-0")]))
 
     assert "decisions" in str(excinfo.value)
+
+
+def test_rules_go_to_system_prompt_and_listing_to_user_prompt():
+    """system 只放固定规则、user 只放本次清单，便于命中提示词缓存。"""
+    candidates = [_memory("mem-0", judgment="雪豹数据光体")]
+    reviewer = _reviewer(_FakeProvider(text="{}"))
+
+    system_prompt = reviewer.build_system_prompt()
+    user_prompt = reviewer.build_user_prompt(candidates, [_short(0)])
+
+    assert "# 记忆清单" not in system_prompt
+    assert "雪豹数据光体" not in system_prompt
+    assert user_prompt.startswith("# 记忆清单")
+    assert "雪豹数据光体" in user_prompt
+    assert _short(0) in user_prompt
+
+
+def test_review_sends_fixed_rules_as_system_prompt():
+    provider = _FakeProvider(text=_response((0, "keep")))
+
+    outcome = asyncio.run(_reviewer(provider).review([_memory("mem-0")]))
+
+    assert provider.system_prompts[0] == _reviewer(provider).build_system_prompt()
+    assert provider.prompts[0].startswith("# 记忆清单")
+    assert "# 记忆清单" not in provider.system_prompts[0]
+    # trace 记录的用户提示词只放本次清单，固定规则另存 system_prompt
+    assert outcome.prompt == provider.prompts[0]
+    assert outcome.system_prompt == provider.system_prompts[0]

@@ -138,22 +138,59 @@
               <template #header-extra>
                 <n-button size="tiny" secondary @click="copyTrace(r)">复制</n-button>
               </template>
-              <n-collapse>
-                <n-collapse-item title="提示词" name="prompt">
-                  <pre class="code-block">{{ r.prompt || '（无）' }}</pre>
-                </n-collapse-item>
-                <n-collapse-item v-if="r.status !== 'pending'" title="LLM 返回" name="response">
-                  <n-alert v-if="r.error" type="error" :bordered="false" style="white-space: pre-wrap">{{
-                    r.error
-                  }}</n-alert>
-                  <pre v-if="r.result" class="code-block">{{ JSON.stringify(r.result, null, 2) }}</pre>
-                  <pre v-else-if="r.response" class="code-block">{{ r.response }}</pre>
-                  <div v-if="!r.result && !r.response && !r.error" class="muted">无返回内容</div>
-                </n-collapse-item>
-                <n-collapse-item v-if="r.summary" title="摘要" name="summary">
-                  <pre class="code-block">{{ JSON.stringify(r.summary, null, 2) }}</pre>
-                </n-collapse-item>
-              </n-collapse>
+              <div class="trace-block">
+                <div class="trace-block-head">
+                  <span class="trace-block-title">用户提示词</span>
+                  <n-button-group size="tiny">
+                    <n-button
+                      :type="promptView(r.id) === 'render' ? 'primary' : 'default'"
+                      :secondary="promptView(r.id) === 'render'"
+                      @click="setPromptView(r.id, 'render')"
+                      >渲染</n-button
+                    >
+                    <n-button
+                      :type="promptView(r.id) === 'raw' ? 'primary' : 'default'"
+                      :secondary="promptView(r.id) === 'raw'"
+                      @click="setPromptView(r.id, 'raw')"
+                      >原文</n-button
+                    >
+                  </n-button-group>
+                </div>
+                <pre v-if="promptView(r.id) === 'raw'" class="code-block">{{ r.prompt || '（无）' }}</pre>
+                <div v-else class="md-body" v-html="renderMarkdown(r.prompt)"></div>
+              </div>
+
+              <div v-if="r.status !== 'pending'" class="trace-block">
+                <div class="trace-block-head">
+                  <span class="trace-block-title">LLM 返回</span>
+                  <n-button-group size="tiny">
+                    <n-button
+                      :type="resultView(r.id) === 'render' ? 'primary' : 'default'"
+                      :secondary="resultView(r.id) === 'render'"
+                      @click="setResultView(r.id, 'render')"
+                      >渲染</n-button
+                    >
+                    <n-button
+                      :type="resultView(r.id) === 'raw' ? 'primary' : 'default'"
+                      :secondary="resultView(r.id) === 'raw'"
+                      @click="setResultView(r.id, 'raw')"
+                      >原文</n-button
+                    >
+                  </n-button-group>
+                </div>
+                <n-alert v-if="r.error" type="error" :bordered="false" style="white-space: pre-wrap">{{
+                  r.error
+                }}</n-alert>
+                <pre v-if="resultView(r.id) === 'raw'" class="code-block">{{ rawResultText(r) }}</pre>
+                <div v-else class="md-body" v-html="renderResult(r)"></div>
+              </div>
+
+              <div v-if="r.summary" class="trace-block">
+                <div class="trace-block-head">
+                  <span class="trace-block-title">摘要</span>
+                </div>
+                <div class="md-body" v-html="renderJson(r.summary)"></div>
+              </div>
             </n-card>
           </n-space>
         </n-card>
@@ -167,10 +204,9 @@ import { ref, onMounted } from 'vue'
 import {
   NAlert,
   NButton,
+  NButtonGroup,
   NCard,
   NCheckbox,
-  NCollapse,
-  NCollapseItem,
   NDescriptions,
   NDescriptionsItem,
   NEmpty,
@@ -194,6 +230,162 @@ const traceRecords = ref<any[]>([])
 const traceLoading = ref(false)
 const traceDeleting = ref(false)
 const traceSelected = ref<string[]>([])
+const promptViews = ref<Record<string, 'render' | 'raw'>>({})
+const resultViews = ref<Record<string, 'render' | 'raw'>>({})
+
+function promptView(id: string | number) {
+  return promptViews.value[String(id)] || 'render'
+}
+
+function resultView(id: string | number) {
+  return resultViews.value[String(id)] || 'render'
+}
+
+function setPromptView(id: string | number, view: 'render' | 'raw') {
+  promptViews.value[String(id)] = view
+}
+
+function setResultView(id: string | number, view: 'render' | 'raw') {
+  resultViews.value[String(id)] = view
+}
+
+function escapeHtml(text: string) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function renderInline(text: string) {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+}
+
+/** 极简 Markdown 渲染：标题、列表、代码块、加粗、行内代码。 */
+function renderMarkdown(text: any) {
+  const source = String(text ?? '')
+  if (!source.trim()) return '<p class="md-empty">（无）</p>'
+
+  const html: string[] = []
+  let listType: 'ul' | 'ol' | '' = ''
+  let listItems: string[] = []
+  let paragraph: string[] = []
+  let codeLines: string[] | null = null
+
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      html.push(`<p>${paragraph.map(renderInline).join('<br>')}</p>`)
+      paragraph = []
+    }
+  }
+  const flushList = () => {
+    if (listType) {
+      html.push(`<${listType}>${listItems.map((item) => `<li>${item}</li>`).join('')}</${listType}>`)
+      listType = ''
+      listItems = []
+    }
+  }
+
+  for (const line of source.split(/\r?\n/)) {
+    if (codeLines !== null) {
+      if (/^\s*```/.test(line)) {
+        html.push(`<pre class="md-code">${escapeHtml(codeLines.join('\n'))}</pre>`)
+        codeLines = null
+      } else {
+        codeLines.push(line)
+      }
+      continue
+    }
+    if (/^\s*```/.test(line)) {
+      flushParagraph()
+      flushList()
+      codeLines = []
+      continue
+    }
+    if (!line.trim()) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+    const heading = line.match(/^(#{1,6})\s+(.*)$/)
+    if (heading) {
+      flushParagraph()
+      flushList()
+      const level = heading[1].length
+      html.push(`<h${level}>${renderInline(heading[2])}</h${level}>`)
+      continue
+    }
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/)
+    if (bullet) {
+      flushParagraph()
+      if (listType !== 'ul') {
+        flushList()
+        listType = 'ul'
+      }
+      listItems.push(renderInline(bullet[1]))
+      continue
+    }
+    const ordered = line.match(/^\s*\d+\.\s+(.*)$/)
+    if (ordered) {
+      flushParagraph()
+      if (listType !== 'ol') {
+        flushList()
+        listType = 'ol'
+      }
+      listItems.push(renderInline(ordered[1]))
+      continue
+    }
+    if (listType && /^\s{2,}\S/.test(line)) {
+      const last = listItems.length - 1
+      listItems[last] = `${listItems[last]}<br>${renderInline(line.trim())}`
+      continue
+    }
+    flushList()
+    paragraph.push(line)
+  }
+  flushParagraph()
+  flushList()
+  if (codeLines !== null) {
+    html.push(`<pre class="md-code">${escapeHtml(codeLines.join('\n'))}</pre>`)
+  }
+  return html.join('')
+}
+
+/** 递归渲染 JSON 对象为键值树。 */
+function renderJson(value: any): string {
+  if (value === null || value === undefined) return '<span class="json-null">null</span>'
+  if (typeof value === 'string') return `<span class="json-str">${escapeHtml(value)}</span>`
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return `<span class="json-num">${escapeHtml(String(value))}</span>`
+  }
+  if (Array.isArray(value)) {
+    if (!value.length) return '<span class="json-null">[]</span>'
+    return `<ul class="json-list">${value.map((item) => `<li>${renderJson(item)}</li>`).join('')}</ul>`
+  }
+  const entries = Object.entries(value)
+  if (!entries.length) return '<span class="json-null">{}</span>'
+  return `<div class="json-obj">${entries
+    .map(
+      ([key, item]) =>
+        `<div class="json-row"><span class="json-key">${escapeHtml(key)}</span>` +
+        `<div class="json-val">${renderJson(item)}</div></div>`,
+    )
+    .join('')}</div>`
+}
+
+function rawResultText(r: any) {
+  if (r.response) return String(r.response)
+  if (r.result !== undefined && r.result !== null) return JSON.stringify(r.result, null, 2)
+  return '（无）'
+}
+
+function renderResult(r: any) {
+  if (r.result !== undefined && r.result !== null) return renderJson(r.result)
+  if (r.response) return renderMarkdown(r.response)
+  return '<p class="md-empty">无返回内容</p>'
+}
 
 function traceTypeText(type: string) {
   return type === 'sleep' ? '睡眠' : '反思'
@@ -326,5 +518,131 @@ onMounted(async () => {
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.trace-block + .trace-block {
+  margin-top: 12px;
+}
+
+.trace-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.trace-block-title {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.md-body {
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.md-body :deep(p) {
+  margin: 0 0 6px;
+}
+
+.md-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.md-body :deep(h1),
+.md-body :deep(h2),
+.md-body :deep(h3),
+.md-body :deep(h4),
+.md-body :deep(h5),
+.md-body :deep(h6) {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.md-body :deep(h1:first-child) {
+  margin-top: 0;
+}
+
+.md-body :deep(ul),
+.md-body :deep(ol) {
+  margin: 0 0 6px;
+  padding-left: 20px;
+}
+
+.md-body :deep(li) {
+  margin-bottom: 2px;
+}
+
+.md-body :deep(code) {
+  background: rgba(127, 127, 127, 0.18);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 12px;
+}
+
+.md-body :deep(.md-code) {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border-radius: 6px;
+  padding: 10px;
+  margin: 0 0 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.md-body :deep(.md-code code) {
+  background: none;
+  padding: 0;
+}
+
+.md-empty {
+  opacity: 0.6;
+}
+
+.md-body :deep(.json-obj) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.md-body :deep(.json-row) {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.md-body :deep(.json-key) {
+  flex: 0 0 auto;
+  min-width: 120px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.md-body :deep(.json-val) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.md-body :deep(.json-list) {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.md-body :deep(.json-null) {
+  opacity: 0.5;
+}
+
+.md-body :deep(.json-num) {
+  color: #d03050;
+}
+
+.md-body :deep(.json-str) {
+  white-space: pre-wrap;
 }
 </style>

@@ -85,6 +85,7 @@ class DeepMindSleepService:
                 "skipped": True,
                 "cost_ms": cost_ms,
                 "prompt": e.prompt,
+                "system_prompt": e.system_prompt,
                 "response": e.response,
                 "error": str(e),
             }
@@ -108,6 +109,7 @@ class DeepMindSleepService:
             "skipped": False,
             "cost_ms": cost_ms,
             "prompt": outcome.prompt,
+            "system_prompt": outcome.system_prompt,
             "response": outcome.response,
             "error": "",
         }
@@ -144,6 +146,7 @@ class DeepMindSleepService:
             "skipped": False,
             "cost_ms": 0,
             "prompt": "",
+            "system_prompt": "",
             "response": "",
             "error": "",
         }
@@ -165,6 +168,7 @@ class DeepMindSleepService:
                     "status": "failed" if recycle_result.get("skipped") else "success",
                     "provider_id": getattr(deepmind, "provider_id", ""),
                     "prompt": recycle_result.get("prompt", ""),
+                    "system_prompt": recycle_result.get("system_prompt", ""),
                     "response": recycle_result.get("response", ""),
                     "error": recycle_result.get("error", ""),
                     "summary": {

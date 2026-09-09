@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-COMPRESSED_FIELDS = ("prompt", "response")
+COMPRESSED_FIELDS = ("prompt", "system_prompt", "response")
 COMPRESSED_MARKER = "__lzma__"
 
 

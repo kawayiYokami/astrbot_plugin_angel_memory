@@ -224,16 +224,19 @@ class SmallModelPromptBuilder:
         return "".join(parts)
 
     @staticmethod
-    def build_post_hoc_analysis_prompt(
+    def build_post_hoc_analysis_prompts(
         historical_query: str,
         main_llm_response: str,
         raw_memories: List,
         core_topic: str = "",
         memory_id_mapping: Dict[str, str] = None,
         config=None,
-    ) -> str:
+    ) -> Tuple[str, str]:
         """
-        构建用于事后反思的提示词
+        构建用于事后反思的提示词，返回 (system_prompt, user_prompt)
+
+        system_prompt 固定为记忆系统指南，便于命中提示词缓存；
+        user_prompt 只放本次对话数据与输出要求。
 
         Args:
             historical_query: 历史对话内容
@@ -244,17 +247,14 @@ class SmallModelPromptBuilder:
             config: 配置对象（可选）
 
         Returns:
-            完整的反思提示词字符串
+            (system_prompt, user_prompt)
         """
         from ...llm_memory.prompts.prompt_assembler import PromptAssembler
 
-        guide_content = PromptAssembler.build_memory_system_guide()
+        system_prompt = PromptAssembler.build_memory_system_guide()
 
         # 构建数据上下文（仅包含实际数据，不包含指令）
-        data_context = f"""
----
-
-# 本次对话数据
+        data_context = f"""# 本次对话数据
 
 ## 历史对话内容
 {historical_query}
@@ -281,14 +281,11 @@ class SmallModelPromptBuilder:
         else:
             data_context += "\n无相关记忆\n"
 
-        # 组合完整提示词：指南 + 数据
-        full_prompt = f"""{guide_content}
-
-{data_context}
+        user_prompt = f"""{data_context}
 
 ---
 
 现在请开始分析并输出JSON结果。
 """
 
-        return full_prompt
+        return system_prompt, user_prompt

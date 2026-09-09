@@ -724,6 +724,7 @@ class DeepMind:
                     "session_id": entry.get("session_id", ""),
                     "provider_id": entry.get("provider_id", ""),
                     "prompt": entry.get("prompt", ""),
+                    "system_prompt": entry.get("system_prompt", ""),
                     "response": entry.get("response", ""),
                     "result": entry.get("result"),
                     "error": entry.get("error", ""),
@@ -1196,7 +1197,8 @@ class DeepMind:
             memory_id_mapping = context_data.get("memory_id_mapping", {})
 
             # 构建反思提示词（只传递记忆数据，不传递笔记）
-            prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompt(
+            # system 放固定指南、user 放本次数据，便于命中提示词缓存
+            system_prompt, prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
                 historical_query=historical_chat_text,
                 main_llm_response=response_text,
                 raw_memories=long_term_memories,
@@ -1207,10 +1209,11 @@ class DeepMind:
 
             self.logger.info(
                 f"[反思执行] 最终提示词 session={session_id} "
-                f"prompt_len={len(prompt)}\n{prompt}"
+                f"system_len={len(system_prompt)} prompt_len={len(prompt)}\n"
+                f"{system_prompt}\n\n{prompt}"
             )
             trace_id = self.reflection_trace.record_start(
-                session_id, self.provider_id, prompt
+                session_id, self.provider_id, prompt, system_prompt
             )
 
             # 调用小模型进行分析（在后台线程中同步调用）
@@ -1228,7 +1231,9 @@ class DeepMind:
 
             try:
                 # 直接异步调用，无需检查
-                llm_response = await provider.text_chat(prompt=prompt)
+                llm_response = await provider.text_chat(
+                    prompt=prompt, system_prompt=system_prompt
+                )
             except Exception as e:
                 self.logger.error(
                     f"会话 {session_id} 的LLM调用失败，跳过记忆整理: {e}",

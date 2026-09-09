@@ -97,7 +97,7 @@ class _FakeProvider:
     def __init__(self, responder=None):
         self.responder = responder
 
-    async def text_chat(self, prompt: str):
+    async def text_chat(self, prompt: str, system_prompt: str = None):
         text = self.responder(prompt) if self.responder else ""
         return SimpleNamespace(completion_text=text)
 
@@ -257,3 +257,5 @@ def test_sleep_records_trace_with_summary():
     assert record["summary"]["candidates"] == 1
     assert record["summary"]["deleted"] == 1
     assert "记忆清单" in record["prompt"]
+    assert record["system_prompt"]
+    assert "判断-mem-0" not in record["system_prompt"]

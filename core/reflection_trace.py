@@ -27,8 +27,12 @@ class ReflectionTraceBuffer:
         session_id: str,
         provider_id: str,
         prompt: str,
+        system_prompt: str = "",
     ) -> Optional[int]:
-        """提示词构造完成后入档，返回 trace id 供结果回填；异常时返回 None。"""
+        """提示词构造完成后入档，返回 trace id 供结果回填；异常时返回 None。
+
+        prompt 只存本次的用户提示词，固定指南另存 system_prompt。
+        """
         try:
             trace_id = self._next_id
             self._next_id += 1
@@ -40,6 +44,7 @@ class ReflectionTraceBuffer:
                 "provider_id": str(provider_id or ""),
                 "status": "pending",
                 "prompt": str(prompt or ""),
+                "system_prompt": str(system_prompt or ""),
                 "response": "",
                 "result": None,
                 "error": "",

@@ -60,7 +60,7 @@ def test_rolling_window_keeps_latest():
 
 def test_success_complete_fields():
     buf = ReflectionTraceBuffer(maxlen=10)
-    trace_id = buf.record_start("s1", "provider-a", "prompt")
+    trace_id = buf.record_start("s1", "provider-a", "prompt", "固定规则")
     buf.complete(
         trace_id,
         status="success",
@@ -72,6 +72,9 @@ def test_success_complete_fields():
     assert record["response"] == "raw llm text"
     assert record["result"]["feedback_data"]["memory_actions"] == []
     assert record["error"] == ""
+    # 固定规则与用户提示词分字段存放，前端只展示后者
+    assert record["prompt"] == "prompt"
+    assert record["system_prompt"] == "固定规则"
 
 
 def test_failed_complete_fields():
