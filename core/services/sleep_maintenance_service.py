@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import errno
 import json
+import os
+import stat
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict
@@ -8,6 +12,77 @@ from typing import Any, Dict
 from ..migrations.memory_scope_migration import MemoryScopeMigration
 from .simple_memory_backup_service import SimpleMemoryBackupService
 from .memory_vector_sync_service import MemoryVectorSyncService
+
+
+_UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = {
+    value
+    for value in (
+        errno.EINVAL,
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+    )
+    if isinstance(value, int)
+}
+
+
+def _secure_private_directory(path: Path) -> None:
+    """Create a private backup directory and verify POSIX permissions."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "posix":
+        return
+    path.chmod(0o700)
+    actual_mode = stat.S_IMODE(path.stat().st_mode)
+    if actual_mode != 0o700:
+        raise PermissionError(
+            f"无法将备份目录权限收紧为 0700（实际 {actual_mode:04o}）: {path}"
+        )
+
+
+def _secure_private_file(path: Path) -> None:
+    """Verify that the published backup is private on POSIX systems."""
+    if os.name != "posix":
+        return
+    path.chmod(0o600)
+    actual_mode = stat.S_IMODE(path.stat().st_mode)
+    if actual_mode != 0o600:
+        path.unlink(missing_ok=True)
+        raise PermissionError(
+            f"无法将备份文件权限收紧为 0600（实际 {actual_mode:04o}）: {path}"
+        )
+
+
+def _fsync_directory(path: Path, logger) -> None:
+    """Persist a rename when supported; propagate genuine I/O failures."""
+    if os.name != "posix":
+        return
+
+    directory_flags = os.O_RDONLY
+    directory_flags |= getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        directory_fd = os.open(path, directory_flags)
+    except OSError as exc:
+        if exc.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            logger.warning(
+                "[睡眠维护] 每日 JSON 备份：目录 fsync 不受支持，已保留原子替换 errno=%s",
+                exc.errno,
+            )
+            return
+        raise
+
+    try:
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            if exc.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+                logger.warning(
+                    "[睡眠维护] 每日 JSON 备份：目录 fsync 不受支持，已保留原子替换 errno=%s",
+                    exc.errno,
+                )
+                return
+            raise
+    finally:
+        os.close(directory_fd)
 
 
 class SleepMaintenanceService:
@@ -293,12 +368,30 @@ class SleepMaintenanceService:
 
         center_dir = plugin_context.get_memory_center_dir()
         backup_dir = Path(center_dir) / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
+        _secure_private_directory(backup_dir)
         backup_file = backup_dir / f"memory_backup_{today}.json"
 
         snapshot = await memory_sql_manager.export_backup_snapshot()
-        with backup_file.open("w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
+        temp_fd, temp_name = tempfile.mkstemp(
+            prefix=f".{backup_file.name}.",
+            suffix=".tmp",
+            dir=backup_dir,
+        )
+        try:
+            if os.name == "posix":
+                os.fchmod(temp_fd, 0o600)
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as file_handle:
+                temp_fd = -1
+                json.dump(snapshot, file_handle, ensure_ascii=False, indent=2)
+                file_handle.flush()
+                os.fsync(file_handle.fileno())
+            os.replace(temp_name, backup_file)
+            _secure_private_file(backup_file)
+            _fsync_directory(backup_dir, deepmind.logger)
+        finally:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+            Path(temp_name).unlink(missing_ok=True)
 
         backup_files = sorted(backup_dir.glob("memory_backup_*.json"))
         while len(backup_files) > 3:
@@ -306,7 +399,9 @@ class SleepMaintenanceService:
             try:
                 stale.unlink(missing_ok=True)
             except Exception as e:
-                deepmind.logger.warning(f"[睡眠维护] 删除旧备份失败 文件={stale.name} 异常={e}")
+                deepmind.logger.warning(
+                    f"[睡眠维护] 删除旧备份失败 文件={stale.name} 异常={e}"
+                )
 
         state["daily_json_backup_last_day"] = today
         deepmind.logger.info(

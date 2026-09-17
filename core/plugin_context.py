@@ -159,6 +159,24 @@ class PluginContext:
                 return value
         return str(self.config.get("rerank_provider_id", "") or "").strip()
 
+    def get_rerank_fallback_provider_ids(self) -> list[str]:
+        """获取检索重排备用提供商ID并去重。"""
+        retrieval = self.config.get("retrieval", {}) or {}
+        value = (
+            retrieval.get("rerank_fallback_provider_ids", [])
+            if isinstance(retrieval, dict)
+            else []
+        )
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            return []
+        return list(
+            dict.fromkeys(
+                str(item).strip() for item in value if str(item).strip()
+            )
+        )
+
     def get_embedding_batch_size(self) -> int:
         """获取向量请求批次大小（兼容顶层旧字段，仅下限 1，不设上限）。"""
         retrieval = self.config.get("retrieval", {}) or {}
