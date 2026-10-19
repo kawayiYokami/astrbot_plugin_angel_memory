@@ -126,10 +126,16 @@ class SmallModelPromptBuilder:
         Returns:
             格式化后的查询文本字符串（纯文本内容拼接）
         """
-        # 过滤出未处理的记录
-        unprocessed_records = [
-            msg for msg in chat_records if not msg.get("is_processed", True)
-        ]
+        records = [msg for msg in chat_records if isinstance(msg, dict)]
+        has_processed_flag = any("is_processed" in msg for msg in records)
+        if has_processed_flag:
+            # Keep the legacy snapshot behavior when the flag is present.
+            unprocessed_records = [
+                msg for msg in records if not msg.get("is_processed", True)
+            ]
+        else:
+            # AngelHeart 2.x snapshots omit is_processed entirely.
+            unprocessed_records = records
 
         # 如果没有未处理的记录，返回空字符串
         if not unprocessed_records:

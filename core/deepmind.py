@@ -343,11 +343,23 @@ class DeepMind:
                 chat_records = angelheart_data.get("chat_records", []) or []
                 if not isinstance(chat_records, list):
                     chat_records = []
-                unprocessed_chat_records = [
-                    msg
+                has_processed_flag = any(
+                    isinstance(msg, dict) and "is_processed" in msg
                     for msg in chat_records
-                    if isinstance(msg, dict) and msg.get("is_processed", True) is False
-                ]
+                )
+                if has_processed_flag:
+                    unprocessed_chat_records = [
+                        msg
+                        for msg in chat_records
+                        if isinstance(msg, dict)
+                        and msg.get("is_processed", True) is False
+                    ]
+                else:
+                    # AngelHeart 2.x removed is_processed; treat its complete
+                    # conversation snapshot as the current unprocessed input.
+                    unprocessed_chat_records = [
+                        msg for msg in chat_records if isinstance(msg, dict)
+                    ]
                 secretary_decision = angelheart_data.get("secretary_decision", {}) or {}
             except (json.JSONDecodeError, KeyError, TypeError):
                 self.logger.error(f"为会话 {session_id} 解析 angelheart_context 失败")
@@ -835,26 +847,35 @@ class DeepMind:
                 angelheart_data = json.loads(event.angelheart_context)
                 chat_records = angelheart_data.get("chat_records", []) or []
                 if isinstance(chat_records, list) and chat_records:
-                    processed = [
-                        msg
+                    has_processed_flag = any(
+                        isinstance(msg, dict) and "is_processed" in msg
                         for msg in chat_records
-                        if isinstance(msg, dict) and bool(msg.get("is_processed", False))
-                    ]
-                    latest_user_unprocessed = None
-                    for msg in reversed(chat_records):
-                        if (
-                            isinstance(msg, dict)
-                            and str(msg.get("role", "")).strip() == "user"
-                            and msg.get("is_processed", True) is False
-                        ):
-                            latest_user_unprocessed = msg
-                            break
-                    combined = list(processed)
-                    if latest_user_unprocessed is not None:
-                        combined.append(latest_user_unprocessed)
+                    )
+                    if has_processed_flag:
+                        processed = [
+                            msg
+                            for msg in chat_records
+                            if isinstance(msg, dict)
+                            and bool(msg.get("is_processed", False))
+                        ]
+                        latest_user_unprocessed = None
+                        for msg in reversed(chat_records):
+                            if (
+                                isinstance(msg, dict)
+                                and str(msg.get("role", "")).strip() == "user"
+                                and msg.get("is_processed", True) is False
+                            ):
+                                latest_user_unprocessed = msg
+                                break
+                        combined = list(processed)
+                        if latest_user_unprocessed is not None:
+                            combined.append(latest_user_unprocessed)
+                    else:
+                        # AngelHeart 2.x snapshots no longer carry this flag.
+                        combined = [msg for msg in chat_records if isinstance(msg, dict)]
                     self.logger.debug(
-                        f"[反思调度] 使用天使之心聊天记录: processed={len(processed)} "
-                        f"+ latest_unprocessed_user={1 if latest_user_unprocessed else 0}"
+                        f"[反思调度] 使用天使之心聊天记录: "
+                        f"legacy_flags={has_processed_flag} records={len(combined)}"
                     )
                     return self._dedupe_and_sort_chat_records(
                         combined,
