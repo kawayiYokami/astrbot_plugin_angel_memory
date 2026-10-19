@@ -51,10 +51,11 @@ class CoreMemoryRecallTool(FunctionTool):
         query = str(query).strip()
         self.logger.debug(f"{self.name} - LLM 调用: query='{query}'")
 
-        if not hasattr(event, "plugin_context") or event.plugin_context is None:
+        plugin_context = getattr(event, "plugin_context", None)
+        if plugin_context is None:
+            plugin_context = getattr(self, "plugin_context", None)
+        if plugin_context is None:
             return "错误：无法获取插件上下文。"
-
-        plugin_context = event.plugin_context
 
         try:
             memory_runtime = plugin_context.get_component("memory_runtime")

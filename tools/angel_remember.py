@@ -122,11 +122,12 @@ class CoreMemoryRememberTool(FunctionTool):
                 return "错误：merge 动作的 source_memory_ids 至少需要 2 个。"
 
         # --- 获取服务 ---
-        if not hasattr(event, "plugin_context") or event.plugin_context is None:
+        plugin_context = getattr(event, "plugin_context", None)
+        if plugin_context is None:
+            plugin_context = getattr(self, "plugin_context", None)
+        if plugin_context is None:
             self.logger.error(f"{self.name}: 无法从事件中获取 plugin_context。")
             return "错误：内部服务错误，无法获取插件上下文。"
-
-        plugin_context = event.plugin_context
 
         try:
             memory_runtime = plugin_context.get_component("memory_runtime")

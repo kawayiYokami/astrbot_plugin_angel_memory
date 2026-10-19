@@ -55,9 +55,11 @@ class NoteRecallTool(FunctionTool):
         offset: int = 1,
         limit: Optional[int] = None,
     ) -> str:
-        if not hasattr(event, "plugin_context") or event.plugin_context is None:
+        plugin_context = getattr(event, "plugin_context", None)
+        if plugin_context is None:
+            plugin_context = getattr(self, "plugin_context", None)
+        if plugin_context is None:
             return "错误：无法获取插件上下文。"
-        plugin_context = event.plugin_context
 
         memory_sql_manager = plugin_context.get_component("memory_sql_manager")
         if memory_sql_manager is None:

@@ -60,9 +60,11 @@ class NoteCreateTool(FunctionTool):
         if not str(content or "").strip():
             return "错误：笔记内容不能为空。"
 
-        if not hasattr(event, "plugin_context") or event.plugin_context is None:
+        plugin_context = getattr(event, "plugin_context", None)
+        if plugin_context is None:
+            plugin_context = getattr(self, "plugin_context", None)
+        if plugin_context is None:
             return "错误：无法获取插件上下文。"
-        plugin_context = event.plugin_context
 
         note_service = plugin_context.get_component("note_service")
         if note_service is None:
