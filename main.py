@@ -354,7 +354,21 @@ class AngelMemoryPlugin(Star):
                     heart_data = json.loads(angelheart_context)
                     records = heart_data.get("chat_records", [])
                     if isinstance(records, list):
-                        raw_chat_records = records
+                        has_processed_flag = any(
+                            isinstance(msg, dict) and "is_processed" in msg
+                            for msg in records
+                        )
+                        if has_processed_flag:
+                            raw_chat_records = [
+                                msg
+                                for msg in records
+                                if isinstance(msg, dict)
+                                and msg.get("is_processed", True) is False
+                            ]
+                        else:
+                            raw_chat_records = [
+                                msg for msg in records if isinstance(msg, dict)
+                            ]
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     pass
 
