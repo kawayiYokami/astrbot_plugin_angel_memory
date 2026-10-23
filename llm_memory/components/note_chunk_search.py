@@ -28,6 +28,8 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
+from ..utils.rerank_utils import extract_rerank_items
+
 import tantivy
 
 
@@ -752,43 +754,14 @@ class NoteChunkSearchEngine:
     @staticmethod
     def _extract_rerank_scores(rerank_resp: Any, candidates: List[Dict]) -> List[Dict]:
         """从 rerank 响应中提取分数"""
-        if rerank_resp is None:
-            return []
-
-        items = None
-        if isinstance(rerank_resp, dict):
-            if rerank_resp.get("code") not in (None, 0, 200, "0", "200"):
-                return []
-            items = rerank_resp.get("results")
-            if items is None:
-                data = rerank_resp.get("data")
-                if isinstance(data, list):
-                    items = data
-                elif isinstance(data, dict):
-                    items = data.get("results") or data.get("items")
-        elif isinstance(rerank_resp, list):
-            items = rerank_resp
-
-        if not isinstance(items, list):
-            return []
-
         scored: List[Dict] = []
-        for item in items:
-            if not isinstance(item, dict):
+        for item in extract_rerank_items(rerank_resp):
+            index = item.get("index")
+            if index is None or index < 0 or index >= len(candidates):
                 continue
-            try:
-                index = int(item.get("index", -1))
-            except (TypeError, ValueError):
-                continue
-            if index < 0 or index >= len(candidates):
-                continue
-            try:
-                score = float(item.get("relevance_score", 0.0) or item.get("score", 0.0))
-            except (TypeError, ValueError):
-                score = 0.0
-
+            score = item.get("score")
             result = dict(candidates[index])
-            result["score"] = score
+            result["score"] = float(score) if score is not None else 0.0
             scored.append(result)
 
         return scored

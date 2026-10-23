@@ -12,6 +12,8 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
+from ..utils.rerank_utils import extract_rerank_items
+
 
 class HybridRetrievalEngine:
     """统一混合检索策略引擎（按能力分档）。"""
@@ -56,35 +58,7 @@ class HybridRetrievalEngine:
 
     @staticmethod
     def _extract_rerank_results(rerank_resp: Any) -> List[Dict[str, Any]]:
-        if rerank_resp is None:
-            return []
-        if isinstance(rerank_resp, dict):
-            if rerank_resp.get("code") not in (None, 0, 200, "0", "200"):
-                return []
-            items = rerank_resp.get("results")
-            if items is None:
-                data = rerank_resp.get("data")
-                if isinstance(data, list):
-                    items = data
-                elif isinstance(data, dict):
-                    items = data.get("results") or data.get("items")
-        else:
-            items = rerank_resp
-        if not isinstance(items, list):
-            return []
-        normalized: List[Dict[str, Any]] = []
-        for item in items:
-            if isinstance(item, dict):
-                normalized.append(item)
-            else:
-                normalized.append(
-                    {
-                        "id": getattr(item, "id", None),
-                        "index": getattr(item, "index", None),
-                        "score": getattr(item, "score", None),
-                    }
-                )
-        return normalized
+        return extract_rerank_items(rerank_resp)
 
     def _resolve_provider_id(self) -> str:
         raw = str(getattr(self.rerank_provider, "provider_id", "") or getattr(self.rerank_provider, "id", "") or "").strip()
@@ -182,15 +156,15 @@ class HybridRetrievalEngine:
             if not items:
                 return []
 
-            scored: List[Dict[str, float]] = []
+            scored: List[Dict[str, Any]] = []
             for idx, item in enumerate(items):
                 item_id = str(item.get("id") or "").strip()
-                if not item_id and isinstance(item.get("index"), int):
+                if not item_id and item.get("index") is not None:
                     i = int(item["index"])
                     if 0 <= i < len(passages):
                         item_id = passages[i]["id"]
                 if not item_id:
-                    text = str(item.get("text") or item.get("document") or "").strip()
+                    text = str(item.get("text") or "").strip()
                     if text:
                         for p in passages:
                             if p["text"] == text:
@@ -201,7 +175,7 @@ class HybridRetrievalEngine:
                 scored.append(
                     {
                         "id": item_id,
-                        "rerank_score": float(item.get("score", 0.0) or 0.0),
+                        "rerank_score": item.get("score"),
                         "rank_index": idx,
                     }
                 )
@@ -211,10 +185,11 @@ class HybridRetrievalEngine:
                 )
                 return []
 
-            max_score = max(float(x["rerank_score"]) for x in scored)
+            has_scores = all(x["rerank_score"] is not None for x in scored)
+            max_score = max(float(x["rerank_score"]) for x in scored) if has_scores else 0.0
             fallback_norm = self._rank_normalize(len(scored))
             for idx, row in enumerate(scored):
-                if max_score > 0:
+                if has_scores and max_score > 0:
                     row["final_score"] = float(row["rerank_score"]) / max_score
                 else:
                     row["final_score"] = float(fallback_norm[idx])

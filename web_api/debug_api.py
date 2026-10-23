@@ -20,6 +20,8 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
+from ..llm_memory.utils.rerank_utils import extract_rerank_items
+
 
 class DebugAPI:
     def __init__(self, plugin_context):
@@ -125,36 +127,7 @@ class DebugAPI:
 
     @staticmethod
     def _extract_rerank_items(resp: Any) -> List[Dict[str, Any]]:
-        if resp is None:
-            return []
-        items = None
-        if isinstance(resp, dict):
-            if resp.get("code") not in (None, 0, 200, "0", "200"):
-                return []
-            items = resp.get("results")
-            if items is None:
-                data = resp.get("data")
-                if isinstance(data, list):
-                    items = data
-                elif isinstance(data, dict):
-                    items = data.get("results") or data.get("items")
-        elif isinstance(resp, list):
-            items = resp
-        if not isinstance(items, list):
-            return []
-        out: List[Dict[str, Any]] = []
-        for it in items:
-            if isinstance(it, dict):
-                out.append(it)
-            else:
-                out.append(
-                    {
-                        "index": getattr(it, "index", None),
-                        "score": getattr(it, "score", None),
-                        "id": getattr(it, "id", None),
-                    }
-                )
-        return out
+        return extract_rerank_items(resp)
 
     async def embedding_probe(self):
         """POST /debug/embedding  嵌入探针（单次覆盖批次/超时）"""
@@ -503,26 +476,22 @@ class DebugAPI:
             try:
                 idx = it.get("index")
                 if idx is None:
-                    # 尝试按 id/text 反推 index
                     continue
                 idx = int(idx)
                 if idx < 0 or idx >= len(documents):
                     continue
-                sc = it.get("score", it.get("relevance_score", it.get("relevanceScore", 0)))
-                try:
-                    sc = float(sc)
-                except Exception:
-                    sc = 0.0
+                sc = it.get("score")
+                sc = float(sc) if sc is not None else 0.0
                 scores.append({"index": idx, "score": sc, "document": documents[idx][:120]})
             except Exception:
                 continue
 
         # 若 provider 未返回 index，仅返回原始 items
         if not scores and items:
-            # 尝试直接取 relevance_score 排序
+            # 按返回顺序映射到 documents
             for idx, it in enumerate(items[: len(documents)]):
                 try:
-                    sc = float(it.get("relevance_score", it.get("score", 0)) or 0)
+                    sc = float(it.get("score")) if it.get("score") is not None else 0.0
                 except Exception:
                     sc = 0.0
                 scores.append({"index": idx, "score": sc, "document": documents[idx][:120]})

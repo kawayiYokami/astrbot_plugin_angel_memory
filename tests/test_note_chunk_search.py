@@ -1,5 +1,7 @@
 """笔记切片搜索引擎测试"""
 
+from dataclasses import dataclass
+
 import pytest
 
 from llm_memory.components.note_chunk_search import (
@@ -260,3 +262,37 @@ class TestSearchEngine:
         assert len(results) == 2
         assert results[0]["file_id"] == baseline[1]["file_id"]
         assert results[0]["score"] == pytest.approx(0.99)
+
+    @pytest.mark.asyncio
+    async def test_search_async_reads_score_from_rerank_result_objects(self, tmp_path):
+        """上游返回 RerankResult 对象时，笔记重排仍按 relevance_score 排序。"""
+
+        @dataclass
+        class RerankResult:
+            index: int
+            relevance_score: float
+
+        class ObjectReranker:
+            async def rerank(self, query, documents):
+                return [
+                    RerankResult(index=1, relevance_score=0.99),
+                    RerankResult(index=0, relevance_score=0.10),
+                ]
+
+        engine = NoteChunkSearchEngine(index_dir=str(tmp_path), rerank_provider=ObjectReranker())
+        engine.index_chunks("a", "a.md", [
+            {"chunk_index": 1, "line_start": 0, "line_end": 1, "content": "猫咪普通记录"},
+        ])
+        engine.index_chunks("b", "b.md", [
+            {"chunk_index": 1, "line_start": 0, "line_end": 1, "content": "猫咪重要记录"},
+        ])
+
+        baseline = engine.search("猫咪", limit=2)
+        assert len(baseline) == 2
+
+        results = await engine.search_async("猫咪", limit=2)
+
+        assert len(results) == 2
+        assert results[0]["file_id"] == baseline[1]["file_id"]
+        assert results[0]["score"] == pytest.approx(0.99)
+        assert results[1]["score"] == pytest.approx(0.10)
