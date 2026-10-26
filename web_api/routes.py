@@ -76,8 +76,9 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         # 反思与睡眠记录
         (f"/{PLUGIN_NAME}/trace/reflection", trace_api.get_records, ["GET"], "反思与睡眠过程记录（最近20次）"),
         (f"/{PLUGIN_NAME}/trace/delete", trace_api.delete_records, ["POST"], "删除指定的过程记录"),
-        # 工具测试（只读）
-        (f"/{PLUGIN_NAME}/tool-test/run", tool_test_api.run, ["POST"], "工具测试：自动RAG + 主动搜索，返回原文"),
+        # 工具测试（只读，两条链路各自独立触发）
+        (f"/{PLUGIN_NAME}/tool-test/auto-rag", tool_test_api.auto_rag, ["POST"], "自动RAG：注入给模型的上下文原文"),
+        (f"/{PLUGIN_NAME}/tool-test/active-recall", tool_test_api.active_recall, ["POST"], "主动搜索：angel_recall 工具原文"),
     ]
 
     if plugin is not None:
