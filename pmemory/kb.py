@@ -38,21 +38,23 @@ def _slug(value: str) -> str:
 
 
 def _log_event(event: dict) -> None:
-    """库在检索线程上同步调用，这里只写一行日志，不做任何 IO 或上报。"""
+    """库在检索线程上同步调用，这里只写一行日志，不做任何 IO 或上报。
+
+    检索太频繁，正常路径不落日志；只有降级才报出来。
+    """
     kind = str(event.get("kind") or "")
     if kind == "search":
-        logger.info(
-            "[PMEMORY] 检索事件 ms=%s 阶段=%s 候选=%s 折叠=%s 进重排=%s 重排token=%s 命中=%s 降级=%s",
-            event.get("ms"),
-            event.get("stages"),
-            event.get("candidates"),
-            event.get("folded"),
-            event.get("rerank_docs"),
-            event.get("rerank_tokens"),
-            event.get("hits"),
-            event.get("degraded") or "无",
-        )
-    elif kind == "index_rebuild":
+        degraded = event.get("degraded")
+        if degraded:
+            logger.warning(
+                "[PMEMORY] 检索降级 ms=%s 原因=%s 候选=%s 命中=%s",
+                event.get("ms"),
+                degraded,
+                event.get("candidates"),
+                event.get("hits"),
+            )
+        return
+    if kind == "index_rebuild":
         logger.info(
             "[PMEMORY] 索引重建事件 ms=%s 文档=%s 格式=%s",
             event.get("ms"),
