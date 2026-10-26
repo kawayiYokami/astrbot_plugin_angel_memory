@@ -37,8 +37,12 @@ class DeepMindRetrievalService:
             return None
 
     async def retrieve_memories_and_notes(
-        self, event: AstrMessageEvent, query: str
+        self, event: AstrMessageEvent, query: str, readonly: bool = False
     ) -> Dict[str, Any]:
+        """检索长期记忆与候选笔记。
+
+        `readonly=True` 时跳过灵魂共鸣等会改状态的分支，供面板探针复用同一条链路。
+        """
         deepmind = self.deepmind
 
         memory_query = deepmind.query_processor.process_query_for_memory(query, event)
@@ -70,7 +74,7 @@ class DeepMindRetrievalService:
                     memory_scope=memory_scope,
                 )
 
-                if deepmind.soul:
+                if deepmind.soul and not readonly:
                     snapshots = [
                         mem.state_snapshot
                         for mem in long_term_memories

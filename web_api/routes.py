@@ -32,9 +32,15 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
     from .debug_api import DebugAPI
 
     debug_api = DebugAPI(plugin_context)
+    # 反思与睡眠记录
     from .trace_api import TraceAPI
 
     trace_api = TraceAPI(plugin_context)
+
+    # 工具测试（只读探针）
+    from .tool_test_api import ToolTestAPI
+
+    tool_test_api = ToolTestAPI(plugin_context)
 
     routes = [
         # 总览
@@ -70,6 +76,9 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         # 反思与睡眠记录
         (f"/{PLUGIN_NAME}/trace/reflection", trace_api.get_records, ["GET"], "反思与睡眠过程记录（最近20次）"),
         (f"/{PLUGIN_NAME}/trace/delete", trace_api.delete_records, ["POST"], "删除指定的过程记录"),
+        # 工具测试（只读）
+        (f"/{PLUGIN_NAME}/tool-test/auto-rag", tool_test_api.auto_rag, ["POST"], "自动RAG召回探针"),
+        (f"/{PLUGIN_NAME}/tool-test/active-recall", tool_test_api.active_recall, ["POST"], "angel_recall 工具探针"),
     ]
 
     if plugin is not None:
