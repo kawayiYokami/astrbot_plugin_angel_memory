@@ -93,7 +93,8 @@ onMounted(() => loadGroups())
 
 <style scoped>
 .output {
-  background: rgba(0, 0, 0, 0.35);
+  background: #1a1a2e;
+  color: #e0e0e0;
   border-radius: 6px;
   padding: 12px;
   overflow-x: auto;
