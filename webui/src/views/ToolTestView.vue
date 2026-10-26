@@ -1,11 +1,6 @@
 <template>
   <n-space vertical :size="12">
-    <n-input
-      v-model:value="query"
-      type="textarea"
-      :rows="3"
-      placeholder="检索词，例如：洛伊"
-    />
+    <n-input v-model:value="query" type="textarea" :rows="3" placeholder="检索词" />
 
     <n-space>
       <n-select
@@ -17,8 +12,11 @@
         style="width: 260px"
       />
       <n-input v-model:value="umo" placeholder="会话 UMO（留空用示例）" style="width: 300px" />
-      <n-button type="primary" :loading="loading" :disabled="!query.trim()" @click="run">
-        运行
+      <n-button type="primary" :loading="loading === 'rag'" :disabled="busy" @click="run('rag')">
+        自动回忆
+      </n-button>
+      <n-button :loading="loading === 'recall'" :disabled="busy" @click="run('recall')">
+        主动回忆
       </n-button>
     </n-space>
 
@@ -26,8 +24,7 @@
       <div v-for="(item, index) in errors" :key="index" class="error-line">{{ item }}</div>
     </n-alert>
 
-    <pre v-if="text" class="output">{{ text }}</pre>
-    <pre v-else-if="!loading" class="output muted">结果会直接显示在这里。</pre>
+    <pre class="output">{{ text }}</pre>
   </n-space>
 </template>
 
@@ -48,9 +45,11 @@ const groupId = ref<string | null>(null)
 const umo = ref('')
 const groups = ref<GroupRow[]>([])
 
-const loading = ref(false)
+const loading = ref<'' | 'rag' | 'recall'>('')
 const text = ref('')
 const errors = ref<string[]>([])
+
+const busy = computed(() => loading.value !== '')
 
 const groupOptions = computed(() =>
   groups.value.map(g => ({
@@ -59,26 +58,24 @@ const groupOptions = computed(() =>
   })),
 )
 
-async function run() {
-  loading.value = true
+async function run(kind: 'rag' | 'recall') {
+  loading.value = kind
   text.value = ''
   errors.value = []
   try {
-    // 桥接会把响应体的 data 解包后直接返回，这里拿到的就是业务对象
-    const resp: any = await apiPost('tool-test/run', {
+    const endpoint = kind === 'rag' ? 'tool-test/auto-rag' : 'tool-test/active-recall'
+    // 桥接把响应体的 data 解包后直接返回
+    const resp: any = await apiPost(endpoint, {
       query: query.value.trim(),
       group_id: groupId.value || '',
       umo: umo.value.trim(),
     })
     text.value = resp?.text || ''
     errors.value = Array.isArray(resp?.errors) ? resp.errors.filter(Boolean) : []
-    if (!text.value && !errors.value.length) {
-      errors.value = ['接口返回了空内容，也没有错误信息，请检查插件日志。']
-    }
   } catch (e: any) {
     errors.value = [`请求失败：${e?.message || String(e)}`]
   } finally {
-    loading.value = false
+    loading.value = ''
   }
 }
 
@@ -105,12 +102,9 @@ onMounted(() => loadGroups())
   font-size: 12px;
   line-height: 1.6;
   margin: 0;
-  max-height: 70vh;
+  max-height: 75vh;
   overflow-y: auto;
-}
-
-.muted {
-  opacity: 0.6;
+  min-height: 120px;
 }
 
 .error-line {

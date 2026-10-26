@@ -1,4 +1,4 @@
-"""工具测试探针回归：文本输出、错误上报、可见域、只读边界。
+"""工具测试探针回归：两条链路各自独立、原文输出、错误上抛。
 
 不依赖 quart 请求上下文与真实事件，只钉形状契约与边界。
 """
@@ -27,6 +27,7 @@ from astrbot_plugin_angel_memory.pmemory.config import (
 )
 from astrbot_plugin_angel_memory.web_api.tool_test_api import (
     DEFAULT_UMO,
+    PREVIEW_SESSION_ID,
     PreviewEvent,
     ToolTestAPI,
 )
@@ -88,14 +89,9 @@ class _FakeRuntime:
         del query, limit, event, memory_scope
         return list(self._memories)
 
-
-class _FakeNoteIndex:
-    def __init__(self, notes=None):
-        self._notes = notes or []
-
-    async def search_notes_async(self, query, max_results=50, domains=None):
-        del query, max_results, domains
-        return list(self._notes)
+    async def get_memories_by_ids(self, memory_ids, memory_scope=None):
+        del memory_scope
+        return [m for m in self._memories if str(getattr(m, "id", "")) in set(memory_ids)]
 
 
 class _FakeSoul:
@@ -121,18 +117,80 @@ class _FakeNoteService:
         return list(self._notes)
 
 
+class _FakeSessionMemory:
+    def __init__(self):
+        self.store = {}
+        self.cleared = []
+
+    def add_memories_to_session(self, session_id, memories):
+        self.store.setdefault(session_id, []).extend(memories)
+
+    def get_session_memory_ids(self, session_id):
+        return [str(getattr(m, "id", "")) for m in self.store.get(session_id, [])]
+
+    def get_session_memories(self, session_id):
+        return list(self.store.get(session_id, []))
+
+    def remove_memory_ids_from_session(self, session_id, memory_ids):
+        del session_id, memory_ids
+        return 0
+
+    def clear_session(self, session_id):
+        self.cleared.append(session_id)
+        self.store.pop(session_id, None)
+
+
+class _FakeInjector:
+    @staticmethod
+    def format_session_memories_for_prompt(memories, short_id_registry=None):
+        del short_id_registry
+        if not memories:
+            return ""
+        return "\n".join(str(getattr(m, "judgment", "")) for m in memories)
+
+
+class _FakeInjectionService:
+    def __init__(self, boom=False):
+        self.boom = boom
+
+    async def inject_memories_to_request(
+        self,
+        request,
+        session_id,
+        note_context,
+        soul_state_values=None,
+        has_secretary_decision=False,
+        memory_scope="public",
+    ):
+        del soul_state_values, has_secretary_decision, memory_scope
+        if self.boom:
+            raise RuntimeError("注入炸了")
+        parts = ["<instruction>固定说明</instruction>"]
+        memories = self.deepmind.session_memory_manager.get_session_memories(session_id)
+        memory_text = self.deepmind.memory_injector.format_session_memories_for_prompt(memories)
+        if memory_text:
+            parts.append(f"<memories>\n{memory_text}\n</memories>")
+        if note_context:
+            parts.append(f"<notes>\n{note_context}\n</notes>")
+        request.contexts.append({"role": "user", "content": "\n\n".join(parts), "_no_save": True})
+
+
 class _FakeDeepmind:
-    def __init__(self, memories, notes=None, query_boom=False, recall_boom=False):
+    def __init__(self, memories, notes=None, recall_boom=False, inject_boom=False):
         self.logger = logging.getLogger("test-tool-test")
         self.memory_system = _FakeRuntime(memories, boom=recall_boom)
         self.note_service = _FakeNoteService(notes)
-        self.query_processor = _FakeQueryProcessor(boom=query_boom)
+        self.query_processor = _FakeQueryProcessor()
         self.soul = _FakeSoul()
         self.note_recall_enabled = True
         self.note_inject_top_k = 3
         self.note_candidate_top_k = 21
         self.CHAINED_RECALL_PER_TYPE_LIMIT = 7
+        self.session_memory_manager = _FakeSessionMemory()
+        self.memory_injector = _FakeInjector()
         self.retrieval_service = DeepMindRetrievalService(self)
+        self.injection_service = _FakeInjectionService(boom=inject_boom)
+        self.injection_service.deepmind = self
 
 
 class _ProbeCtx:
@@ -141,6 +199,9 @@ class _ProbeCtx:
         self._auto = auto or []
         self._visible = visible if visible is not None else list(DOMAIN_DIRS)
         self._scope_boom = scope_boom
+        if deepmind is not None:
+            # 检索链路会经 deepmind.plugin_context 读域配置
+            deepmind.plugin_context = self
 
     def get_component(self, name):
         if self._deepmind is None:
@@ -149,8 +210,6 @@ class _ProbeCtx:
             return self._deepmind
         if name == "memory_runtime":
             return self._deepmind.memory_system
-        if name == "note_index":
-            return _FakeNoteIndex()
         return None
 
     def get_event_conversation_id(self, event):
@@ -168,6 +227,8 @@ class _ProbeCtx:
 
     async def resolve_memory_scope_from_event(self, event):
         del event
+        if self._scope_boom:
+            raise RuntimeError("scope 解析炸了")
         return "public"
 
     def auto_domains(self, group_id):
@@ -185,7 +246,7 @@ def _fresh_store() -> MemoryStore:
     return MemoryStore()
 
 
-def _seed_memory() -> object:
+def _seed_memory():
     store = _fresh_store()
     try:
         store.remember("红豆喜欢甜食", "聊天里提到", ["红豆"], "知识记忆", "public", pinned=True)
@@ -203,8 +264,6 @@ def test_hidden_domain_never_visible_or_auto():
     assert auto_domains_from(matrix, "123") == ["gi"]
     visible = visible_domains_from(matrix, "123")
     assert "hsr" not in visible
-    assert "gi" in visible
-    assert "zzz" in visible
     assert sorted(visible) == sorted([d for d in DOMAIN_DIRS if d != "hsr"])
 
 
@@ -214,7 +273,7 @@ def test_private_chat_sees_all_domains_but_auto_is_empty():
     assert sorted(visible_domains_from(matrix, "")) == sorted(DOMAIN_DIRS)
 
 
-# === 输入规整 ===
+# === 入参 ===
 
 
 def test_normalize_falls_back_to_default_umo():
@@ -225,123 +284,120 @@ def test_normalize_falls_back_to_default_umo():
 
 
 @pytest.mark.asyncio
-async def test_empty_query_reports_error(monkeypatch):
+async def test_empty_query_rejected_on_both_endpoints(monkeypatch):
     api = ToolTestAPI(_ProbeCtx(_FakeDeepmind([])))
     _patch_request(monkeypatch, {"query": "   "})
-    body = _body(await api.run())
-    assert body["text"] == ""
-    assert body["errors"] == ["查询词不能为空"]
+    for handler in (api.auto_rag, api.active_recall):
+        body = _body(await handler())
+        assert body["text"] == ""
+        assert body["errors"] == ["查询词不能为空"]
 
 
-# === 正常路径 ===
+# === 两条链路互不混合 ===
 
 
 @pytest.mark.asyncio
-async def test_run_outputs_plain_text_for_both_chains(monkeypatch):
+async def test_auto_rag_returns_injection_text_only(monkeypatch):
+    """自动 RAG 只返回注入上下文原文，不夹带任何自造说明。"""
     memory = _seed_memory()
     deepmind = _FakeDeepmind([memory])
     ctx = _ProbeCtx(deepmind, auto=["gi"])
-    deepmind.plugin_context = ctx
     api = ToolTestAPI(ctx)
     _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759", "umo": ""})
 
-    body = _body(await api.run())
+    body = _body(await api.auto_rag())
     text = body["text"]
 
     assert body["errors"] == []
-    assert "【自动 RAG】" in text
-    assert "【主动搜索】" in text
-    assert "预处理后查询词：洛伊 预处理" in text
-    assert "记忆 1 条" in text
+    assert text.startswith("<instruction>")
+    assert "<memories>" in text
     assert "红豆喜欢甜食" in text
-    # 主动搜索走真实工具，替身事件应能跑通并给出记忆段
-    assert "[记忆检索结果" in text
-    # 只读：灵魂共鸣没被触发
-    assert deepmind.soul.resonated == 0
+    # 不得出现自造标题、耗时、域统计这类包装内容
+    for banned in ("【自动 RAG】", "耗时=", "自动域=", "预处理后查询词", "注入预览"):
+        assert banned not in text
+    # 主动搜索的内容不能混进来
+    assert "[记忆检索结果" not in text
 
 
 @pytest.mark.asyncio
-async def test_no_auto_domain_marks_notes_as_config_issue(monkeypatch):
-    deepmind = _FakeDeepmind([])
-    ctx = _ProbeCtx(deepmind, auto=[])
-    deepmind.plugin_context = ctx
+async def test_active_recall_returns_tool_text_only(monkeypatch):
+    """主动搜索只返回工具原文，不夹带自动 RAG 的内容。"""
+    memory = _seed_memory()
+    deepmind = _FakeDeepmind([memory])
+    ctx = _ProbeCtx(deepmind, auto=["gi"])
     api = ToolTestAPI(ctx)
     _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759", "umo": ""})
 
-    text = _body(await api.run())["text"]
-    assert "自动域=（无）" in text
-    assert "没有标记为「自动」的知识域" in text
-    assert "（无相关笔记）" in text
+    body = _body(await api.active_recall())
+    text = body["text"]
+
+    assert "[记忆检索结果" in text
+    assert "[笔记检索结果" in text
+    for banned in ("【主动搜索】", "耗时=", "可见域=", "<instruction>", "<memories>"):
+        assert banned not in text
+
+
+@pytest.mark.asyncio
+async def test_preview_session_is_isolated_and_cleaned(monkeypatch):
+    """注入预览用独立会话，跑完必须清掉，不污染真实会话缓存。"""
+    memory = _seed_memory()
+    deepmind = _FakeDeepmind([memory])
+    ctx = _ProbeCtx(deepmind, auto=["gi"])
+    api = ToolTestAPI(ctx)
+    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
+
+    await api.auto_rag()
+
+    assert PREVIEW_SESSION_ID in deepmind.session_memory_manager.cleared
+    assert PREVIEW_SESSION_ID not in deepmind.session_memory_manager.store
 
 
 # === 错误上报 ===
 
 
 @pytest.mark.asyncio
-async def test_memory_recall_failure_is_reported_not_swallowed(monkeypatch):
+async def test_recall_failure_is_reported(monkeypatch):
     deepmind = _FakeDeepmind([], recall_boom=True)
     ctx = _ProbeCtx(deepmind, auto=["gi"])
-    deepmind.plugin_context = ctx
     api = ToolTestAPI(ctx)
     _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
 
-    body = _body(await api.run())
+    body = _body(await api.auto_rag())
     assert any("召回炸了" in e for e in body["errors"])
-    assert "[错误]" in body["text"]
-    # 别的段落仍要跑完，不能一段炸全停
-    assert "【主动搜索】" in body["text"]
+    # 召回失败后注入仍按真实流程跑完，只是没有记忆块：显示的就是真实注入内容
+    assert "<instruction>" in body["text"]
+    assert "<memories>" not in body["text"]
 
 
 @pytest.mark.asyncio
-async def test_query_preprocess_failure_falls_back_and_reports(monkeypatch):
-    deepmind = _FakeDeepmind([], query_boom=True)
+async def test_injection_failure_is_reported(monkeypatch):
+    memory = _seed_memory()
+    deepmind = _FakeDeepmind([memory], inject_boom=True)
     ctx = _ProbeCtx(deepmind, auto=["gi"])
-    deepmind.plugin_context = ctx
     api = ToolTestAPI(ctx)
     _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
 
-    body = _body(await api.run())
-    assert any("预处理炸了" in e for e in body["errors"])
-    # 降级用原查询词，仍然照跑
-    assert "预处理后查询词：洛伊" in body["text"]
-
-
-@pytest.mark.asyncio
-async def test_scope_failure_is_reported(monkeypatch):
-    deepmind = _FakeDeepmind([])
-    ctx = _ProbeCtx(deepmind, scope_boom=True)
-    deepmind.plugin_context = ctx
-    api = ToolTestAPI(ctx)
-    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
-
-    body = _body(await api.run())
-    assert any("scope 解析炸了" in e for e in body["errors"])
-    assert "[错误] 解析记忆域失败" in body["text"]
+    body = _body(await api.auto_rag())
+    assert any("注入炸了" in e for e in body["errors"])
+    # 出错也必须清掉预览会话
+    assert PREVIEW_SESSION_ID in deepmind.session_memory_manager.cleared
 
 
 @pytest.mark.asyncio
 async def test_missing_deepmind_component_is_reported(monkeypatch):
     api = ToolTestAPI(_ProbeCtx(None))
     _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
-
-    body = _body(await api.run())
+    body = _body(await api.auto_rag())
     assert any("潜意识组件不可用" in e for e in body["errors"])
 
 
 # === 替身事件 ===
 
 
-@pytest.mark.asyncio
-async def test_scope_line_uses_event_origin():
-    class _Ctx(_ProbeCtx):
-        def resolve_memory_scope_with_source(self, conversation_id, persona_name=""):
-            del persona_name
-            assert conversation_id == "aiocqhttp:GroupMessage:830624502"
-            return "恋爱", "conversation", conversation_id
-
-    event = PreviewEvent("aiocqhttp:GroupMessage:830624502", "830624502", _Ctx())
-    lines: list[str] = []
-    scope, error = await ToolTestAPI(_Ctx())._scope_line(event, lines)
-    assert error == ""
-    assert scope == "恋爱"
-    assert "恋爱" in lines[0]
+def test_preview_event_exposes_only_needed_fields():
+    event = PreviewEvent("aiocqhttp:GroupMessage:830624502", "830624502", None)
+    assert event.unified_msg_origin == "aiocqhttp:GroupMessage:830624502"
+    assert event.get_group_id() == "830624502"
+    assert event.get_platform_name() == ""
+    # 不提供天使之心上下文：检索侧按 hasattr 自然跳过
+    assert not hasattr(event, "angelheart_context")
