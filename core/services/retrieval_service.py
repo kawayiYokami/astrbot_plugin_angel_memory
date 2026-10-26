@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from astrbot.api.event import AstrMessageEvent
 
@@ -45,6 +45,8 @@ class DeepMindRetrievalService:
         """
         deepmind = self.deepmind
 
+        errors: List[str] = []
+
         memory_query = deepmind.query_processor.process_query_for_memory(query, event)
 
         long_term_memories = []
@@ -85,6 +87,7 @@ class DeepMindRetrievalService:
 
             except Exception as e:
                 deepmind.logger.error(f"链式召回失败，跳过记忆检索: {e}")
+                errors.append(f"链式召回失败：{type(e).__name__}: {e}")
                 long_term_memories = []
 
         secretary_decision = {}
@@ -124,6 +127,8 @@ class DeepMindRetrievalService:
             "memory_id_mapping": {},
             "secretary_decision": secretary_decision,
             "core_topic": secretary_decision.get("topic", ""),
+            # 被吞掉的内部异常，供探针上报；主链路不读这个字段
+            "errors": errors,
         }
 
     @staticmethod
