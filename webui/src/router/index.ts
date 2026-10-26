@@ -10,6 +10,7 @@ import UserProfileView from '@/views/UserProfileView.vue'
 import GroupKnowledgeView from '@/views/GroupKnowledgeView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import DebugView from '@/views/DebugView.vue'
+import ToolTestView from '@/views/ToolTestView.vue'
 
 export const routes: RouteRecordRaw[] = [
   {
@@ -65,6 +66,12 @@ export const routes: RouteRecordRaw[] = [
     name: 'maintenance',
     component: MaintenanceView,
     meta: { title: '维护状态', icon: 'lucide:wrench' },
+  },
+  {
+    path: '/tool-test',
+    name: 'tool-test',
+    component: ToolTestView,
+    meta: { title: '工具测试', icon: 'lucide:test-tube' },
   },
   {
     path: '/debug',
