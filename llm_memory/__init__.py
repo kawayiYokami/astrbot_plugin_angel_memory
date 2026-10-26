@@ -1,5 +1,5 @@
 """
-LLM Memory System - 统一的三元组记忆体系
+LLM Memory System - 统一的三元组记忆体系（p-memory 模式：旧向量/检索实现已删除）
 
 基于统一的 (judgment, reasoning, tags) 三元组结构。
 通过 memory_type 区分五种记忆类型：知识、事件、技能、任务、情感。
@@ -9,10 +9,7 @@ __version__ = "6.0.0"
 
 # 懒加载：只在实际使用时才导入，避免循环依赖
 def __getattr__(name):
-    if name == "CognitiveService":
-        from .service.cognitive_service import CognitiveService
-        return CognitiveService
-    elif name == "BaseMemory":
+    if name == "BaseMemory":
         from .models.data_models import BaseMemory
         return BaseMemory
     elif name == "MemoryType":
@@ -43,7 +40,6 @@ def __getattr__(name):
 
 __all__ = [
     # 核心接口
-    "CognitiveService",
     "BaseMemory",
     "MemoryType",
     # 异常

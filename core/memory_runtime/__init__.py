@@ -1,5 +1,7 @@
 from .protocol import MemoryRuntime
-from .simple_memory_runtime import SimpleMemoryRuntime
-from .vector_memory_runtime import VectorMemoryRuntime
+from .pmemory_runtime import PMemoryMemoryRuntime
 
-__all__ = ["MemoryRuntime", "VectorMemoryRuntime", "SimpleMemoryRuntime"]
+__all__ = [
+    "MemoryRuntime",
+    "PMemoryMemoryRuntime",
+]

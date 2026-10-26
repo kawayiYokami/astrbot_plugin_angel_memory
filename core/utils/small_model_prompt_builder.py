@@ -168,10 +168,10 @@ class SmallModelPromptBuilder:
         """
         # 获取系统提示词
         if system_prompt is None:
-            # 延迟导入以避免循环依赖
-            from ...llm_memory import CognitiveService
+            # p-memory 模式：直接取提示词装配器，不再经过已下线的 CognitiveService
+            from ..prompts.prompt_assembler import PromptAssembler
 
-            system_prompt = CognitiveService.get_prompt(memory_config)
+            system_prompt = PromptAssembler.build_memory_system_guide()
 
         # 1. 构建参与者信息（使用列表推导式）
         participants_section = "# 对话参与者\n" + (

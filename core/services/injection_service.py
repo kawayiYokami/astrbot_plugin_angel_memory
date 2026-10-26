@@ -149,7 +149,7 @@ class DeepMindInjectionService:
         if hasattr(deepmind, "user_profile_service") and deepmind.user_profile_service:
             user_profile_context = deepmind.user_profile_service.format_session_profiles(
                 session_id,
-                short_id_registry=deepmind.plugin_context.get_component("memory_sql_manager"),
+                short_id_registry=None,
             )
             short_term_memories = deepmind.user_profile_service.filter_regular_memories(
                 session_id, short_term_memories
@@ -162,7 +162,7 @@ class DeepMindInjectionService:
 
         memory_context = deepmind.memory_injector.format_session_memories_for_prompt(
             short_term_memories,
-            short_id_registry=deepmind.plugin_context.get_component("memory_sql_manager"),
+            short_id_registry=None,
         )
         if memory_context:
             system_context_parts.append(f"<memories>\n{memory_context}\n</memories>")

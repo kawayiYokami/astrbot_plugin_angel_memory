@@ -17,7 +17,11 @@ class NoteContextBuilder:
         for note in notes:
             metadata = note.get("metadata", {}) or {}
             source_file_path = metadata.get("source_file_path", "")
-            note_short_id = int(metadata.get("note_short_id") or -1)
+            # p-memory 形状用 note_id，旧形状用 note_short_id，两者都认
+            try:
+                note_id = int(metadata.get("note_id", metadata.get("note_short_id", -1)) or -1)
+            except (TypeError, ValueError):
+                note_id = -1
             content = str(note.get("content") or "").strip()
             line_start = int(metadata.get("line_start") or 0)
             line_end = int(metadata.get("line_end") or 0)
@@ -31,8 +35,8 @@ class NoteContextBuilder:
                 content = content[:max_content_len] + "..."
 
             parts = [f"[笔记切片]"]
-            if note_short_id >= 0:
-                parts.append(f"短ID: {note_short_id}")
+            if note_id >= 0:
+                parts.append(f"ID: {note_id}")
             parts.append(f"路径: {source_file_path}")
             if location:
                 parts.append(f"位置: {location}")
@@ -44,6 +48,6 @@ class NoteContextBuilder:
         notes_str = "\n\n---\n\n".join(note_parts)
         header = (
             "[注意：以下笔记内容可能不具备时效性，请勿作为最新消息看待]\n"
-            "[如需完整正文，请调用 angel_note_read(note_short_id, offset, limit)]\n\n"
+            "[如需完整正文，请调用 angel_note_read(note_id, offset, limit)]\n\n"
         )
         return header + notes_str

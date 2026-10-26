@@ -3,12 +3,13 @@ ComponentFactory - 组件工厂
 
 负责统一管理所有核心组件的创建，确保在主线程中创建实例，
 避免后台线程和主线程之间的实例不一致问题。
+
+存储与检索由 p-memory 承担：本层只负责配置数据目录、注册提供商回调，
+并把记忆运行时、笔记索引服务、DeepMind 组装起来。
 """
 
-import subprocess
-import sys
-from typing import Dict, Any, Optional
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 try:
     from astrbot.api import logger
@@ -17,19 +18,20 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
-# 导入核心组件
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager
-from ..llm_memory.components.note_chunk_store import NoteChunkStore
-from ..llm_memory.components.note_chunk_search import NoteChunkSearchEngine
-from ..llm_memory import CognitiveService
 from ..llm_memory.service.memory_decay_policy import (
     MemoryDecayConfig,
     build_decay_config,
 )
-from ..llm_memory.service.note_service import NoteService
-from .memory_runtime import SimpleMemoryRuntime, VectorMemoryRuntime
+from ..pmemory import MemoryStore, pmemory
 from .deepmind import DeepMind
+from .memory_runtime import PMemoryMemoryRuntime
+from .services.legacy_memory_migration import LegacyMemoryMigration
+from .services.note_index_service import NoteIndexService
+
+# 重排回调的总 token 预算，与 story 侧一致
+RERANK_MAX_TOKENS_TOTAL = 8192
 
 
 class ComponentFactory:
@@ -49,15 +51,12 @@ class ComponentFactory:
         self._components: Dict[str, Any] = {}
         self._initialized = False
         self.init_manager = init_manager
-        self._faiss_probe_result: Optional[tuple[bool, str]] = None
 
         # 从PluginContext获取数据目录
         self.data_directory = str(plugin_context.get_index_dir())
 
         self.logger.info("🏭 ComponentFactory初始化完成")
         self.logger.info(f"   当前提供商: {plugin_context.get_current_provider()}")
-        self.logger.info(f"   数据目录: {self.data_directory}")
-        self.logger.info(f"   有可用提供商: {plugin_context.has_providers()}")
 
     async def create_all_components(self, config: dict = None) -> Dict[str, Any]:
         """
@@ -80,147 +79,62 @@ class ComponentFactory:
             self.logger.info("🏭 开始创建核心组件...")
             decay_config = build_decay_config(config)
             rerank_provider = self._resolve_rerank_provider()
-            try:
-                _search_timeout = self.plugin_context.get_embedding_timeout()
-            except Exception:
-                _search_timeout = 5
-            try:
-                _search_timeout = max(5, min(120, int(_search_timeout)))
-            except Exception:
-                _search_timeout = 5
-            try:
-                _rerank_max_docs = self.plugin_context.get_rerank_max_docs()
-            except Exception:
-                _rerank_max_docs = 64
-            try:
-                _rerank_max_tokens = self.plugin_context.get_rerank_max_tokens_per_doc()
-            except Exception:
-                _rerank_max_tokens = 1024
-            memory_sql_manager = self._create_memory_sql_manager(
-                decay_config,
-                rerank_provider=rerank_provider,
-                rerank_timeout=_search_timeout,
-                rerank_max_docs=_rerank_max_docs,
-                rerank_max_tokens_per_doc=_rerank_max_tokens,
-            )
+            rerank_max_docs = self._resolve_rerank_max_docs()
+            rerank_max_tokens = self._resolve_rerank_max_tokens()
+
+            # 账本（用户/群 first_seen/last_seen、标签），记忆本体不在 SQL 里
+            memory_sql_manager = self._create_memory_sql_manager()
             self._components["memory_sql_manager"] = memory_sql_manager
 
-            # 创建笔记切片存储和搜索引擎
-            note_chunk_store = self._create_note_chunk_store()
-            self._components["note_chunk_store"] = note_chunk_store
+            # 1. 嵌入提供商（可选，失败则记忆检索走纯全文）
+            embedding_provider = await self._try_create_embedding_provider()
 
-            note_chunk_search = self._create_note_chunk_search(
-                rerank_provider,
-                rerank_timeout=_search_timeout,
-                rerank_max_docs=_rerank_max_docs,
-                rerank_max_tokens_per_doc=_rerank_max_tokens,
-            )
-            self._components["note_chunk_search"] = note_chunk_search
-
-            embedding_provider_id = self.plugin_context.get_embedding_provider_id()
-            enable_local_embedding = self.plugin_context.get_enable_local_embedding()
-            vector_enabled = bool(str(embedding_provider_id or "").strip() or enable_local_embedding)
-
-            if not vector_enabled:
-                return await self._finish_simple_memory_initialization(
-                    memory_sql_manager,
-                    reason="未启用向量化能力",
-                )
-
-            # 1. 创建嵌入提供商
-            embedding_provider = None
-            try:
-                embedding_provider = await self._create_embedding_provider()
-                self._components["embedding_provider"] = embedding_provider
-                self.plugin_context.set_embedding_provider(embedding_provider)
-            except Exception as e:
-                self.logger.warning(f"嵌入提供商初始化失败，无法创建向量运行时: {e}")
-                embedding_provider = None
-
-            # 检查嵌入提供商真实可用性（不存在则视为无向量能力）
-            if embedding_provider is None:
-                vector_enabled = False
-            else:
-                provider_type = embedding_provider.get_provider_type()
-                provider_available = bool(embedding_provider.is_available())
-                if provider_type == "local":
-                    # 本地模型允许懒加载：不可用也可继续向量模式初始化
-                    if not provider_available:
-                        self.logger.info("本地嵌入模型采用懒加载模式：将在首次向量化请求时加载。")
-                    vector_enabled = True
-                else:
-                    if not provider_available:
-                        self.logger.warning(
-                            "上游嵌入提供商不可用（模型不存在或配置异常），无法创建向量运行时。"
-                        )
-                        vector_enabled = False
-                    else:
-                        vector_enabled = True
-
-            if not vector_enabled:
-                return await self._finish_simple_memory_initialization(
-                    memory_sql_manager,
-                    reason="向量化能力不可用",
-                )
-
-            # 2. 创建向量索引。FAISS 不可用时切换到 SQLite 向量后端。
-            vector_store = self._create_vector_store(
-                embedding_provider,
+            # 2. 配置 p-memory 单例
+            self._configure_pmemory(
+                embedding_provider=embedding_provider,
                 rerank_provider=rerank_provider,
-                search_timeout=_search_timeout,
+                rerank_max_docs=rerank_max_docs,
+                rerank_max_tokens=rerank_max_tokens,
             )
-            self._components["vector_store"] = vector_store
-            self.plugin_context.set_vector_store(vector_store)
 
-            # 3. 创建认知服务
-            cognitive_service = self._create_cognitive_service(
-                vector_store,
-                memory_sql_manager,
-                decay_config=decay_config,
-            )
-            self._components["cognitive_service"] = cognitive_service
-
-            # 4. 创建统一记忆运行时（Phase A: 向量实现）
-            memory_runtime = self._create_memory_runtime(
-                cognitive_service,
-                memory_sql_manager=memory_sql_manager,
-            )
+            # 3. 记忆运行时
+            memory_store = MemoryStore()
+            self._components["memory_store"] = memory_store
+            memory_runtime = self._create_memory_runtime(memory_store, decay_config)
             self._components["memory_runtime"] = memory_runtime
 
-            # 5. 创建笔记服务
-            note_service = self._create_note_service()
-            self._components["note_service"] = note_service
+            # 4. 笔记索引服务
+            note_index = self._create_note_index_service()
+            self._components["note_index"] = note_index
 
-            await self._run_startup_vector_consistency_check(
-                memory_sql_manager=memory_sql_manager,
-                cognitive_service=cognitive_service,
-            )
-
-            # 6. 创建DeepMind
-            deepmind = await self._create_deepmind(
-                vector_store, note_service, memory_runtime
-            )
+            # 5. 潜意识
+            deepmind = await self._create_deepmind(note_index, memory_runtime)
             self._components["deepmind"] = deepmind
 
-            # 7. 创建文件监控
-            file_monitor = self._create_file_monitor(note_service)
-            self._components["file_monitor"] = file_monitor
+            # 6. 旧记忆自动迁移（后台补齐，用户无需操作）
+            memory_center = Path(self.plugin_context.get_memory_center_dir())
+            migration = LegacyMemoryMigration(
+                memory_store=memory_store,
+                memory_sql_manager=memory_sql_manager,
+                state_dir=memory_center,
+                backup_dir=memory_center / "backups",
+                logger=self.logger,
+            )
+            self._components["legacy_migration"] = migration
 
             # 核心组件已就绪，立即标记初始化完成
             self._initialized = True
             self.logger.info("✅ 所有核心组件创建完成")
-            self.logger.info(
-                f"✅ 记忆运行时: Vector+BM25 Runtime backend={getattr(vector_store, 'backend_name', 'vector')}"
-            )
+            self.logger.info(f"✅ 记忆运行时: p-memory 目录={pmemory.root}")
 
             # 如果有初始化管理器，立即标记系统准备就绪
-            # 此时"电脑已开机"，用户可以开始使用，不需要等待"硬盘整理"（文件监控）
             if self.init_manager:
                 self.init_manager.mark_ready()
                 self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
 
-            # 异步启动文件监控（在后台继续运行）
-            await self._start_file_monitor(file_monitor)
+            # 异步启动笔记扫描（后台首次全量导入）
+            migration.start()
+            note_index.start()
 
             return self._components
 
@@ -231,55 +145,102 @@ class ComponentFactory:
             self.logger.error(f"错误详情: {traceback.format_exc()}")
             raise
 
-    async def _finish_simple_memory_initialization(
+    # === 配置解析 ===
+
+    def _resolve_rerank_max_docs(self) -> int:
+        try:
+            return int(self.plugin_context.get_rerank_max_docs())
+        except Exception:
+            return 64
+
+    def _resolve_rerank_max_tokens(self) -> int:
+        try:
+            return int(self.plugin_context.get_rerank_max_tokens_per_doc())
+        except Exception:
+            return 1024
+
+    def _resolve_raw_dir(self) -> Optional[Path]:
+        try:
+            return self.plugin_context.get_path_manager().get_raw_dir()
+        except Exception as e:
+            self.logger.warning(f"无法解析 raw 目录，笔记导入将跳过: {e}")
+            return None
+
+    @staticmethod
+    def _build_decay_policy(decay_config: MemoryDecayConfig) -> Dict[str, Any]:
+        """把旧三档参数翻译成 p-memory 的 DecayPolicy。
+
+        旧实现用 `cycle_tier0_days / (forget_speed * tier0_forget_speed)` 折算周期，
+        库侧只接受整数天数，这里沿用同一口径把速度合进周期。
+        """
+        speed = max(0.01, float(decay_config.forget_speed)) * max(
+            0.01, float(decay_config.tier0_forget_speed)
+        )
+        cycle_days = max(1, int(round(float(decay_config.cycle_tier0_days) / speed)))
+        tier0 = float(decay_config.tier0_threshold)
+        tier1 = max(float(decay_config.tier1_threshold), tier0 + 0.001)
+        return {
+            "tier0_threshold": tier0,
+            "tier1_threshold": tier1,
+            "useful_score_boost": max(0.01, float(decay_config.consolidate_speed)),
+            "strength_boost": 1,
+            "tier0_cycle_days": cycle_days,
+        }
+
+    def _configure_pmemory(
         self,
-        memory_sql_manager: MemorySqlManager,
         *,
-        reason: str,
-    ) -> Dict[str, Any]:
-        """完成简单记忆初始化。"""
-        self.logger.info(f"🧩 {reason}，使用简单记忆运行模式")
-        self._components.pop("vector_store", None)
-        self._components.pop("cognitive_service", None)
-        self.plugin_context.set_vector_store(None)
-
-        memory_runtime = self._create_memory_runtime(
-            cognitive_service=None,
-            memory_sql_manager=memory_sql_manager,
+        embedding_provider,
+        rerank_provider,
+        rerank_max_docs: int,
+        rerank_max_tokens: int,
+    ) -> None:
+        """数据目录放在 memory_center 同级，向量按 space 存，换供应商只新增 space。"""
+        root = Path(self.plugin_context.get_memory_center_dir()).parent / "pmemory"
+        raw_dir = self._resolve_raw_dir()
+        pmemory.configure(
+            root=root,
+            raw_dir=raw_dir,
+            embedding_provider=embedding_provider,
+            rerank_provider=rerank_provider,
+            rerank_options={
+                "max_tokens_total": RERANK_MAX_TOKENS_TOTAL,
+                "max_candidates": int(rerank_max_docs),
+                "max_tokens_per_doc": int(rerank_max_tokens),
+            },
         )
-        self._components["memory_runtime"] = memory_runtime
+        self.logger.info(f"✅ p-memory 已配置: 目录={root} 笔记根目录={raw_dir}")
 
-        note_service = self._create_note_service()
-        self._components["note_service"] = note_service
+        # 配置里出现的 scope 一并登记，退休与画像才能跨 scope 看到它们
+        try:
+            pmemory.register_scopes(self.plugin_context.get_conversation_scope_map().values())
+        except Exception as e:
+            self.logger.warning(f"登记记忆 scope 失败: {e}")
 
-        deepmind = await self._create_deepmind(
-            vector_store=None,
-            note_service=note_service,
-            memory_runtime=memory_runtime,
-        )
-        self._components["deepmind"] = deepmind
+    # === 组件创建 ===
 
-        file_monitor = self._create_file_monitor(note_service)
-        self._components["file_monitor"] = file_monitor
+    async def _try_create_embedding_provider(self):
+        """创建嵌入提供商；不可用时返回 None，由库降级为纯全文检索。"""
+        embedding_provider_id = self.plugin_context.get_embedding_provider_id()
+        enable_local = self.plugin_context.get_enable_local_embedding()
+        if not str(embedding_provider_id or "").strip() and not enable_local:
+            self.logger.info("ℹ️ 未启用嵌入能力，记忆检索走纯全文")
+            return None
 
-        self._initialized = True
-        self.logger.info("✅ 所有核心组件创建完成")
-        self.logger.info("✅ 记忆运行时: SimpleMemory Runtime")
+        self.logger.info(f"📚 创建嵌入提供商: '{embedding_provider_id}'")
+        try:
+            provider = await self._create_embedding_provider()
+        except Exception as e:
+            self.logger.warning(f"嵌入提供商初始化失败，记忆检索走纯全文: {e}")
+            return None
 
-        if self.init_manager:
-            self.init_manager.mark_ready()
-            self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
-
-        await self._start_file_monitor(file_monitor)
-        return self._components
+        self._components["embedding_provider"] = provider
+        self.plugin_context.set_embedding_provider(provider)
+        return provider
 
     async def _create_embedding_provider(self):
         """创建嵌入提供商"""
-        self.logger.info("📚 创建嵌入提供商...")
-
         embedding_provider_id = self.plugin_context.get_embedding_provider_id()
-        self.logger.info(f"🔧 配置的嵌入式模型提供商ID: '{embedding_provider_id}'")
-
         factory = EmbeddingProviderFactory(self.context)
         embedding_provider = await factory.create_provider(
             embedding_provider_id,
@@ -287,128 +248,8 @@ class ComponentFactory:
             batch_size=self.plugin_context.get_embedding_batch_size(),
             timeout=60,
         )
-
-        provider_info = embedding_provider.get_model_info()
-        self.logger.info(f"✅ 嵌入提供商创建完成: {provider_info}")
-
+        self.logger.info(f"✅ 嵌入提供商创建完成: {embedding_provider.get_model_info()}")
         return embedding_provider
-
-    def _probe_faiss_available(self) -> tuple[bool, str]:
-        """在子进程中探测 FAISS，避免 SIGILL 直接打崩主进程。"""
-        if self._faiss_probe_result is not None:
-            return self._faiss_probe_result
-
-        self.logger.info("[向量索引] 开始 任务名=FAISS可用性探测 触发条件=创建向量索引")
-        try:
-            result = subprocess.run(
-                [sys.executable, "-c", "import faiss"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=10,
-            )
-        except Exception as e:
-            detail = f"探测子进程启动失败: {e}"
-            self._faiss_probe_result = (False, detail)
-            self.logger.warning(
-                f"[向量索引] 失败 任务名=FAISS可用性探测 触发条件=创建向量索引 "
-                f"处理=切换SQLite向量模式 异常={detail}"
-            )
-            return self._faiss_probe_result
-
-        stderr = (result.stderr or "").strip().replace("\n", " ")[:500]
-        stdout = (result.stdout or "").strip().replace("\n", " ")[:200]
-        if result.returncode == 0:
-            self._faiss_probe_result = (True, "可用")
-            self.logger.info("[向量索引] 完成 任务名=FAISS可用性探测 结果=可用")
-            return self._faiss_probe_result
-
-        detail = (
-            f"returncode={result.returncode} "
-            f"stderr={stderr or '(空)'} stdout={stdout or '(空)'}"
-        )
-        self._faiss_probe_result = (False, detail)
-        self.logger.warning(
-            f"[向量索引] 失败 任务名=FAISS可用性探测 触发条件=创建向量索引 "
-            f"处理=切换SQLite向量模式 {detail}"
-        )
-        return self._faiss_probe_result
-
-    def _load_faiss_vector_store_class(self):
-        available, detail = self._probe_faiss_available()
-        if not available:
-            raise RuntimeError(f"FAISS不可用: {detail}")
-
-        from ..llm_memory.components.faiss_memory_index import FaissVectorStore
-
-        return FaissVectorStore
-
-    @staticmethod
-    def _load_sqlite_vector_store_class():
-        from ..llm_memory.components.sqlite_vector_index import SqliteVectorStore
-
-        return SqliteVectorStore
-
-    def _select_vector_store_backend(self):
-        available, detail = self._probe_faiss_available()
-        if available:
-            return (
-                "faiss",
-                self._load_faiss_vector_store_class(),
-                self.plugin_context.get_faiss_index_dir(),
-                "FAISS",
-            )
-
-        self.logger.info(
-            "[向量索引] 开始 任务名=后端选择 结果=SQLite向量模式 "
-            f"原因=FAISS不可用 detail={detail}"
-        )
-        return (
-            "sqlite",
-            self._load_sqlite_vector_store_class(),
-            self.plugin_context.get_sqlite_vector_index_dir(),
-            "SQLite",
-        )
-
-    def _create_vector_store(
-        self, embedding_provider, rerank_provider=None, search_timeout: int | None = None
-    ):
-        """创建向量索引。"""
-        backend_name, VectorStoreClass, index_dir, backend_label = self._select_vector_store_backend()
-        self.logger.info(f"🗄️ 创建{backend_label}向量索引...")
-        if search_timeout is None:
-            try:
-                search_timeout = self.plugin_context.get_embedding_timeout()
-            except Exception:
-                search_timeout = 5
-
-        self.logger.info(f"📁 使用{backend_label}索引路径: {index_dir}")
-
-        vector_store = VectorStoreClass(
-            embedding_provider=embedding_provider,
-            index_dir=index_dir,
-            provider_id=self.plugin_context.get_current_provider(),
-            rerank_provider=rerank_provider,
-            search_timeout=search_timeout,
-        )
-
-        # 获取提供商类型用于日志
-        provider_type = embedding_provider.get_provider_type()
-        provider_info = embedding_provider.get_model_info()
-
-        if provider_type == "api":
-            provider_id = provider_info.get("provider_id", "unknown")
-            self.logger.info(
-                f"✅ {backend_label}向量索引创建完成 (使用API提供商: {provider_id})"
-            )
-        else:
-            model_name = provider_info.get("model_name", "unknown")
-            self.logger.info(
-                f"✅ {backend_label}向量索引创建完成 (使用本地模型: {model_name})"
-            )
-        self.logger.info(f"[向量索引] 完成 任务名=后端选择 backend={backend_name}")
-
-        return vector_store
 
     def _resolve_rerank_provider(self) -> Optional[Any]:
         """
@@ -431,7 +272,6 @@ class ComponentFactory:
                 if pid
             ]
 
-            # 先按显式 ID 查找
             for pid in candidate_ids:
                 if hasattr(self.context, "get_rerank_provider_by_id"):
                     provider = self.context.get_rerank_provider_by_id(pid)
@@ -445,174 +285,58 @@ class ComponentFactory:
                         self.logger.info(f"✅ 使用上游可重排提供商: {pid}")
                         return provider
 
-            # 再从列表中兜底挑选
             if hasattr(self.context, "get_all_rerank_providers"):
-                providers = self.context.get_all_rerank_providers() or []
-                for p in providers:
+                for p in self.context.get_all_rerank_providers() or []:
                     if hasattr(p, "rerank"):
                         self.logger.info("✅ 使用上游重排提供商: <auto>")
                         return p
 
             if hasattr(self.context, "get_all_providers"):
-                providers = self.context.get_all_providers() or []
-                for p in providers:
+                for p in self.context.get_all_providers() or []:
                     if hasattr(p, "rerank"):
                         self.logger.info("✅ 使用上游可重排提供商: <auto>")
                         return p
 
-            self.logger.info("ℹ️ 未启用记忆二阶段重排，当前使用 FAISS 向量相似度排序结果")
+            self.logger.info("ℹ️ 未配置重排提供商，检索按库内排序返回")
             return None
         except Exception as e:
-            self.logger.warning(f"解析上游重排提供商失败，自动降级为 FAISS 向量相似度排序: {e}")
+            self.logger.warning(f"解析上游重排提供商失败，检索不重排: {e}")
             return None
 
-    def _create_cognitive_service(
-        self,
-        vector_store,
-        memory_sql_manager: MemorySqlManager = None,
-        decay_config: Optional[MemoryDecayConfig] = None,
-    ):
-        """创建认知服务"""
-        self.logger.info("🧠 创建认知服务...")
-
-        cognitive_service = CognitiveService(
-            vector_store=vector_store,
-            memory_sql_manager=memory_sql_manager,
-            decay_config=decay_config,
-        )
-        self.logger.info("✅ 认知服务创建完成")
-
-        return cognitive_service
-
-    def _create_memory_sql_manager(
-        self,
-        decay_config: Optional[MemoryDecayConfig] = None,
-        rerank_provider: Optional[Any] = None,
-        rerank_timeout: int | None = None,
-        rerank_max_docs: int | None = None,
-        rerank_max_tokens_per_doc: int | None = None,
-    ) -> MemorySqlManager:
-        """创建 SQL 记忆管理器（两种运行时共用）。"""
+    def _create_memory_sql_manager(self) -> MemorySqlManager:
+        """创建账本管理器（仅承载账本与迁移源数据）。"""
         simple_db_path = self.plugin_context.get_simple_memory_db_path()
-        if rerank_timeout is None:
-            try:
-                rerank_timeout = self.plugin_context.get_embedding_timeout()
-            except Exception:
-                rerank_timeout = 5
-        if rerank_max_docs is None:
-            try:
-                rerank_max_docs = self.plugin_context.get_rerank_max_docs()
-            except Exception:
-                rerank_max_docs = 64
-        if rerank_max_tokens_per_doc is None:
-            try:
-                rerank_max_tokens_per_doc = self.plugin_context.get_rerank_max_tokens_per_doc()
-            except Exception:
-                rerank_max_tokens_per_doc = 1024
-        manager = MemorySqlManager(
-            simple_db_path,
-            decay_config=decay_config,
-            rerank_provider=rerank_provider,
-            rerank_timeout=rerank_timeout,
-            rerank_max_docs=rerank_max_docs,
-            rerank_max_tokens_per_doc=rerank_max_tokens_per_doc,
-        )
+        manager = MemorySqlManager(simple_db_path)
         self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
         return manager
 
-    def _create_note_chunk_store(self) -> Optional[NoteChunkStore]:
-        """创建笔记切片存储"""
-        try:
-            db_path = self.plugin_context.get_note_chunks_db_path()
-            store = NoteChunkStore(db_path=db_path)
-            self.logger.info(f"✅ 笔记切片存储创建完成: {db_path}")
-            return store
-        except Exception as e:
-            self.logger.warning(f"笔记切片存储创建失败（不影响主流程）: {e}")
-            return None
-
-    def _create_note_chunk_search(
+    def _create_memory_runtime(
         self,
-        rerank_provider=None,
-        rerank_timeout: int | None = None,
-        rerank_max_docs: int | None = None,
-        rerank_max_tokens_per_doc: int | None = None,
-    ) -> Optional[NoteChunkSearchEngine]:
-        """创建笔记切片搜索引擎"""
-        try:
-            index_dir = str(self.plugin_context.get_memory_center_dir() / "index")
-            if rerank_timeout is None:
-                try:
-                    rerank_timeout = self.plugin_context.get_embedding_timeout()
-                except Exception:
-                    rerank_timeout = 5
-            if rerank_max_docs is None:
-                try:
-                    rerank_max_docs = self.plugin_context.get_rerank_max_docs()
-                except Exception:
-                    rerank_max_docs = 64
-            if rerank_max_tokens_per_doc is None:
-                try:
-                    rerank_max_tokens_per_doc = self.plugin_context.get_rerank_max_tokens_per_doc()
-                except Exception:
-                    rerank_max_tokens_per_doc = 1024
-            engine = NoteChunkSearchEngine(
-                index_dir=index_dir,
-                rerank_provider=rerank_provider,
-                rerank_timeout=rerank_timeout,
-                rerank_max_docs=rerank_max_docs,
-                rerank_max_tokens_per_doc=rerank_max_tokens_per_doc,
-            )
-            self.logger.info("✅ 笔记切片搜索引擎创建完成")
-            return engine
-        except Exception as e:
-            self.logger.warning(f"笔记切片搜索引擎创建失败（不影响主流程）: {e}")
-            return None
-
-    def _sync_chunk_search_index(self) -> None:
-        """同步切片搜索索引（启动时调用）"""
-        note_chunk_search = self._components.get("note_chunk_search")
-        note_chunk_store = self._components.get("note_chunk_store")
-        if note_chunk_search is None or note_chunk_store is None:
-            return
-        try:
-            stats = note_chunk_store.get_stats()
-            total = stats.get("total_chunks", 0)
-            if total > 0:
-                self.logger.info(f"切片搜索索引已就绪: 切片库含 {total} 条记录")
-        except Exception as e:
-            self.logger.warning(f"切片搜索索引状态检查失败: {e}")
-
-    def _create_memory_runtime(self, cognitive_service, memory_sql_manager: MemorySqlManager):
+        memory_store: MemoryStore,
+        decay_config: Optional[MemoryDecayConfig] = None,
+    ) -> PMemoryMemoryRuntime:
         """创建统一记忆运行时。"""
-        self.logger.info("🧩 创建统一记忆运行时...")
-
-        if cognitive_service is None:
-            runtime = SimpleMemoryRuntime(memory_sql_manager)
-            self.logger.info("✅ 统一记忆运行时创建完成 (SimpleMemory)")
-            return runtime
-
-        runtime = VectorMemoryRuntime(cognitive_service)
-        self.logger.info("✅ 统一记忆运行时创建完成 (Vector+BM25)")
+        policy = self._build_decay_policy(decay_config or MemoryDecayConfig())
+        runtime = PMemoryMemoryRuntime(memory_store, decay_policy=policy)
+        self.logger.info(f"✅ 统一记忆运行时创建完成 (p-memory) 衰减策略={policy}")
         return runtime
 
-    def _create_note_service(self):
-        """创建笔记服务"""
-        self.logger.info("📝 创建笔记服务...")
+    def _create_note_index_service(self) -> NoteIndexService:
+        """创建笔记索引服务。"""
+        raw_dir = self._resolve_raw_dir()
+        if raw_dir is None:
+            raw_dir = Path(self.data_directory)
+            self.logger.warning(f"笔记根目录回退为数据目录: {raw_dir}")
+        service = NoteIndexService(raw_dir)
+        self.logger.info(f"✅ 笔记索引服务创建完成: {raw_dir}")
+        return service
 
-        note_service = NoteService.from_plugin_context(self.plugin_context)
-        self.logger.info("✅ 笔记服务创建完成")
-
-        return note_service
-
-    async def _create_deepmind(self, vector_store, note_service, memory_runtime):
+    async def _create_deepmind(self, note_index, memory_runtime):
         """创建DeepMind"""
         self.logger.info("🤖 创建DeepMind...")
 
-        # 从PluginContext获取LLM提供商ID
         llm_provider_id = self.plugin_context.get_llm_provider_id()
 
-        # 创建配置对象
         class Config:
             def __init__(self, config_dict):
                 for key, value in config_dict.items():
@@ -623,105 +347,16 @@ class ComponentFactory:
         deepmind = DeepMind(
             config=config_obj,
             context=self.context,
-            vector_store=vector_store,
-            note_service=note_service,
-            plugin_context=self.plugin_context, # 传递plugin_context
+            note_service=note_index,
+            plugin_context=self.plugin_context,
             provider_id=llm_provider_id,
-            memory_runtime=memory_runtime,  # 使用统一记忆运行时
+            memory_runtime=memory_runtime,
         )
 
         self.logger.info("✅ DeepMind创建完成")
         return deepmind
 
-    def _create_file_monitor(self, note_service):
-        """创建文件监控"""
-        self.logger.info("📂 创建文件监控组件...")
-
-        # 导入相关模块
-        from ..core.file_monitor import FileMonitorService
-
-        # 使用PathManager获取正确的索引目录
-        data_directory = str(self.plugin_context.get_index_dir())
-
-        self.logger.info(f"📁 使用数据目录: {data_directory}")
-        self.logger.info(f"📁 当前工作目录: {Path.cwd()}")
-
-        # 创建文件监控服务
-        file_monitor = FileMonitorService(
-            data_directory=data_directory,
-            note_service=note_service,  # 传入已创建的note_service实例
-            config=self.plugin_context.config,  # 传入配置
-        )
-
-        self.logger.info(
-            f"✅ 文件监控组件创建完成 (提供商: {self.plugin_context.get_current_provider()})"
-        )
-        return file_monitor
-
-    async def _start_file_monitor(self, file_monitor):
-        """启动文件监控服务（内部同步执行）"""
-        try:
-            # 直接调用同步方法（在线程池中执行，避免阻塞event loop）
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, file_monitor.start_monitoring)
-            self.logger.info("📂 文件监控服务已启动")
-
-        except Exception as e:
-            self.logger.error(f"启动文件监控服务失败: {e}")
-            # 文件监控失败不应该中断整个初始化流程
-
-    async def _run_startup_vector_consistency_check(
-        self,
-        *,
-        memory_sql_manager: MemorySqlManager,
-        cognitive_service,
-    ) -> None:
-        """启动时检查记忆 SQL 真相层与当前 provider 的向量层是否一致。"""
-        import time
-
-        provider_id = self.plugin_context.get_current_provider()
-        backend_name = getattr(cognitive_service.vector_store, "backend_name", "vector")
-
-        async def _sync_index(index_name: str, index, rows):
-            start = time.time()
-            self.logger.info(
-                "[向量索引] 开始 "
-                f"任务名=启动一致性检查 index={index_name} "
-                f"backend={backend_name} provider_id={provider_id} 真相层条数={len(rows)}"
-            )
-            result = await index.sync_rows(rows)
-            cost_ms = int((time.time() - start) * 1000)
-            changed = int(result.get("changed", 0) or 0)
-            missing = int(result.get("missing", 0) or 0)
-            orphan = int(result.get("orphan", 0) or 0)
-            migrated = int(result.get("migrated", 0) or 0)
-            deleted = int(result.get("deleted", 0) or 0)
-            rebuilt = int(result.get("rebuilt", 0) or 0)
-            action = "重建" if rebuilt else ("同步" if (migrated or deleted or changed or missing or orphan) else "跳过")
-            self.logger.info(
-                "[向量索引] 完成 "
-                f"任务名=启动一致性检查 index={index_name} action={action} "
-                f"backend={backend_name} provider_id={provider_id} 真相层条数={result.get('sql_total', len(rows))} "
-                f"向量层原条数={result.get('vector_total_before', result.get('vector_total', 0))} "
-                f"缺失={missing} 孤儿={orphan} 文本变化={changed} "
-                f"写入={migrated} 删除={deleted} 重建={rebuilt} 耗时毫秒={cost_ms}"
-            )
-            return result
-
-        try:
-            memory_rows = await memory_sql_manager.list_memory_index_rows()
-            await _sync_index(
-                "memory_index",
-                cognitive_service.memory_index_collection,
-                memory_rows,
-            )
-        except Exception as e:
-            self.logger.warning(
-                f"[向量索引] 失败 任务名=启动一致性检查 index=memory_index backend={backend_name} 异常={e}",
-                exc_info=True,
-            )
+    # === 状态 ===
 
     def get_components(self) -> Dict[str, Any]:
         """获取已创建的组件"""
@@ -743,17 +378,12 @@ class ComponentFactory:
 
         self.logger.info("🏭 开始关闭所有核心组件...")
 
-        # 按创建顺序的逆序关闭组件
         component_shutdown_order = [
-            "file_monitor",
+            "legacy_migration",
+            "note_index",
             "deepmind",
             "memory_runtime",
-            "note_chunk_search",
-            "note_chunk_store",
             "memory_sql_manager",
-            "note_service",
-            "cognitive_service",
-            "vector_store",
             "embedding_provider",
         ]
 
@@ -786,6 +416,11 @@ class ComponentFactory:
             if component:
                 _try_shutdown_component(component_name, component)
                 self._components.pop(component_name, None)
+
+        try:
+            pmemory.close()
+        except Exception as e:
+            self.logger.error(f"❌ 关闭 p-memory 失败: {e}")
 
         self._components.clear()
         self._initialized = False

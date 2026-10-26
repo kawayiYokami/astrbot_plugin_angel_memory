@@ -101,8 +101,6 @@ class PathManager:
         try:
             self._base_dir.mkdir(parents=True, exist_ok=True)
             (self._base_dir / "index").mkdir(exist_ok=True)
-            (self._base_dir / "index" / "faiss").mkdir(exist_ok=True)
-            (self._base_dir / "index" / "sqlite").mkdir(exist_ok=True)
             (self._base_dir / "logs").mkdir(exist_ok=True)
         except Exception as e:
             logger.error(f"创建供应商目录失败: {e}")
@@ -140,22 +138,6 @@ class PathManager:
             raise ValueError("供应商未设置，无法获取文件数据库路径")
         return self.get_index_dir() / f"file_index_{self._current_provider}.db"
 
-    def get_faiss_index_dir(self) -> Path:
-        """获取当前供应商的 FAISS 索引目录。"""
-        if not self.is_provider_set():
-            raise ValueError("供应商未设置，无法获取FAISS索引目录")
-        path = self.get_index_dir() / "faiss"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def get_sqlite_vector_index_dir(self) -> Path:
-        """获取当前供应商的 SQLite 向量索引目录。"""
-        if not self.is_provider_set():
-            raise ValueError("供应商未设置，无法获取SQLite向量索引目录")
-        path = self.get_index_dir() / "sqlite"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
     def get_logs_dir(self) -> Path:
         """获取日志目录"""
         if not self.is_provider_set():
@@ -181,10 +163,6 @@ class PathManager:
     def get_simple_memory_db_path(self) -> Path:
         """获取 simple memory 数据库路径（与 provider 无关）"""
         return self.get_memory_center_index_dir() / "simple_memory.db"
-
-    def get_note_chunks_db_path(self) -> Path:
-        """获取笔记切片数据库路径（与 provider 无关，可随时重建）"""
-        return self.get_memory_center_index_dir() / "note_chunks.db"
 
     # === 对外路径方法（提示词路径） ===
 
@@ -213,8 +191,6 @@ class PathManager:
         return {
             "tag_db": self.get_tag_db_path(),
             "file_db": self.get_file_db_path(),
-            "faiss_index": self.get_faiss_index_dir(),
-            "sqlite_vector_index": self.get_sqlite_vector_index_dir(),
         }
 
     def get_database_info(self) -> Dict[str, any]:

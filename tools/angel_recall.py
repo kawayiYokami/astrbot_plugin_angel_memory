@@ -77,12 +77,11 @@ class CoreMemoryRecallTool(FunctionTool):
                 event=event,
                 memory_scope=memory_scope,
             )
-            all_active = [mem for mem in all_memories if mem.is_active]
+            all_active = list(all_memories)
 
             if all_active:
-                memory_sql_manager = plugin_context.get_component("memory_sql_manager")
                 memory_text = MemoryFormatter.format_session_memories(
-                    all_active, short_id_registry=memory_sql_manager
+                    all_active, short_id_registry=None
                 )
                 parts.append(f"[记忆检索结果 ({len(all_active)}条)]\n{memory_text}")
             else:
@@ -93,9 +92,15 @@ class CoreMemoryRecallTool(FunctionTool):
 
         # === 笔记切片检索（50条，精准过滤后按文件聚合） ===
         try:
-            note_service = plugin_context.get_component("note_service")
+            note_service = plugin_context.get_component("note_index")
             if note_service:
-                note_results = await note_service.search_notes(query=query, max_results=50)
+                visible = plugin_context.visible_domains(self._group_id(event))
+                if visible:
+                    note_results = await note_service.search_notes_async(
+                        query=query, max_results=50, domains=visible
+                    )
+                else:
+                    note_results = []
                 # 精准过滤：content 必须包含原始查询词
                 if note_results:
                     note_results = self._precise_filter(note_results, query)
@@ -105,10 +110,9 @@ class CoreMemoryRecallTool(FunctionTool):
                     note_lines = []
                     for file_info in aggregated:
                         path = file_info["path"]
-                        short_id = file_info["short_id"]
+                        note_id = file_info["note_id"]
                         chunks = file_info["chunks"]
-                        id_hint = f"ID:{short_id}" if short_id >= 0 else ""
-                        header = f"[{path}] ({id_hint}, 命中{len(chunks)}处)"
+                        header = f"[{path}] (ID:{note_id}, 命中{len(chunks)}处)"
                         chunk_previews = []
                         for c in chunks:
                             preview = c["content"][:80]
@@ -116,7 +120,7 @@ class CoreMemoryRecallTool(FunctionTool):
                         note_lines.append(header + "\n" + "\n".join(chunk_previews))
                     parts.append(
                         f"[笔记检索结果 ({len(aggregated)}个文件)]\n"
-                        "[展开正文: angel_note_read(note_short_id, offset, limit)]\n\n"
+                        "[展开正文: angel_note_read(note_id, offset, limit)]\n\n"
                         + "\n\n".join(note_lines)
                     )
                 else:
@@ -128,6 +132,16 @@ class CoreMemoryRecallTool(FunctionTool):
             parts.append(f"[笔记检索结果]\n检索失败：{e}")
 
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _group_id(event: AstrMessageEvent) -> str:
+        """群号；私聊返回空串，私聊按全部域可见处理。"""
+        if hasattr(event, "get_group_id"):
+            try:
+                return str(event.get_group_id() or "").strip()
+            except Exception:
+                return ""
+        return ""
 
     @staticmethod
     def _aggregate_by_file(note_results: List[dict]) -> List[dict]:
@@ -142,7 +156,7 @@ class CoreMemoryRecallTool(FunctionTool):
             if path not in file_map:
                 file_map[path] = {
                     "path": path,
-                    "short_id": int(metadata.get("note_short_id", -1)),
+                    "note_id": int(metadata.get("note_id", -1)),
                     "chunks": [],
                 }
             file_map[path]["chunks"].append({

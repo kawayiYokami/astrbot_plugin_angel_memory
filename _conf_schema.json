@@ -64,10 +64,27 @@
     "editor_theme": "vs-dark",
     "hint": "键为人格名（优先匹配）或会话ID，值为记忆分类域；未命中时默认 public。scope 名仅允许字母、数字、中文、下划线和短横线。"
   },
+  "group_domain_map": {
+    "type": "text",
+    "description": "[知识域绑定] 旧版群号到知识域的映射（等价于把该域设为自动）",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark",
+    "hint": "已由 group_knowledge_map 取代，保留仅为兼容旧配置。命中某域时该域按「自动」处理。"
+  },
+  "group_knowledge_map": {
+    "type": "text",
+    "description": "[知识可见性] 群号到各知识库三态的表，auto=自动召回 / manual=只能手动搜 / hidden=完全不可见",
+    "default": "{}",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark",
+    "hint": "结构为 {\"群号\": {\"gi\": \"auto\", \"hsr\": \"manual\", \"zzz\": \"hidden\"}}。域取 gi / hsr / zzz / personal / angel；未写的群与域默认 manual。推荐在「群聊知识库」页面里改，不用手写 JSON。"
+  },
   "memory_behavior": {
     "type": "object",
-    "description": "[记忆行为参数] 记忆系统的行为配置",
-    "hint": "控制记忆处理的各种参数，影响记忆的生成、保存和巩固。",
+    "description": "[记忆行为参数] 记忆系统的行为配置",    "hint": "控制记忆处理的各种参数，影响记忆的生成、保存和巩固。",
     "items": {
       "default_passive_strength": {
         "type": "int",

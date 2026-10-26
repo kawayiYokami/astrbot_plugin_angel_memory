@@ -4,7 +4,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pathlib import Path
 
 
@@ -103,25 +103,6 @@ class MemorySystemConfig:
             config_dict["index_dir"] = Path(config_dict["index_dir"])
 
         return cls(**config_dict)
-
-    def ensure_directories_exist(self):
-        """确保目录存在"""
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
-        self.index_dir.mkdir(parents=True, exist_ok=True)
-
-    def get_database_path(self, provider_id: Optional[str] = None) -> Path:
-        """
-        获取向量索引路径
-
-        Args:
-            provider_id: 提供商ID，如果提供则使用提供商专用路径
-
-        Returns:
-            向量索引路径
-        """
-        if provider_id:
-            return self.index_dir / "faiss" / provider_id
-        return self.index_dir / "faiss"
 
 
 # 全局配置实例

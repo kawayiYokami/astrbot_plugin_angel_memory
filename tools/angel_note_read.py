@@ -16,15 +16,15 @@ except ImportError:
 @dataclass
 class NoteRecallTool(FunctionTool):
     name: str = "angel_note_read"
-    description: str = "读取笔记正文。使用 note_short_id 定位文件，支持 offset+limit 分页读取。"
+    description: str = "读取笔记正文。使用 note_id 定位文件，支持 offset+limit 分页读取。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
-                "note_short_id": {
+                "note_id": {
                     "type": "integer",
-                    "description": "笔记短ID（数字ID）",
-                    "minimum": 0,
+                    "description": "笔记的整数 ID（检索结果里 ID: 后面那个数字）",
+                    "minimum": 1,
                 },
                 "offset": {
                     "type": "integer",
@@ -38,7 +38,7 @@ class NoteRecallTool(FunctionTool):
                     "minimum": 1,
                 },
             },
-            "required": ["note_short_id"],
+            "required": ["note_id"],
         }
     )
 
@@ -51,7 +51,7 @@ class NoteRecallTool(FunctionTool):
     async def run(
         self,
         event: AstrMessageEvent,
-        note_short_id: int,
+        note_id: int,
         offset: int = 1,
         limit: Optional[int] = None,
     ) -> str:
@@ -59,21 +59,25 @@ class NoteRecallTool(FunctionTool):
             return "错误：无法获取插件上下文。"
         plugin_context = event.plugin_context
 
-        memory_sql_manager = plugin_context.get_component("memory_sql_manager")
-        if memory_sql_manager is None:
-            return "错误：memory_sql_manager 不可用。"
-        row = await memory_sql_manager.get_note_index_by_short_id(int(note_short_id))
-        if not row:
-            return f"错误：未找到 note_short_id={int(note_short_id)} 对应的笔记。"
-        rel_path = str(row.get("source_file_path") or "").replace("\\", "/").strip().lstrip("/")
+        note_index = plugin_context.get_component("note_index")
+        if note_index is None:
+            return "错误：笔记索引服务不可用。"
 
-        raw_dir = plugin_context.get_path_manager().get_raw_dir()
-        target_path = (Path(raw_dir) / rel_path).resolve()
-        raw_root = Path(raw_dir).resolve()
-        if raw_root not in target_path.parents and target_path != raw_root:
-            return "错误：路径越界。"
-        if not target_path.exists():
-            return f"错误：文件不存在：{rel_path}"
+        # 可见性校验：直读必须和主动搜索走同一套白名单。
+        # 只在白名单域里找一次：hidden 域碰都不碰，与不存在统一报“未找到”。
+        group_id = self._group_id(event)
+        try:
+            visible = plugin_context.visible_domains(group_id)
+        except Exception:
+            visible = []
+        domain, note = note_index.find_note(int(note_id), domains=list(visible or []))
+        if domain is None or note is None:
+            return f"错误：未找到 note_id={int(note_id)} 对应的笔记。"
+
+        target_path = note_index.file_for_note(note)
+        if target_path is None:
+            return f"错误：未找到 note_id={int(note_id)} 对应的笔记。"
+        rel_path = note_index.path_for_note(domain, note) or target_path.name
 
         try:
             text = target_path.read_text(encoding="utf-8", errors="ignore")
@@ -88,7 +92,7 @@ class NoteRecallTool(FunctionTool):
         if start > total_lines:
             return (
                 f"[angel_note_read]\n"
-                f"note_short_id: {note_short_id}\n"
+                f"note_id: {note_id}\n"
                 f"source_file_path: {rel_path}\n"
                 f"total_lines: {total_lines}\n"
                 f"offset: {start}\n"
@@ -117,7 +121,7 @@ class NoteRecallTool(FunctionTool):
 
         result = (
             f"[angel_note_read]\n"
-            f"note_short_id: {note_short_id}\n"
+            f"note_id: {note_id}\n"
             f"source_file_path: {rel_path}\n"
             f"total_lines: {total_lines}\n"
             f"returned: L{start}-{actual_end}\n"
@@ -129,3 +133,13 @@ class NoteRecallTool(FunctionTool):
         result += f"\n{content}"
 
         return result
+
+    @staticmethod
+    def _group_id(event: AstrMessageEvent) -> str:
+        """群号；私聊返回空串，私聊按全部域可见处理。"""
+        if hasattr(event, "get_group_id"):
+            try:
+                return str(event.get_group_id() or "").strip()
+            except Exception:
+                return ""
+        return ""

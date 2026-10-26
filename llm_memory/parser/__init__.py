@@ -1,9 +1,5 @@
 """
-解析器模块
-
-提供笔记切片功能。
+解析器模块（p-memory 模式：切片由库内完成，本包不再提供自研切片器）。
 """
 
-from .note_chunker import chunk_file
-
-__all__ = ["chunk_file"]
+__all__: list[str] = []

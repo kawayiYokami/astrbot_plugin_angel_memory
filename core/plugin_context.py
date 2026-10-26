@@ -52,15 +52,16 @@ class PluginContext:
         self.path_manager: Optional[PathManager] = None
         # 异步资源，由ComponentFactory创建后设置
         self.embedding_provider: Optional[EmbeddingProvider] = None
-        self.vector_store: Optional[Any] = None
         # ComponentFactory 引用，用于获取组件
         self._component_factory = None
         self._scope_name_pattern = re.compile(r"^[a-zA-Z0-9\u4e00-\u9fff_-]+$")
         self._conversation_scope_map: Dict[str, str] = {}
+        self._group_knowledge_map: Dict[str, Dict[str, str]] = {}
 
         # 初始化插件资源
         self._setup_plugin_resources()
         self._refresh_scope_map()
+        self._refresh_domain_map()
 
         self.logger.info(
             f"PluginContext初始化完成 (提供商: {self.get_embedding_provider_id()})"
@@ -272,6 +273,75 @@ class PluginContext:
         """获取已校验的会话映射。"""
         return self._conversation_scope_map.copy()
 
+    def _refresh_domain_map(self) -> None:
+        """读取知识可见性三态表，兼容旧的 group_domain_map。
+
+        表结构：`{群号: {域: auto|manual|hidden}}`。未写的群与域按 manual 处理；
+        旧表命中的域视作 auto，新表出现同名群时以新表为准。
+        """
+        from ..pmemory.config import build_knowledge_matrix
+
+        matrix, errors = build_knowledge_matrix(
+            self._parse_json_config("group_knowledge_map"),
+            self._parse_json_config("group_domain_map"),
+        )
+        for message in errors:
+            self.logger.warning(f"{message}，已忽略该配置项")
+        self._group_knowledge_map = matrix
+
+    def _parse_json_config(self, key: str):
+        """读一个可能是 JSON 文本的配置项，非法一律回落空字典。"""
+        raw = self.config.get(key, {}) or {}
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return {}
+            try:
+                raw = json.loads(text)
+            except Exception:
+                self.logger.warning(f"{key} JSON 解析失败，已忽略并回退为空。")
+                return {}
+        if not isinstance(raw, dict):
+            self.logger.warning(f"{key} 配置类型非法（需为 object），已忽略并回退为空。")
+            return {}
+        return raw
+
+    def get_group_knowledge_map(self) -> Dict[str, Dict[str, str]]:
+        """获取全部群的三态表（每个群都补齐了全部域）。"""
+        return {group: dict(modes) for group, modes in self._group_knowledge_map.items()}
+
+    def list_knowledge_modes(self, group_id: object) -> Dict[str, str]:
+        """取某个群对全部知识域的可见性，未配置的群一律 manual。"""
+        from ..pmemory.config import DEFAULT_KNOWLEDGE_MODE, DOMAIN_DIRS
+
+        key = str(group_id or "").strip()
+        modes = self._group_knowledge_map.get(key) or {}
+        return {domain: modes.get(domain, DEFAULT_KNOWLEDGE_MODE) for domain in DOMAIN_DIRS}
+
+    def resolve_knowledge_mode(self, group_id: object, domain: object) -> str:
+        """取某个群对某个知识域的三态；非法域按 manual 处理。"""
+        from ..pmemory.config import DEFAULT_KNOWLEDGE_MODE, normalize_domain
+
+        name = normalize_domain(domain)
+        if not name:
+            return DEFAULT_KNOWLEDGE_MODE
+        return self.list_knowledge_modes(group_id).get(name, DEFAULT_KNOWLEDGE_MODE)
+
+    def auto_domains(self, group_id: object) -> list[str]:
+        """会自动注入上下文的域。私聊与未配置的群一律为空。"""
+        from ..pmemory.config import auto_domains_from
+
+        return auto_domains_from(self._group_knowledge_map, group_id)
+
+    def visible_domains(self, group_id: object) -> list[str]:
+        """允许主动搜索的域（auto + manual），hidden 不在其中。
+
+        拿不到群号（私聊）时按「全部域 manual」处理：能搜、不自动注入。
+        """
+        from ..pmemory.config import visible_domains_from
+
+        return visible_domains_from(self._group_knowledge_map, group_id)
+
     def resolve_memory_scope(self, conversation_id: str, persona_name: str = "") -> str:
         """解析当前记忆域：优先人格名键，其次会话ID键，未命中返回 public。"""
         scope, _, _ = self.resolve_memory_scope_with_source(
@@ -459,14 +529,6 @@ class PluginContext:
         """获取文件数据库路径"""
         return self.path_manager.get_file_db_path()
 
-    def get_faiss_index_dir(self) -> Path:
-        """获取当前供应商的FAISS索引目录"""
-        return self.path_manager.get_faiss_index_dir()
-
-    def get_sqlite_vector_index_dir(self) -> Path:
-        """获取当前供应商的SQLite向量索引目录"""
-        return self.path_manager.get_sqlite_vector_index_dir()
-
     def get_memory_center_dir(self) -> Path:
         """获取中央记忆目录（与provider无关）"""
         return self.path_manager.get_memory_center_dir()
@@ -474,10 +536,6 @@ class PluginContext:
     def get_simple_memory_db_path(self) -> Path:
         """获取SimpleMemory数据库路径（与provider无关）"""
         return self.path_manager.get_simple_memory_db_path()
-
-    def get_note_chunks_db_path(self) -> Path:
-        """获取笔记切片数据库路径（与provider无关，可随时重建）"""
-        return self.path_manager.get_note_chunks_db_path()
 
     def get_current_provider(self) -> str:
         """获取当前供应商ID"""
@@ -487,17 +545,9 @@ class PluginContext:
         """获取由ComponentFactory创建的嵌入提供商实例"""
         return self.embedding_provider
 
-    def get_vector_store(self) -> Optional[Any]:
-        """获取由ComponentFactory创建的向量索引实例"""
-        return self.vector_store
-
     def set_embedding_provider(self, provider: EmbeddingProvider):
         """由ComponentFactory设置嵌入提供商实例"""
         self.embedding_provider = provider
-
-    def set_vector_store(self, store: Any):
-        """由ComponentFactory设置向量索引实例"""
-        self.vector_store = store
 
     def set_component_factory(self, component_factory):
         """设置ComponentFactory引用"""
@@ -536,6 +586,7 @@ class PluginContext:
         """更新配置"""
         self.config.update(new_config)
         self._refresh_scope_map()
+        self._refresh_domain_map()
         self.logger.debug(f"PluginContext配置已更新: {list(new_config.keys())}")
 
     def update_from_event(self, event_context):

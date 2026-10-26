@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import asyncio
 import time
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
@@ -17,15 +18,15 @@ from ..utils.memory_formatter import MemoryFormatter
 class UserProfileService:
     """维护会话当前批次用户画像上下文。"""
 
-    def __init__(self, memory_sql_manager=None, logger=None):
-        self.memory_sql_manager = memory_sql_manager
+    def __init__(self, memory_store=None, logger=None):
+        self.memory_store = memory_store
         self.logger = logger
         self._session_user_ids: Dict[str, List[str]] = {}
         self._session_user_names: Dict[str, Dict[str, str]] = {}
         self._session_profiles: Dict[str, List[BaseMemory]] = {}
 
-    def set_memory_sql_manager(self, memory_sql_manager) -> None:
-        self.memory_sql_manager = memory_sql_manager
+    def set_memory_store(self, memory_store) -> None:
+        self.memory_store = memory_store
 
     @staticmethod
     def extract_current_user_ids(
@@ -100,15 +101,14 @@ class UserProfileService:
         self._session_user_ids[sid] = user_ids
         self._session_user_names[sid] = user_names
 
-        if not user_ids or self.memory_sql_manager is None:
+        if not user_ids or self.memory_store is None:
             self._session_profiles[sid] = []
             return []
 
         started_at = time.time()
         try:
-            profiles = await self.memory_sql_manager.recall_user_profiles(
-                user_ids=user_ids,
-                memory_scope=memory_scope,
+            profiles = await asyncio.to_thread(
+                self._recall_profiles, user_ids, memory_scope
             )
         except Exception as e:
             if self.logger:
@@ -122,6 +122,23 @@ class UserProfileService:
 
         profiles = self._deduplicate_profiles(profiles)
         self._session_profiles[sid] = profiles
+        return profiles
+
+    def _recall_profiles(
+        self, user_ids: Sequence[str], memory_scope: str
+    ) -> List[BaseMemory]:
+        """按标签筛出画像类记忆。库里没有画像索引，只能取回后按 tag 归类。"""
+        from ..memory_runtime.pmemory_runtime import to_base_memory
+
+        wanted = [str(uid).strip() for uid in user_ids if str(uid or "").strip()]
+        profiles: List[BaseMemory] = []
+        for record in self.memory_store.list_records(memory_scope):
+            tags = [str(tag) for tag in (record.get("tags") or [])]
+            if not any(tag in PROFILE_ATTRIBUTE_TAGS for tag in tags):
+                continue
+            if not extract_user_ids_from_tags(tags, known_user_ids=wanted):
+                continue
+            profiles.append(to_base_memory(record))
         return profiles
 
     def get_session_profile_memories(self, session_id: str) -> List[BaseMemory]:

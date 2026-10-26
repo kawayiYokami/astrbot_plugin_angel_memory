@@ -139,17 +139,10 @@ class CoreMemoryRememberTool(FunctionTool):
             self.logger.error(f"{self.name}: 无法获取上下文信息: {e}")
             return "错误：无法确定当前会话，记忆写入已拒绝。"
 
-        # --- 短 ID 翻译为完整 ID ---
-        memory_sql_manager = plugin_context.get_component("memory_sql_manager")
-        resolved_source_ids: List[str] = []
-        if source_memory_ids:
-            if not memory_sql_manager:
-                return "错误：记忆管理器不可用，无法解析源记忆 ID。"
-            for short_id in source_memory_ids:
-                full_id = memory_sql_manager.get_full_id(str(short_id).strip())
-                if not full_id:
-                    return f"错误：未找到短 ID「{short_id}」对应的记忆，请确认 ID 正确。"
-                resolved_source_ids.append(full_id)
+        # --- 源记忆 ID 直接就是库内整数 id ---
+        resolved_source_ids: List[str] = [
+            str(item).strip() for item in source_memory_ids if str(item).strip()
+        ]
 
         # --- 执行动作 ---
         try:
@@ -163,13 +156,10 @@ class CoreMemoryRememberTool(FunctionTool):
                     is_active=True,
                     memory_scope=memory_scope,
                 )
-                short_id = ""
-                if memory_sql_manager:
-                    short_id = memory_sql_manager.get_short_id(str(memory_id))
                 self.logger.info(
-                    f"{self.name}: create 成功 short_id={short_id} judgment=「{judgment[:30]}」"
+                    f"{self.name}: create 成功 id={memory_id} judgment=「{judgment[:30]}」"
                 )
-                return f"已记住：「{judgment}」（ID: {short_id or memory_id}）"
+                return f"已记住：「{judgment}」（ID: {memory_id}）"
 
             elif action in ("update", "merge"):
                 # 构建 memory_actions 格式，复用 feedback 管线
@@ -193,22 +183,21 @@ class CoreMemoryRememberTool(FunctionTool):
                     memory_actions=memory_actions,
                     memory_scope=memory_scope,
                 )
-                # 为新记忆注册短 ID
-                new_short_id = ""
-                if created_memories and memory_sql_manager:
-                    new_id = str(getattr(created_memories[0], "id", "") or "").strip()
-                    if new_id:
-                        new_short_id = memory_sql_manager.register_short_id(new_id)
+                if not created_memories:
+                    return "错误：源记忆不存在，请确认 ID 后重试。"
+                new_id = str(getattr(created_memories[0], "id", "") or "").strip()
+                if not new_id:
+                    return "错误：源记忆不存在，请确认 ID 后重试。"
 
                 source_display = ", ".join(source_memory_ids)
                 verb = "更新" if action == "update" else "合并"
                 self.logger.info(
                     f"{self.name}: {action} 成功 sources=[{source_display}] "
-                    f"new_short_id={new_short_id} judgment=「{judgment[:30]}」"
+                    f"new_id={new_id} judgment=「{judgment[:30]}」"
                 )
                 return (
                     f"已{verb}记忆 [{source_display}] → 新记忆「{judgment}」"
-                    f"（ID: {new_short_id or '已生成'}）"
+                    f"（ID: {new_id or '已生成'}）"
                 )
 
         except Exception as e:

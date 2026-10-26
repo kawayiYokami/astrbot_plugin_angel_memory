@@ -236,42 +236,6 @@ class QueryProcessor:
             # 返回原查询作为降级方案
             return original_query
 
-    async def _precompute_rag_vector(self, rag_query: str, event: AstrMessageEvent) -> Optional[List[float]]:
-        """
-        预计算RAG查询的向量
-
-        Args:
-            rag_query: RAG查询字符串
-            event: 消息事件
-
-        Returns:
-            预计算的向量，如果失败返回None
-        """
-        if not rag_query.strip():
-            return None
-
-        # 从event中获取plugin_context
-        # 假设event中包含plugin_context
-        from ..plugin_context import PluginContext
-        plugin_context: Optional[PluginContext] = getattr(event, 'plugin_context', None)
-
-        if plugin_context is None:
-            self.logger.debug("无法从事件中获取plugin_context，跳过RAG向量预计算")
-            return None
-
-        vector_store = plugin_context.get_vector_store()
-        if vector_store is None:
-            self.logger.debug("plugin_context中未找到有效的vector_store，跳过RAG向量预计算")
-            return None
-
-        try:
-            # 使用embed_single_document方法进行向量化
-            vector = await vector_store.embed_single_document(rag_query, is_query=True)
-            return vector
-        except Exception as e:
-            self.logger.debug(f"RAG向量预计算失败: {e}")
-            return None
-
     def process_query_for_memory(self, query: str, event: AstrMessageEvent) -> str:
         """
         记忆检索的查询词处理
@@ -299,21 +263,6 @@ class QueryProcessor:
         """
         # 笔记检索也使用统一的RAG字段处理逻辑
         return self.process_query(query, event)
-
-    async def process_query_for_memory_with_vector(self, query: str, event: AstrMessageEvent) -> Tuple[str, Optional[List[float]]]:
-        """
-        记忆检索的查询词处理（带向量预计算）
-
-        Args:
-            query: 原始查询字符串
-            event: 消息事件
-
-        Returns:
-            (处理后的查询词, 预计算的向量)
-        """
-        processed_query = self.process_query_for_memory(query, event)
-        vector = await self._precompute_rag_vector(processed_query, event)
-        return processed_query, vector
 
 # 全局单例实例
 _query_processor_instance = None

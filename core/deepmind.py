@@ -77,7 +77,6 @@ class DeepMind:
         self,
         config,
         context,
-        vector_store,
         note_service,
         plugin_context, # 新增
         memory_runtime: MemoryRuntime,
@@ -89,7 +88,6 @@ class DeepMind:
         Args:
             config: 配置信息（比如多久睡一次觉整理记忆）
             context: 聊天机器人的大脑（主意识）
-            vector_store: 记忆数据库（存所有长期记忆的地方）
             note_service: 笔记管理器（重要信息专门存放处）
             plugin_context: 插件上下文（新增）
             memory_runtime: 统一记忆运行时（必填）
@@ -99,7 +97,6 @@ class DeepMind:
         self.memory_system = memory_runtime
         self.note_service = note_service
         self.context = context
-        self.vector_store = vector_store
         self.provider_id = provider_id
         self.plugin_context = plugin_context # 保存引用
 
@@ -155,7 +152,7 @@ class DeepMind:
         self.retrieval_service = DeepMindRetrievalService(self)
         self.injection_service = DeepMindInjectionService(self)
         self.user_profile_service = UserProfileService(
-            memory_sql_manager=self.plugin_context.get_component("memory_sql_manager"),
+            memory_store=self.plugin_context.get_component("memory_store"),
             logger=self.logger,
         )
         self.sleep_service = DeepMindSleepService(self)
@@ -255,7 +252,7 @@ class DeepMind:
         return self.retrieval_service.parse_memory_context(event)
 
     async def _retrieve_memories_and_notes(
-        self, event: AstrMessageEvent, query: str, precompute_vectors: bool = False
+        self, event: AstrMessageEvent, query: str
     ) -> Dict[str, Any]:
         """
         检索长期记忆和候选笔记
@@ -263,13 +260,12 @@ class DeepMind:
         Args:
             event: 消息事件
             query: 查询字符串
-            precompute_vectors: 是否预计算向量
 
         Returns:
             包含 long_term_memories, candidate_notes, note_id_mapping, secretary_decision 的字典
         """
         return await self.retrieval_service.retrieve_memories_and_notes(
-            event, query, precompute_vectors
+            event, query
         )
 
 
@@ -433,8 +429,9 @@ class DeepMind:
         try:
             profile_refresh_started_at = time.time()
             memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
-            if memory_sql_manager is not None:
-                self.user_profile_service.set_memory_sql_manager(memory_sql_manager)
+            memory_store = self.plugin_context.get_component("memory_store")
+            if memory_store is not None:
+                self.user_profile_service.set_memory_store(memory_store)
                 # 登记当前事件用户与群聊到账本
                 ledger_sender_id, ledger_sender_name = self._get_event_sender_identity(event)
                 if ledger_sender_id and ledger_sender_id.lower() not in {

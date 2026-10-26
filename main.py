@@ -88,11 +88,10 @@ class AngelMemoryPlugin(Star):
         )
 
         # 2. 核心实例占位符（将在后台初始化完成后通过ComponentFactory创建）
-        self.vector_store = None
-        self.cognitive_service = None
         self.deepmind = None
-        self.note_service = None
-        self.file_monitor = None
+        self.memory_runtime = None
+        self.memory_store = None
+        self.note_index = None
         # 会话ID日志提示：插件启动后每个会话只提示一次（群聊/私聊统一）
         self._conversation_id_logged_once: set[str] = set()
         self._background_tasks: set[asyncio.Task] = set()
@@ -219,19 +218,18 @@ class AngelMemoryPlugin(Star):
             components = component_factory.get_components()
 
             # 更新主线程组件引用
-            self.vector_store = components.get("vector_store")
-            self.cognitive_service = components.get("cognitive_service")
             self.deepmind = components.get("deepmind")
-            self.note_service = components.get("note_service")
-            self.file_monitor = components.get("file_monitor")
+            self.memory_runtime = components.get("memory_runtime")
+            self.memory_store = components.get("memory_store")
+            self.note_index = components.get("note_index")
 
             # 将主线程组件设置给PluginManager
             main_components = {
-                "vector_store": self.vector_store,
-                "cognitive_service": self.cognitive_service,
                 "deepmind": self.deepmind,
-                "note_service": self.note_service,
-                "file_monitor": self.file_monitor,
+                "memory_runtime": self.memory_runtime,
+                "memory_store": self.memory_store,
+                "note_index": self.note_index,
+                "deepmind": self.deepmind,
             }
             self.plugin_manager.set_main_thread_components(main_components)
 

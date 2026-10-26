@@ -1,9 +1,7 @@
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from astrbot.api.event import AstrMessageEvent
-
-from ..utils.memory_id_resolver import MemoryIDResolver
 
 
 class DeepMindRetrievalService:
@@ -14,7 +12,7 @@ class DeepMindRetrievalService:
 
     def parse_memory_context(
         self, event: AstrMessageEvent
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Dict[str, Any] | None:
         if not hasattr(event, "angelmemory_context"):
             return None
 
@@ -39,19 +37,11 @@ class DeepMindRetrievalService:
             return None
 
     async def retrieve_memories_and_notes(
-        self, event: AstrMessageEvent, query: str, precompute_vectors: bool = False
+        self, event: AstrMessageEvent, query: str
     ) -> Dict[str, Any]:
         deepmind = self.deepmind
 
-        if precompute_vectors:
-            memory_query, memory_vector = (
-                await deepmind.query_processor.process_query_for_memory_with_vector(
-                    query, event
-                )
-            )
-        else:
-            memory_query = deepmind.query_processor.process_query_for_memory(query, event)
-            memory_vector = None
+        memory_query = deepmind.query_processor.process_query_for_memory(query, event)
 
         long_term_memories = []
         if deepmind.memory_system:
@@ -76,7 +66,7 @@ class DeepMindRetrievalService:
                     per_type_limit=int(dynamic_limit),
                     final_limit=int(dynamic_limit * 1.5),
                     event=event,
-                    vector=memory_vector,
+                    vector=None,
                     memory_scope=memory_scope,
                 )
 
@@ -105,31 +95,45 @@ class DeepMindRetrievalService:
 
         candidate_notes = []
         if note_recall_enabled and deepmind.note_service:
-            note_query = deepmind.query_processor.process_query_for_notes(query, event)
-
-            candidate_notes = await deepmind.note_service.search_notes_by_top_k(
-                query=note_query,
-                recall_count=deepmind.note_candidate_top_k,
-                top_k=deepmind.note_candidate_top_k,
-            )
-
-        memory_id_mapping = {}
-        if long_term_memories:
-            memory_sql_manager = deepmind.plugin_context.get_component("memory_sql_manager")
-            if memory_sql_manager:
-                memory_id_mapping = memory_sql_manager.build_id_mapping(
-                    [memory.id for memory in long_term_memories]
-                )
+            auto_domains = self._auto_domains(event)
+            if auto_domains:
+                note_query = deepmind.query_processor.process_query_for_notes(query, event)
+                merged = []
+                for domain in auto_domains:
+                    merged.extend(
+                        await deepmind.note_service.search_notes_by_top_k(
+                            query=note_query,
+                            recall_count=deepmind.note_candidate_top_k,
+                            top_k=deepmind.note_candidate_top_k,
+                            domains=[domain],
+                        )
+                    )
+                merged.sort(key=lambda row: row.get("similarity") or 0.0, reverse=True)
+                candidate_notes = merged[: deepmind.note_candidate_top_k]
             else:
-                memory_id_mapping = MemoryIDResolver.generate_id_mapping(
-                    [memory.to_dict() for memory in long_term_memories], "id"
-                )
+                deepmind.logger.info("当前会话没有标记为自动的知识库，跳过知识自动召回")
 
         return {
             "long_term_memories": long_term_memories,
             "candidate_notes": candidate_notes,
             "note_id_mapping": {},
-            "memory_id_mapping": memory_id_mapping,
+            "memory_id_mapping": {},
             "secretary_decision": secretary_decision,
             "core_topic": secretary_decision.get("topic", ""),
         }
+
+    @staticmethod
+    def _group_id(event: AstrMessageEvent) -> str:
+        if hasattr(event, "get_group_id"):
+            try:
+                return str(event.get_group_id() or "").strip()
+            except Exception:
+                return ""
+        return ""
+
+    def _auto_domains(self, event: AstrMessageEvent) -> list:
+        """当前会话里标记为「自动」的知识域。私聊与未配置群一律为空。"""
+        group_id = self._group_id(event)
+        if not group_id:
+            return []
+        return self.deepmind.plugin_context.auto_domains(group_id)
