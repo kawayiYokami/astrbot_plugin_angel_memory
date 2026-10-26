@@ -384,7 +384,7 @@ class DeepMind:
             return
 
         # 4. 检索长期记忆和笔记
-        retrieval_data = await self._retrieve_memories_and_notes(event, query, precompute_vectors=True)
+        retrieval_data = await self._retrieve_memories_and_notes(event, query)
 
         long_term_memories = retrieval_data["long_term_memories"]
         candidate_notes = retrieval_data["candidate_notes"]
