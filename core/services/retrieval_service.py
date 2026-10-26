@@ -60,8 +60,8 @@ class DeepMindRetrievalService:
                 if deepmind.soul:
                     try:
                         dynamic_limit = deepmind.soul.get_value("RecallDepth")
-                        deepmind.logger.info(
-                            f"🧠 灵魂回忆深度: {dynamic_limit} (E={deepmind.soul.energy['RecallDepth']:.1f})"
+                        deepmind.logger.debug(
+                            f"灵魂回忆深度: {dynamic_limit} (E={deepmind.soul.energy['RecallDepth']:.1f})"
                         )
                     except Exception as e:
                         deepmind.logger.warning(f"获取灵魂参数失败，使用默认值: {e}")
@@ -86,7 +86,7 @@ class DeepMindRetrievalService:
                         deepmind.soul.resonate(snapshots)
 
             except Exception as e:
-                deepmind.logger.error(f"链式召回失败，跳过记忆检索: {e}")
+                deepmind.logger.error(f"链式召回失败，跳过记忆检索: {e}", exc_info=True)
                 errors.append(f"链式召回失败：{type(e).__name__}: {e}")
                 long_term_memories = []
 
@@ -118,7 +118,7 @@ class DeepMindRetrievalService:
                 merged.sort(key=lambda row: row.get("similarity") or 0.0, reverse=True)
                 candidate_notes = merged[: deepmind.note_candidate_top_k]
             else:
-                deepmind.logger.info("当前会话没有标记为自动的知识库，跳过知识自动召回")
+                deepmind.logger.debug("当前会话没有标记为自动的知识库，跳过知识自动召回")
 
         return {
             "long_term_memories": long_term_memories,

@@ -655,7 +655,7 @@ class DeepMind:
         self._sleep_stop_event.clear()
         self._sleep_tick_task = asyncio.create_task(self._sleep_tick_loop())
         next_at = time.time() + seconds_until_next_sleep()
-        self.logger.info(
+        self.logger.debug(
             "[睡眠] 调度 开始 下次执行="
             f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(next_at))}"
         )
@@ -677,7 +677,7 @@ class DeepMind:
         if not should_run_sleep(self._last_sleep_day):
             self.logger.info(f"[睡眠] 调度 跳过（今日已执行）date={today_key()}")
             return
-        self.logger.info(f"[睡眠] 调度 触发 date={today_key()}")
+        self.logger.debug(f"[睡眠] 调度 触发 date={today_key()}")
         try:
             await self.sleep_service.sleep()
         finally:
@@ -781,7 +781,7 @@ class DeepMind:
             return
         self._reflection_stop_event.clear()
         self._reflection_tick_task = asyncio.create_task(self._reflection_tick_loop())
-        self.logger.info(
+        self.logger.debug(
             f"[反思调度] 开始 tick={self._reflection_tick_seconds}s "
             f"idle={self._reflection_idle_seconds}s turns={self._reflection_turn_threshold}"
         )
@@ -804,7 +804,7 @@ class DeepMind:
                     >= float(self._reflection_idle_seconds)
                 ]
             if session_ids:
-                self.logger.info(
+                self.logger.debug(
                     f"[反思调度] tick扫描命中会话数={len(session_ids)} "
                     f"idle阈值={self._reflection_idle_seconds}s"
                 )
@@ -1036,7 +1036,7 @@ class DeepMind:
             state["pending_turns"] = int(state.get("pending_turns", 0)) + 1
             state["last_activity_at"] = now
             state["latest_input"] = reflection_input
-            self.logger.info(
+            self.logger.debug(
                 f"[反思调度] 入缓冲 session={session_id} "
                 f"pending_turns={state['pending_turns']} records={len(state['records'])}"
             )
@@ -1088,7 +1088,7 @@ class DeepMind:
             self.logger.warning(f"格式化反思聊天记录失败，降级为空: {e}")
             historical_chat_text = ""
 
-        self.logger.info(
+        self.logger.debug(
             f"[反思调度] 触发 reason={reason} session={session_id} "
             f"turns={payload.get('consumed_turns', 0)} "
             f"records={len(payload.get('historical_chat_records', []))}"
@@ -1123,7 +1123,7 @@ class DeepMind:
                     f"pending_turns={state['pending_turns']} records={len(state['records'])}"
                 )
             else:
-                self.logger.info(f"[反思调度] 完成 session={session_id}")
+                self.logger.debug(f"[反思调度] 完成 session={session_id}")
         return bool(success)
 
     async def _execute_async_analysis_task(
@@ -1142,7 +1142,7 @@ class DeepMind:
             session_id = str(getattr(reflection_input, "session_id", "") or "").strip()
             if not session_id:
                 return False
-            self.logger.info(
+            self.logger.debug(
                 f"[反思执行] 开始 session={session_id} "
                 f"user_len={len(str(getattr(reflection_input, 'latest_user_text', '') or ''))} "
                 f"assistant_len={len(str(getattr(reflection_input, 'latest_assistant_text', '') or ''))}"
@@ -1204,10 +1204,9 @@ class DeepMind:
                 config=self.config,
             )
 
-            self.logger.info(
-                f"[反思执行] 最终提示词 session={session_id} "
-                f"system_len={len(system_prompt)} prompt_len={len(prompt)}\n"
-                f"{system_prompt}\n\n{prompt}"
+            self.logger.debug(
+                f"[反思执行] 提示词 session={session_id} "
+                f"system_len={len(system_prompt)} prompt_len={len(prompt)}"
             )
             trace_id = self.reflection_trace.record_start(
                 session_id, self.provider_id, prompt, system_prompt
@@ -1277,7 +1276,7 @@ class DeepMind:
                         # 1111 觉醒: 话多(Expression+), 飞升(Creativity+), 查阅历史(Recall+), 吸收新知(Impression+)
 
                         self.soul.adjust(state_code, mode="reflect")
-                        self.logger.info(f"🧘 灵魂反思 ({state_code}): {self.soul.get_state_description()}")
+                        self.logger.debug(f"灵魂反思 ({state_code}): {self.soul.get_state_description()}")
                     except ValueError:
                         self.logger.warning(f"无效的灵魂状态代码: {state_code}")
 
@@ -1329,7 +1328,7 @@ class DeepMind:
                 # 截断列表
                 if original_count > impression_limit:
                     memory_actions_normalized = memory_actions_normalized[:impression_limit]
-                    self.logger.info(f"✂️ 记忆截断: 灵魂仅允许记录 {impression_limit} 条 (原 {original_count} 条)")
+                    self.logger.debug(f"记忆截断: 灵魂仅允许记录 {impression_limit} 条 (原 {original_count} 条)")
 
                 # 为每条新记忆注入当前的灵魂快照
                 snapshot = self.soul.get_snapshot()
@@ -1382,14 +1381,12 @@ class DeepMind:
             )
 
         except Exception as e:
-            import traceback
             self._complete_reflection_trace(
                 trace_id,
                 status="failed",
                 error=f"反思执行异常: {e}",
             )
 
-            self.logger.error(f"异步记忆分析失败 - 会话={session_id}: {e}")
-            self.logger.error(f"错误详情: {traceback.format_exc()}")
+            self.logger.error(f"异步记忆分析失败 会话={session_id} 错误={e}", exc_info=True)
             return False
         return True

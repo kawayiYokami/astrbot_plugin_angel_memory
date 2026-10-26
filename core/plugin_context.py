@@ -63,7 +63,7 @@ class PluginContext:
         self._refresh_scope_map()
         self._refresh_domain_map()
 
-        self.logger.info(
+        self.logger.debug(
             f"PluginContext初始化完成 (提供商: {self.get_embedding_provider_id()})"
         )
 
@@ -384,13 +384,13 @@ class PluginContext:
         """
         umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if not umo:
-            self.logger.info("[睡眠] 跳过人格解析：umo为空 umo=%r", umo)
+            self.logger.debug("[睡眠] 跳过人格解析：umo为空 umo=%r", umo)
             return ""
 
         persona_manager = getattr(self.astrbot_context, "persona_manager", None)
         has_resolve_method = hasattr(persona_manager, "resolve_selected_persona")
         if persona_manager is None or not has_resolve_method:
-            self.logger.info(
+            self.logger.debug(
                 "[睡眠] 跳过人格解析：persona_manager不可用 umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
                 umo,
                 persona_manager is None,

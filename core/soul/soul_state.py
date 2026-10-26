@@ -251,8 +251,8 @@ class SoulState:
 
                 changes.append(f"{dim}: {current_energy:.2f}->{self.energy[dim]:.2f} (Δ{delta:+.2f})")
 
-            mode_emoji = "🧘" if mode == "reflect" else "🎼"
-            logger.debug(f"{mode_emoji} Soul Adjust [{mode}] ({code}): {', '.join(changes)}")
+            mode_tag = "reflect" if mode == "reflect" else "resonate"
+            logger.debug(f"Soul Adjust [{mode_tag}] ({code}): {', '.join(changes)}")
 
     def resonate(self, snapshots: List[Dict[str, float]]):
         """
@@ -267,13 +267,13 @@ class SoulState:
             snapshots: 多个记忆的状态快照列表
         """
         if not snapshots:
-            logger.debug("🎼 Soul Resonate: No snapshots, skipping")
+            logger.debug("Soul Resonate: No snapshots, skipping")
             return
 
         # 生成共鸣代码
         code = self._generate_resonate_code(snapshots)
 
-        logger.debug(f"🎼 Soul Resonate: Generated code={code} from {len(snapshots)} snapshots")
+        logger.debug(f"Soul Resonate: Generated code={code} from {len(snapshots)} snapshots")
 
         # 使用resonate模式调整
         self.adjust(code, mode="resonate")
@@ -314,7 +314,7 @@ class SoulState:
                                         min(self.ENERGY_SOFT_LIMIT, self.energy[dimension]))
 
             new_val = self.energy[dimension]
-            logger.debug(f"🔋 Soul Update [{dimension}]: {original_val:.2f} -> {new_val:.2f} (Delta={delta}, Decay={decay})")
+            logger.debug(f"Soul Update [{dimension}]: {original_val:.2f} -> {new_val:.2f} (Delta={delta}, Decay={decay})")
     def get_snapshot(self) -> Dict[str, float]:
         """获取当前状态快照（用于存入新记忆）"""
         with self._lock:
@@ -329,10 +329,10 @@ class SoulState:
             v_create = self.get_value('Creativity')
 
         desc = []
-        desc.append(f"🧠 回忆倾向: {v_recall}条")
-        desc.append(f"📝 记住倾向: {v_impress}条")
-        desc.append(f"🗣️ 表达欲望: {v_express:.2f}")
-        desc.append(f"🎨 思维发散: {v_create:.2f}")
+        desc.append(f"回忆倾向: {v_recall}条")
+        desc.append(f"记住倾向: {v_impress}条")
+        desc.append(f"表达欲望: {v_express:.2f}")
+        desc.append(f"思维发散: {v_create:.2f}")
         return " | ".join(desc)
 
     # 移除 save 和 load 方法，因为不需要持久化了

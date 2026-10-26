@@ -112,7 +112,7 @@ class LegacyMemoryMigration:
                 )
                 return {"status": "failed", "written": 0, "source": source_text}
 
-            self.logger.info(
+            self.logger.debug(
                 f"[记忆迁移] 开始 来源={source_text} 导出={export_path.name} "
                 f"待迁移候选={len(import_records)}"
             )

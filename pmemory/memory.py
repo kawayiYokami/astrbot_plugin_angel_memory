@@ -320,7 +320,7 @@ class MemoryStore:
         visible = [i for i in recalled if self.get(i, scope) is not None]
         useful = [i for i in useful if i in visible]
         if not visible:
-            logger.info("[PMEMORY] 记忆反馈跳过：无可见记录 scope=%s", scope)
+            logger.debug("[PMEMORY] 记忆反馈跳过：无可见记录 scope=%s", scope)
             return []
         try:
             self._store.kb.memories.feedback(

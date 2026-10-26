@@ -44,13 +44,7 @@ class PluginManager:
         # 启动后台初始化
         self.background_initializer.start_background_initialization()
 
-        self.logger.info("🚀 Angel Memory Plugin 管理器已启动")
-        self.logger.info(f"   当前提供商: {plugin_context.get_current_provider()}")
-        self.logger.info(f"   数据目录: {plugin_context.get_index_dir()}")
-        self.logger.info(f"   有可用提供商: {plugin_context.has_providers()}")
-        self.logger.info(
-            "   初始化架构: PluginContext + InitializationManager 协作模式"
-        )
+        self.logger.debug("Angel Memory Plugin 管理器已启动")
 
     async def handle_llm_request(self, event, request, event_plugin_context=None):
         """
@@ -67,7 +61,7 @@ class PluginManager:
 
         # 等待系统准备就绪
         if not await self.init_manager.wait_until_ready_async(timeout=30):
-            self.logger.info("⏳ 系统正在初始化中，LLM请求将跳过")
+            self.logger.info("系统正在初始化中，LLM请求将跳过")
             return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
         # 系统准备就绪，正常处理业务
@@ -88,7 +82,7 @@ class PluginManager:
 
         # 等待系统准备就绪
         if not await self.init_manager.wait_until_ready_async(timeout=30):
-            self.logger.info("⏳ 系统正在初始化中，LLM响应将跳过")
+            self.logger.info("系统正在初始化中，LLM响应将跳过")
             return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
         # 系统准备就绪，正常处理业务
@@ -200,7 +194,7 @@ class PluginManager:
         """
         # 等待系统准备就绪
         if not await self.init_manager.wait_until_ready_async(timeout=30):
-            self.logger.info("⏳ 系统正在初始化中，记忆整理将跳过")
+            self.logger.info("系统正在初始化中，记忆整理将跳过")
             return {"status": "waiting", "message": "系统正在初始化中，请稍候..."}
 
         # 系统准备就绪，正常处理业务
@@ -297,11 +291,11 @@ class PluginManager:
             }
             status.update(self.init_manager.get_failed_info())
 
-            self.logger.debug(f"📊 插件状态查询: {status}")
+            self.logger.debug(f"插件状态查询: {status}")
             return status
 
         except Exception as e:
-            self.logger.error(f"❌ 获取插件状态失败: {e}")
+            self.logger.error(f"获取插件状态失败: {e}", exc_info=True)
             return {
                 "state": "error",
                 "ready": False,
@@ -318,15 +312,15 @@ class PluginManager:
             bool: 是否准备就绪
         """
         ready = self.init_manager.is_ready()
-        self.logger.debug(f"📋 插件就绪状态检查: {ready}")
+        self.logger.debug(f"插件就绪状态检查: {ready}")
         return ready
 
     async def shutdown(self):
         """关闭插件管理器和所有后台服务"""
-        self.logger.info("插件管理器正在关闭...")
+        self.logger.debug("插件管理器正在关闭...")
 
         # 关闭后台初始化器
         if self.background_initializer:
             await self.background_initializer.shutdown()
 
-        self.logger.info("插件管理器已成功关闭")
+        self.logger.debug("插件管理器已成功关闭")

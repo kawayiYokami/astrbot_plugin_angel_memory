@@ -33,20 +33,20 @@ class DeepMindSleepService:
 
         start_time = time.time()
         try:
-            deepmind.logger.info("[睡眠] 阶段=前置维护 开始")
+            deepmind.logger.debug("[睡眠] 阶段=前置维护 开始")
             await self.maintenance_service.run_pre_consolidate()
-            deepmind.logger.info("[睡眠] 阶段=前置维护 完成")
+            deepmind.logger.debug("[睡眠] 阶段=前置维护 完成")
 
-            deepmind.logger.info("[睡眠] 阶段=记忆回收 开始")
+            deepmind.logger.debug("[睡眠] 阶段=记忆回收 开始")
             recycle_result = await self._recycle_memories()
-            deepmind.logger.info("[睡眠] 阶段=记忆回收 完成")
+            deepmind.logger.debug("[睡眠] 阶段=记忆回收 完成")
 
             cleanup_completed_at = time.time()
-            deepmind.logger.info("[睡眠] 阶段=后置维护 开始")
+            deepmind.logger.debug("[睡眠] 阶段=后置维护 开始")
             await self.maintenance_service.run_post_consolidate(
                 cleanup_completed_at=cleanup_completed_at
             )
-            deepmind.logger.info("[睡眠] 阶段=后置维护 完成")
+            deepmind.logger.debug("[睡眠] 阶段=后置维护 完成")
 
             await self._record_sleep_trace(recycle_result, start_time)
             return True
@@ -67,7 +67,7 @@ class DeepMindSleepService:
             deepmind.logger.info("[淘汰审查] 跳过（无候选）")
             return self._empty_recycle_result()
 
-        deepmind.logger.info(f"[淘汰审查] 开始 候选数={len(candidates)}")
+        deepmind.logger.debug(f"[淘汰审查] 开始 候选数={len(candidates)}")
         review_start = time.time()
         try:
             outcome = await self.reviewer.review(candidates)
@@ -75,7 +75,8 @@ class DeepMindSleepService:
             cost_ms = int((time.time() - review_start) * 1000)
             deepmind.logger.error(
                 f"[淘汰审查] 失败 候选数={len(candidates)} "
-                f"本次整批跳过，不删除任何记忆 耗时毫秒={cost_ms} 异常={e}"
+                f"本次整批跳过，不删除任何记忆 耗时毫秒={cost_ms} 异常={e}",
+                exc_info=True,
             )
             return {
                 "candidates": len(candidates),

@@ -87,7 +87,7 @@ class NoteIndexService:
                     self._state.pop(key, None)
             result[domain] = changed
             if changed:
-                logger.info("[笔记导入] 域=%s 更新=%s", domain, changed)
+                logger.debug("[笔记导入] 域=%s 更新=%s", domain, changed)
         return result
 
     def start(self) -> None:

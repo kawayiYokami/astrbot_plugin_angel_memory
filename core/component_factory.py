@@ -55,8 +55,8 @@ class ComponentFactory:
         # 从PluginContext获取数据目录
         self.data_directory = str(plugin_context.get_index_dir())
 
-        self.logger.info("🏭 ComponentFactory初始化完成")
-        self.logger.info(f"   当前提供商: {plugin_context.get_current_provider()}")
+        self.logger.debug("ComponentFactory初始化完成")
+        self.logger.debug(f"当前提供商: {plugin_context.get_current_provider()}")
 
     async def create_all_components(self, config: dict = None) -> Dict[str, Any]:
         """
@@ -76,7 +76,7 @@ class ComponentFactory:
             config = self.plugin_context.get_all_config()
 
         try:
-            self.logger.info("🏭 开始创建核心组件...")
+            self.logger.debug("开始创建核心组件...")
             decay_config = build_decay_config(config)
             rerank_provider = self._resolve_rerank_provider()
             rerank_max_docs = self._resolve_rerank_max_docs()
@@ -124,13 +124,12 @@ class ComponentFactory:
 
             # 核心组件已就绪，立即标记初始化完成
             self._initialized = True
-            self.logger.info("✅ 所有核心组件创建完成")
-            self.logger.info(f"✅ 记忆运行时: p-memory 目录={pmemory.root}")
+            self.logger.debug("所有核心组件创建完成")
+            self.logger.debug(f"记忆运行时: p-memory 目录={pmemory.root}")
 
             # 如果有初始化管理器，立即标记系统准备就绪
             if self.init_manager:
                 self.init_manager.mark_ready()
-                self.logger.info("🎉 系统准备就绪！可以开始处理业务请求")
 
             # 异步启动笔记扫描（后台首次全量导入）
             migration.start()
@@ -139,10 +138,7 @@ class ComponentFactory:
             return self._components
 
         except Exception as e:
-            self.logger.error(f"❌ 组件创建失败: {e}")
-            import traceback
-
-            self.logger.error(f"错误详情: {traceback.format_exc()}")
+            self.logger.error(f"组件创建失败: {e}", exc_info=True)
             raise
 
     # === 配置解析 ===
@@ -209,7 +205,7 @@ class ComponentFactory:
                 "max_tokens_per_doc": int(rerank_max_tokens),
             },
         )
-        self.logger.info(f"✅ p-memory 已配置: 目录={root} 笔记根目录={raw_dir}")
+        self.logger.debug(f"p-memory 已配置: 目录={root} 笔记根目录={raw_dir}")
 
         # 配置里出现的 scope 一并登记，退休与画像才能跨 scope 看到它们
         try:
@@ -224,10 +220,10 @@ class ComponentFactory:
         embedding_provider_id = self.plugin_context.get_embedding_provider_id()
         enable_local = self.plugin_context.get_enable_local_embedding()
         if not str(embedding_provider_id or "").strip() and not enable_local:
-            self.logger.info("ℹ️ 未启用嵌入能力，记忆检索走纯全文")
+            self.logger.info("未启用嵌入能力，记忆检索走纯全文")
             return None
 
-        self.logger.info(f"📚 创建嵌入提供商: '{embedding_provider_id}'")
+        self.logger.debug(f"创建嵌入提供商: '{embedding_provider_id}'")
         try:
             provider = await self._create_embedding_provider()
         except Exception as e:
@@ -248,7 +244,7 @@ class ComponentFactory:
             batch_size=self.plugin_context.get_embedding_batch_size(),
             timeout=60,
         )
-        self.logger.info(f"✅ 嵌入提供商创建完成: {embedding_provider.get_model_info()}")
+        self.logger.debug(f"嵌入提供商创建完成: {embedding_provider.get_model_info()}")
         return embedding_provider
 
     def _resolve_rerank_provider(self) -> Optional[Any]:
@@ -276,28 +272,28 @@ class ComponentFactory:
                 if hasattr(self.context, "get_rerank_provider_by_id"):
                     provider = self.context.get_rerank_provider_by_id(pid)
                     if provider and hasattr(provider, "rerank"):
-                        self.logger.info(f"✅ 使用上游重排提供商: {pid}")
+                        self.logger.info(f"使用上游重排提供商: {pid}")
                         return provider
 
                 if hasattr(self.context, "get_provider_by_id"):
                     provider = self.context.get_provider_by_id(pid)
                     if provider and hasattr(provider, "rerank"):
-                        self.logger.info(f"✅ 使用上游可重排提供商: {pid}")
+                        self.logger.info(f"使用上游可重排提供商: {pid}")
                         return provider
 
             if hasattr(self.context, "get_all_rerank_providers"):
                 for p in self.context.get_all_rerank_providers() or []:
                     if hasattr(p, "rerank"):
-                        self.logger.info("✅ 使用上游重排提供商: <auto>")
+                        self.logger.info("使用上游重排提供商: <auto>")
                         return p
 
             if hasattr(self.context, "get_all_providers"):
                 for p in self.context.get_all_providers() or []:
                     if hasattr(p, "rerank"):
-                        self.logger.info("✅ 使用上游可重排提供商: <auto>")
+                        self.logger.info("使用上游可重排提供商: <auto>")
                         return p
 
-            self.logger.info("ℹ️ 未配置重排提供商，检索按库内排序返回")
+            self.logger.info("未配置重排提供商，检索按库内排序返回")
             return None
         except Exception as e:
             self.logger.warning(f"解析上游重排提供商失败，检索不重排: {e}")
@@ -307,7 +303,7 @@ class ComponentFactory:
         """创建账本管理器（仅承载账本与迁移源数据）。"""
         simple_db_path = self.plugin_context.get_simple_memory_db_path()
         manager = MemorySqlManager(simple_db_path)
-        self.logger.info(f"✅ SQL记忆管理器创建完成: {simple_db_path}")
+        self.logger.debug(f"SQL记忆管理器创建完成: {simple_db_path}")
         return manager
 
     def _create_memory_runtime(
@@ -318,7 +314,7 @@ class ComponentFactory:
         """创建统一记忆运行时。"""
         policy = self._build_decay_policy(decay_config or MemoryDecayConfig())
         runtime = PMemoryMemoryRuntime(memory_store, decay_policy=policy)
-        self.logger.info(f"✅ 统一记忆运行时创建完成 (p-memory) 衰减策略={policy}")
+        self.logger.debug(f"统一记忆运行时创建完成 (p-memory) 衰减策略={policy}")
         return runtime
 
     def _create_note_index_service(self) -> NoteIndexService:
@@ -328,12 +324,12 @@ class ComponentFactory:
             raw_dir = Path(self.data_directory)
             self.logger.warning(f"笔记根目录回退为数据目录: {raw_dir}")
         service = NoteIndexService(raw_dir)
-        self.logger.info(f"✅ 笔记索引服务创建完成: {raw_dir}")
+        self.logger.debug(f"笔记索引服务创建完成: {raw_dir}")
         return service
 
     async def _create_deepmind(self, note_index, memory_runtime):
         """创建DeepMind"""
-        self.logger.info("🤖 创建DeepMind...")
+        self.logger.debug("创建DeepMind...")
 
         llm_provider_id = self.plugin_context.get_llm_provider_id()
 
@@ -353,7 +349,7 @@ class ComponentFactory:
             memory_runtime=memory_runtime,
         )
 
-        self.logger.info("✅ DeepMind创建完成")
+        self.logger.debug("DeepMind创建完成")
         return deepmind
 
     # === 状态 ===
@@ -376,7 +372,7 @@ class ComponentFactory:
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
 
-        self.logger.info("🏭 开始关闭所有核心组件...")
+        self.logger.debug("开始关闭所有核心组件...")
 
         component_shutdown_order = [
             "legacy_migration",
@@ -398,7 +394,7 @@ class ComponentFactory:
                 return
 
             try:
-                self.logger.info(f"正在关闭组件: {component_name}...")
+                self.logger.debug(f"正在关闭组件: {component_name}...")
                 result = shutdown_method()
                 if hasattr(result, "__await__"):
                     try:
@@ -407,9 +403,9 @@ class ComponentFactory:
                             executor.submit(asyncio.run, result).result()
                     except RuntimeError:
                         asyncio.run(result)
-                self.logger.info(f"✅ 组件 {component_name} 已关闭")
+                self.logger.debug(f"组件 {component_name} 已关闭")
             except Exception as e:
-                self.logger.error(f"❌ 关闭组件 {component_name} 失败: {e}")
+                self.logger.error(f"关闭组件 {component_name} 失败: {e}", exc_info=True)
 
         for component_name in component_shutdown_order:
             component = self._components.get(component_name)
@@ -420,8 +416,8 @@ class ComponentFactory:
         try:
             pmemory.close()
         except Exception as e:
-            self.logger.error(f"❌ 关闭 p-memory 失败: {e}")
+            self.logger.error(f"关闭 p-memory 失败: {e}", exc_info=True)
 
         self._components.clear()
         self._initialized = False
-        self.logger.info("✅ 所有核心组件已成功关闭")
+        self.logger.debug("所有核心组件已成功关闭")

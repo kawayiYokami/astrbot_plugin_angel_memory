@@ -25,7 +25,7 @@ class FeedbackQueue:
 
     def __init__(self):
         """初始化异步反馈处理器（无后台线程）"""
-        logger.info("反馈处理器已初始化（异步模式，无后台线程）")
+        logger.debug("反馈处理器已初始化（异步模式，无后台线程）")
 
     async def submit(self, task: FeedbackTask) -> Optional[Any]:
         """直接异步处理任务（无队列，无缓冲）"""
@@ -41,7 +41,7 @@ class FeedbackQueue:
             logger.warning(f"反馈任务缺少 feedback_fn - 会话ID: {session_id}")
             return None
 
-        logger.info(
+        logger.debug(
             f"[异步反馈] 立即处理任务 - 会话ID: {session_id}, 任务类型: {feedback_fn.__name__}"
         )
 
@@ -59,7 +59,7 @@ class FeedbackQueue:
 
     def stop(self) -> None:
         """停止处理器（异步模式无需停止操作）"""
-        logger.info("反馈处理器已停止（异步模式）")
+        logger.debug("反馈处理器已停止（异步模式）")
 
 
 _queue_instance: Optional[FeedbackQueue] = None

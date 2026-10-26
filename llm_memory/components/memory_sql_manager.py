@@ -121,7 +121,7 @@ class MemorySqlManager:
                 self._full_to_short[full_id] = short_id
                 self._next_short_id += 1
 
-        self.logger.info(
+        self.logger.debug(
             f"[短ID注册表] 初始化完成 记忆数={len(self._full_to_short)} "
             f"下一个短ID={self._next_short_id}"
         )

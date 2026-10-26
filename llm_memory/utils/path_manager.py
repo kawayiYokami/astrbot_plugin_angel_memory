@@ -82,7 +82,7 @@ class PathManager:
         self._ensure_provider_directories_exist()
         self._ensure_central_directories_exist()
 
-        logger.info(
+        logger.debug(
             f"PathManager供应商设置完成: {provider_id} -> {safe_provider_id}, 基础目录: {self._base_dir}"
         )
 

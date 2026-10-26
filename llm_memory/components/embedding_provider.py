@@ -371,29 +371,25 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         try:
             # 尝试导入sentence_transformers
             self._model_class = importlib.import_module('sentence_transformers').SentenceTransformer
-            self.logger.info("✅ sentence-transformers 已安装")
+            self.logger.debug("sentence-transformers 已安装")
             return True
         except ImportError:
-            self.logger.warning("⚠️ 检测到本地嵌入依赖未安装：sentence-transformers")
+            self.logger.warning("检测到本地嵌入依赖未安装：sentence-transformers")
 
             # 如果已经尝试过自动安装，则不再重复尝试
             if self._auto_install_attempted:
-                self.logger.error("❌ 本地嵌入依赖安装失败（非模型加载失败），跳过重复安装")
-                self.logger.error(
-                    "👉 可在 AstrBot 界面手动安装依赖：更多功能 -> 平台日志 -> Pip库"
-                )
-                self.logger.error(
-                    "   Pip库建议输入: torch sentence-transformers"
-                )
-                self.logger.error(
-                    "   终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
+                self.logger.error("本地嵌入依赖安装失败（非模型加载失败），跳过重复安装", exc_info=True)
+                self.logger.warning(
+                    "可在 AstrBot 界面手动安装依赖：更多功能 -> 平台日志 -> Pip库 "
+                    "Pip库建议输入: torch sentence-transformers "
+                    "终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
                 )
                 return False
 
             self._auto_install_attempted = True
 
             # 自动安装依赖
-            self.logger.info("🚀 开始自动安装本地嵌入依赖：torch + sentence-transformers")
+            self.logger.debug("开始自动安装本地嵌入依赖：torch + sentence-transformers")
             try:
                 subprocess.check_call([
                     sys.executable, "-m", "pip", "install",
@@ -401,42 +397,34 @@ class LocalEmbeddingProvider(EmbeddingProvider):
                     "torch",
                     "sentence-transformers>=2.2.0"
                 ])
-                self.logger.info("✅ 本地嵌入依赖安装完成")
+                self.logger.info("本地嵌入依赖安装完成")
 
                 # 重新尝试导入
                 self._model_class = importlib.import_module('sentence_transformers').SentenceTransformer
                 return True
 
             except subprocess.CalledProcessError as e:
-                self.logger.error(f"❌ 本地嵌入依赖安装失败（非模型加载失败）: {e}")
-                self.logger.error(
-                    "请手动安装依赖。终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
-                )
-                self.logger.error(
-                    "👉 或在 AstrBot 界面手动安装：更多功能 -> 平台日志 -> Pip库"
-                )
-                self.logger.error(
-                    "   Pip库建议输入: torch sentence-transformers"
+                self.logger.error(f"本地嵌入依赖安装失败（非模型加载失败）: {e}", exc_info=True)
+                self.logger.warning(
+                    "请手动安装依赖。终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\" "
+                    "或在 AstrBot 界面手动安装：更多功能 -> 平台日志 -> Pip库 "
+                    "Pip库建议输入: torch sentence-transformers"
                 )
                 return False
 
     def _load_model(self):
         """懒加载本地模型"""
         if not self._ensure_dependencies():
-            self.logger.error("❌ 本地嵌入不可用：依赖缺失或安装失败（非模型加载失败）")
-            self.logger.error(
-                "👉 依赖安装入口：更多功能 -> 平台日志 -> Pip库"
-            )
-            self.logger.error(
-                "   Pip库建议输入: torch sentence-transformers"
-            )
-            self.logger.error(
-                "   终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
+            self.logger.error("本地嵌入不可用：依赖缺失或安装失败（非模型加载失败）")
+            self.logger.warning(
+                "依赖安装入口：更多功能 -> 平台日志 -> Pip库 "
+                "Pip库建议输入: torch sentence-transformers "
+                "终端命令: python -m pip install --upgrade torch \"sentence-transformers>=2.2.0\""
             )
             return
 
         try:
-            self.logger.info(f"正在加载本地嵌入模型: {self.model_name}")
+            self.logger.debug(f"正在加载本地嵌入模型: {self.model_name}")
             self._model = self._model_class(self.model_name)
             self.logger.info(f"本地嵌入模型加载完成: {self.model_name}")
             self._last_used_at = time.time()
@@ -479,7 +467,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
                         if self._active_requests > 0:
                             continue
                     if self._model is not None:
-                        self.logger.info(
+                        self.logger.debug(
                             f"本地模型空闲 {int(idle_seconds)} 秒，释放内存: {self.model_name}"
                         )
                         self._model = None
@@ -509,13 +497,13 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
             # 2. 如果全部命中缓存，直接返回
             if not missing_indices:
-                self.logger.debug(f"✅ 缓存全部命中，跳过向量化: {len(texts)}个文本")
+                self.logger.debug(f"缓存全部命中，跳过向量化: {len(texts)}个文本")
                 return [r for r in cached_results if r is not None]
 
             # 3. 对未命中的文本进行向量化
             missing_texts = [texts[i] for i in missing_indices]
             self.logger.debug(
-                f"🔄 缓存部分命中，需要向量化: {len(missing_texts)}/{len(texts)}个文本"
+                f"缓存部分命中，需要向量化: {len(missing_texts)}/{len(texts)}个文本"
             )
 
             # 直接同步调用（本地模型）
@@ -580,7 +568,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         """清空缓存"""
         if self._cache:
             self._cache.clear()
-            self.logger.info("本地提供商缓存已清空")
+            self.logger.debug("本地提供商缓存已清空")
 
     def clear_and_disable_cache(self) -> None:
         """清理并禁用缓存（初始化完成后调用以节省内存）"""
@@ -591,7 +579,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
                 cache.clear()
                 self._cache_enabled = False
                 self._cache = None
-                self.logger.info(
+                self.logger.debug(
                     f"本地提供商 {self.model_name} 缓存已清理并禁用 "
                     f"(命中率: {stats.get('hit_rate', 0):.1%}, "
                     f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
@@ -603,7 +591,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         with self._model_lock:
             self._model = None
         self.clear_cache()
-        self.logger.info(f"本地嵌入提供商 {self.model_name} 已关闭")
+        self.logger.debug(f"本地嵌入提供商 {self.model_name} 已关闭")
 
 
 class APIEmbeddingProvider(EmbeddingProvider):
@@ -649,7 +637,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self._client_rebuild_lock = threading.RLock()
 
         # 延迟测试可用性，避免在构造函数中进行异步操作
-        self.logger.info(
+        self.logger.debug(
             f"API嵌入提供商已初始化: {self.provider_id}, "
             f"批量大小: {self.batch_size} 超时: {self._request_timeout}s (纯异步模式)"
         )
@@ -669,7 +657,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         if current_provider and current_provider is not self.provider:
             self.provider = current_provider
             self._model_info = None
-            self.logger.info(
+            self.logger.debug(
                 f"[简单记忆回灌] API嵌入提供商已刷新当前实例 provider_id={self.provider_id}"
             )
         return self.provider
@@ -1223,7 +1211,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         """清空缓存"""
         if self._cache:
             self._cache.clear()
-            self.logger.info(f"API提供商 {self.provider_id} 缓存已清空")
+            self.logger.debug(f"API提供商 {self.provider_id} 缓存已清空")
 
     def clear_and_disable_cache(self) -> None:
         """清理并禁用缓存（初始化完成后调用以节省内存）"""
@@ -1234,7 +1222,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 cache.clear()
                 self._cache_enabled = False
                 self._cache = None
-                self.logger.info(
+                self.logger.debug(
                     f"API提供商 {self.provider_id} 缓存已清理并禁用 "
                     f"(命中率: {stats.get('hit_rate', 0):.1%}, "
                     f"节省内存: ~{stats.get('memory_usage_mb', 0):.1f}MB)"
@@ -1242,9 +1230,9 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     def shutdown(self):
         """关闭API提供商，释放资源"""
-        self.logger.info(f"正在关闭API嵌入提供商: {self.provider_id}")
+        self.logger.debug(f"正在关闭API嵌入提供商: {self.provider_id}")
         self.clear_cache()
-        self.logger.info(f"API嵌入提供商 {self.provider_id} 已成功关闭")
+        self.logger.debug(f"API嵌入提供商 {self.provider_id} 已成功关闭")
 
 
 class EmbeddingProviderFactory:

@@ -40,9 +40,9 @@ class BackgroundInitializer:
         self._post_init_tasks = []
         self._shutdown_started = False
 
-        self.logger.info(f"📋 后台初始化器接收配置: {list(self.config.keys())}")
-        self.logger.info(
-            f"📋 后台初始化器使用数据目录: {plugin_context.get_index_dir()}"
+        self.logger.debug(f"后台初始化器接收配置: {list(self.config.keys())}")
+        self.logger.debug(
+            f"后台初始化器使用数据目录: {plugin_context.get_index_dir()}"
         )
 
         # 直接使用主线程的PluginContext创建ComponentFactory
@@ -68,12 +68,12 @@ class BackgroundInitializer:
 
         # 按照官方推荐使用 asyncio.create_task()
         self.background_task = asyncio.create_task(self._background_initialization())
-        self.logger.info("🚀 后台初始化任务已启动（asyncio）")
+        self.logger.debug("后台初始化任务已启动（asyncio）")
 
     async def _background_initialization(self):
         """异步后台初始化任务"""
         try:
-            self.logger.info("🚀 启动异步后台初始化...")
+            self.logger.debug("启动异步后台初始化...")
 
             # 异步等待提供商就绪（不阻塞事件循环）
             should_initialize = (
@@ -84,15 +84,13 @@ class BackgroundInitializer:
                 # 在当前事件循环中创建所有组件
                 await self._perform_initialization_async()
             else:
-                self.logger.info("⏹️ 初始化被中断")
+                self.logger.debug("初始化被中断")
                 return
 
-            self.logger.info("✅ 异步后台初始化完成")
+            self.logger.debug("异步后台初始化完成")
 
         except Exception as e:
-            self.logger.error(f"❌ 异步后台初始化失败: {e}")
-            import traceback
-            self.logger.error(f"异常详情: {traceback.format_exc()}")
+            self.logger.error(f"异步后台初始化失败: {e}", exc_info=True)
             try:
                 self.init_manager.mark_failed(str(e))
             except Exception:
@@ -100,19 +98,19 @@ class BackgroundInitializer:
 
     async def _perform_initialization_async(self):
         """执行真正的初始化工作（同一事件循环）"""
-        self.logger.info("🤖 开始执行完整的系统初始化...")
+        self.logger.debug("开始执行完整的系统初始化...")
 
         try:
             # 配置已经在主线程中获取，直接使用
-            self.logger.info(f"📋 使用配置: {list(self.config.keys())}")
+            self.logger.debug(f"使用配置: {list(self.config.keys())}")
 
             components = await self.component_factory.create_all_components(self.config)
-            self.logger.info("✅ 所有组件在当前事件循环中创建完成")
+            self.logger.debug("所有组件在当前事件循环中创建完成")
 
             embedding_provider = components.get("embedding_provider")
             if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):
                 embedding_provider.clear_and_disable_cache()
-                self.logger.info("🗑️ 嵌入缓存已清理并禁用（节省内存）")
+                self.logger.debug("嵌入缓存已清理并禁用（节省内存）")
 
             deepmind = components.get("deepmind")
             if deepmind and deepmind.is_enabled():
@@ -120,13 +118,10 @@ class BackgroundInitializer:
                 task = asyncio.create_task(deepmind.start_sleep_scheduler())
                 self._post_init_tasks.append(task)
             else:
-                self.logger.warning("⚠️ DeepMind未启用")
+                self.logger.warning("DeepMind未启用")
 
         except Exception as e:
-            self.logger.error(f"❌ 系统初始化失败: {e}")
-            import traceback
-
-            self.logger.error(f"错误详情: {traceback.format_exc()}")
+            self.logger.error(f"系统初始化失败: {e}", exc_info=True)
             raise
 
     def get_initialized_components(self):
@@ -140,10 +135,10 @@ class BackgroundInitializer:
     async def shutdown(self):
         """关闭后台初始化器和所有组件"""
         if self._shutdown_started:
-            self.logger.info("后台初始化器已在关闭流程中，跳过重复执行")
+            self.logger.debug("后台初始化器已在关闭流程中，跳过重复执行")
             return
         self._shutdown_started = True
-        self.logger.info("后台初始化器正在关闭...")
+        self.logger.debug("后台初始化器正在关闭...")
 
         # 先取消并等待所有后台任务，避免 pending task 被事件循环强制销毁。
         pending_tasks = []
@@ -158,10 +153,10 @@ class BackgroundInitializer:
 
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
-            self.logger.info(f"后台任务已收束: {len(pending_tasks)} 个")
+            self.logger.debug(f"后台任务已收束: {len(pending_tasks)} 个")
 
         # 关闭所有由ComponentFactory创建的组件
         if self.component_factory:
             await asyncio.to_thread(self.component_factory.shutdown)
 
-        self.logger.info("后台初始化器已成功关闭")
+        self.logger.debug("后台初始化器已成功关闭")

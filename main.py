@@ -80,7 +80,7 @@ class AngelMemoryPlugin(Star):
 
         # 1. 获取插件数据目录（在main.py中获取）
         data_dir = StarTools.get_data_dir("astrbot_plugin_angel_memory")
-        self.logger.info(f"获取到插件数据目录: {data_dir}")
+        self.logger.debug(f"获取到插件数据目录: {data_dir}")
 
         # 2. 创建统一的PluginContext，包含所有必要资源
         self.plugin_context = PluginContextFactory.create_from_initialization(
@@ -119,27 +119,29 @@ class AngelMemoryPlugin(Star):
             self._llm_tools = llm_tools
             self.context.add_llm_tools(*llm_tools)
             registered_names = "、".join(tool.name for tool in llm_tools)
-            self.logger.info(f"已注册 LLM 工具：{registered_names}")
+            self.logger.debug(f"已注册 LLM 工具：{registered_names}")
         except AttributeError as e:
             self.llm_tools_enabled = False
-            self.logger.error(f"❌ 注册LLM工具失败，context可能不支持add_llm_tools方法: {e}", exc_info=True)
-            self.logger.warning("⚠️ LLM工具功能已禁用，插件将继续以基础模式运行")
+            self.logger.error(f"注册LLM工具失败，context可能不支持add_llm_tools方法: {e}", exc_info=True)
+            self.logger.warning("LLM工具功能已禁用，插件将继续以基础模式运行")
         except Exception as e:
             self.llm_tools_enabled = False
-            self.logger.error(f"❌ 注册LLM工具时发生异常: {e}", exc_info=True)
-            self.logger.warning("⚠️ LLM工具功能已禁用，插件将继续以基础模式运行")
-        self.logger.info(
+            self.logger.error(f"注册LLM工具时发生异常: {e}", exc_info=True)
+            self.logger.warning("LLM工具功能已禁用，插件将继续以基础模式运行")
+        self.logger.debug(
             f"天使记忆数据路径设置为: {self.plugin_context.get_index_dir().resolve()}"
         )
-        self.logger.info(
-            f"Angel Memory Plugin 实例创建完成 (提供商: {self.plugin_context.get_current_provider()}), 后台初始化已启动"
+        self.logger.debug(
+            f"天使记忆实例创建完成 数据目录={self.plugin_context.get_index_dir().resolve()} "
+            f"提供商={self.plugin_context.get_current_provider()} "
+            f"嵌入={self.plugin_context.get_embedding_provider_id() or '无（纯全文）'} 后台初始化已启动"
         )
 
         # 6. 注册 WebUI API 路由
         try:
             from .web_api import register_all_routes
             register_all_routes(self.context, self.plugin_context, plugin=self)
-            self.logger.info("已注册 WebUI API 路由（Plugin Pages）")
+            self.logger.debug("已注册 WebUI API 路由（Plugin Pages）")
         except Exception as e:
             self.logger.warning(f"WebUI API 路由注册失败（不影响核心功能）: {e}")
 
@@ -175,33 +177,33 @@ class AngelMemoryPlugin(Star):
         """在主线程检查配置项"""
         try:
             config = self.plugin_context.get_all_config()
-            self.logger.info(f"📋 插件配置加载完成: {list(config.keys())}")
+            self.logger.debug(f"插件配置加载完成: {list(config.keys())}")
 
             # 检查关键配置
             embedding_provider_id = self.plugin_context.get_embedding_provider_id()
             if embedding_provider_id:
-                self.logger.info(f"✅ 检测到嵌入提供商配置: {embedding_provider_id}")
+                self.logger.debug(f"检测到嵌入提供商配置: {embedding_provider_id}")
             else:
-                self.logger.info(
-                    "ℹ️ 未配置嵌入提供商ID，将按能力自动降级为 BM25-only（向量非必须）"
+                self.logger.debug(
+                    "未配置嵌入提供商ID，将按能力自动降级为 BM25-only（向量非必须）"
                 )
 
             llm_provider_id = self.plugin_context.get_llm_provider_id()
             if llm_provider_id:
-                self.logger.info(f"✅ 检测到LLM提供商配置: {llm_provider_id}")
+                self.logger.debug(f"检测到LLM提供商配置: {llm_provider_id}")
             else:
-                self.logger.info(
-                    "ℹ️ 未配置LLM提供商ID (provider_id)，将使用基础记忆功能"
+                self.logger.debug(
+                    "未配置LLM提供商ID (provider_id)，将使用基础记忆功能"
                 )
 
             # 检查提供商可用性
             if self.plugin_context.has_providers():
-                self.logger.info("✅ 检测到可用的提供商")
+                self.logger.debug("检测到可用的提供商")
             else:
-                self.logger.info("ℹ️ 未检测到可用提供商，将使用本地模式")
+                self.logger.debug("未检测到可用提供商，将使用本地模式")
 
         except (AttributeError, KeyError, TypeError) as e:
-            self.logger.error(f"❌ 配置检查失败: {e}")
+            self.logger.error(f"配置检查失败: {e}", exc_info=True)
 
     def update_components(self):
         """更新组件引用（在初始化完成后调用）"""
@@ -272,14 +274,14 @@ class AngelMemoryPlugin(Star):
                 )
 
         except (AttributeError, ValueError, RuntimeError) as e:
-            self.logger.error(f"LLM_REQUEST failed: {e}")
+            self.logger.error(f"LLM请求处理异常: {e}", exc_info=True)
 
     async def _log_event_persona(self, event: AstrMessageEvent) -> None:
         """每条消息记录一次当前事件的人格名，便于排障。"""
         try:
             conversation_id = str(getattr(event, "unified_msg_origin", "") or "").strip()
             persona_name = await self.plugin_context.get_event_persona_name(event)
-            self.logger.info(
+            self.logger.debug(
                 f"[事件人格] 会话ID={conversation_id or '(空)'} 当前人格={persona_name or '(空)'}"
             )
         except Exception as e:
@@ -306,7 +308,7 @@ class AngelMemoryPlugin(Star):
                 "conversation": "会话ID键",
                 "default": "默认规则",
             }.get(matched_by, matched_by)
-            self.logger.info(
+            self.logger.debug(
                 f"[会话分类提示] 当前人格={persona_name or '(空)'} 当前会话ID={conversation_id} "
                 f"命中来源={match_desc} 命中键={matched_key} 目标scope={resolved_scope}。"
                 f"注意：以下仅为配置示例，不会自动写入。"
@@ -346,7 +348,7 @@ class AngelMemoryPlugin(Star):
                     self.logger.warning(f"存储响应数据失败: {e}")
 
         except Exception as e:
-            self.logger.error(f"on_llm_response failed: {e}")
+            self.logger.error(f"LLM响应处理异常: {e}", exc_info=True)
 
     @filter.after_message_sent(priority=-100)
     async def after_message_sent(self, event: AstrMessageEvent):
@@ -385,7 +387,7 @@ class AngelMemoryPlugin(Star):
             self.logger.debug("记忆整理任务已提交至后台，不等待完成。")
 
         except Exception as e:
-            self.logger.error(f"after_message_sent failed: {e}")
+            self.logger.error(f"记忆整理提交异常: {e}", exc_info=True)
 
     def _track_background_task(self, task: asyncio.Task) -> None:
         """追踪后台任务，便于 terminate 阶段统一取消并等待收束。"""
@@ -407,17 +409,17 @@ class AngelMemoryPlugin(Star):
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""
         try:
-            self.logger.info("Angel Memory Plugin 正在关闭...")
+            self.logger.debug("Angel Memory Plugin 正在关闭...")
             self._is_terminating = True
 
             # 先停止插件内自行提交的后台任务，避免与组件关闭并发冲突。
             pending_tasks = [t for t in self._background_tasks if not t.done()]
             if pending_tasks:
-                self.logger.info(f"检测到待收束后台任务: {len(pending_tasks)} 个，开始取消")
+                self.logger.debug(f"检测到待收束后台任务: {len(pending_tasks)} 个，开始取消")
                 for task in pending_tasks:
                     task.cancel()
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
-                self.logger.info("插件内后台任务已收束")
+                self.logger.debug("插件内后台任务已收束")
 
             # 停止核心服务
             if self.plugin_manager:
@@ -434,7 +436,7 @@ class AngelMemoryPlugin(Star):
             )
 
         except (AttributeError, RuntimeError) as e:
-            self.logger.error(f"Angel Memory Plugin: 插件卸载清理失败: {e}")
+            self.logger.error(f"Angel Memory Plugin: 插件卸载清理失败: {e}", exc_info=True)
 
     def get_plugin_status(self):
         """

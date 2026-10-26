@@ -33,7 +33,7 @@ def timing_log(operation_name: str, threshold_ms: float = 100.0):
     thread_name = threading.current_thread().name
     start_time = time.time()
 
-    logger.debug(f"⏱️ [{thread_name}] {operation_name} - 开始")
+    logger.debug(f"[{thread_name}] {operation_name} - 开始")
 
     try:
         yield
@@ -42,15 +42,15 @@ def timing_log(operation_name: str, threshold_ms: float = 100.0):
 
         if elapsed_ms > threshold_ms:
             logger.warning(
-                f"⏱️ [{thread_name}] {operation_name} - 完成，耗时: {elapsed_ms:.2f}ms ⚠️"
+                f"[{thread_name}] {operation_name} - 完成，耗时: {elapsed_ms:.2f}ms"
             )
         else:
-            logger.info(
-                f"⏱️ [{thread_name}] {operation_name} - 完成，耗时: {elapsed_ms:.2f}ms"
+            logger.debug(
+                f"[{thread_name}] {operation_name} - 完成，耗时: {elapsed_ms:.2f}ms"
             )
 
 
 def log_checkpoint(checkpoint_name: str):
     """记录检查点（用于追踪执行流程）"""
     thread_name = threading.current_thread().name
-    logger.info(f"📍 [{thread_name}] 检查点: {checkpoint_name}")
+    logger.debug(f"[{thread_name}] 检查点: {checkpoint_name}")

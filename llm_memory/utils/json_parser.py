@@ -222,7 +222,7 @@ class JsonParser:
         qualified_jsons.sort(key=lambda x: x["score"])
         best_json_item = qualified_jsons[-1]
 
-        self.logger.info(
+        self.logger.debug(
             f"JsonParser: 提取成功，选择了得分最高的JSON（得分: {best_json_item['score']}）。"
         )
         return best_json_item["json"]

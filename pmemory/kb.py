@@ -236,17 +236,17 @@ class PMemory:
 
     def _register_note_roots(self, kb: KnowledgeBase) -> None:
         if self._raw_dir is None:
-            logger.info("[PMEMORY] 未提供笔记根目录，跳过 set_root")
+            logger.debug("[PMEMORY] 未提供笔记根目录，跳过 set_root")
             return
         for domain in iter_domains():
             relative = DOMAIN_DIRS[domain]
             directory = self._raw_dir / relative
             if not directory.is_dir():
-                logger.info("[PMEMORY] 笔记目录不存在，跳过 域=%s 目录=%s", domain, directory)
+                logger.debug("[PMEMORY] 笔记目录不存在，跳过 域=%s 目录=%s", domain, directory)
                 continue
             try:
                 kb.notes.set_root(knowledge_namespace(domain), str(directory))
-                logger.info("[PMEMORY] 笔记根目录已登记 域=%s 目录=%s", domain, directory)
+                logger.debug("[PMEMORY] 笔记根目录已登记 域=%s 目录=%s", domain, directory)
             except Exception:
                 logger.exception("[PMEMORY] 笔记根目录登记失败 域=%s 目录=%s", domain, directory)
 
