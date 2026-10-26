@@ -1,15 +1,14 @@
 """
-维护与导入导出 API
+维护与导入导出 API（p-memory 版：快照导出/导入走新库，旧 SQL 只留作迁移源）
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import sqlite3
-import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, Set
 
 from quart import jsonify, request
 
@@ -19,19 +18,12 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+from ..core.services.legacy_memory_migration import LegacyMemoryMigration
+
 
 class MaintenanceAPI:
     def __init__(self, plugin_context):
         self.plugin_context = plugin_context
-
-    def _get_central_conn(self) -> Optional[sqlite3.Connection]:
-        path_manager = self.plugin_context.get_path_manager()
-        db_path = str(path_manager.get_simple_memory_db_path())
-        if not os.path.exists(db_path):
-            return None
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
 
     async def get_maintenance_state(self):
         """获取维护状态"""
@@ -100,119 +92,129 @@ class MaintenanceAPI:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    async def export_snapshot(self):
-        """导出中央记忆快照"""
-        conn = self._get_central_conn()
-        if not conn:
-            return jsonify({"error": "数据库不可用"}), 500
-
+    def _memory_store(self):
         try:
-            cur = conn.cursor()
-            records = [dict(row) for row in cur.execute(
-                """
-                SELECT id, memory_type, judgment, reasoning, strength, is_active,
-                       useful_count, useful_score, last_recalled_at, last_decay_at,
-                       memory_scope, created_at, updated_at
-                FROM memory_records ORDER BY created_at DESC
-                """
-            ).fetchall()]
+            return self.plugin_context.get_component("memory_store")
+        except Exception:
+            return None
 
-            tags = [dict(row) for row in cur.execute(
-                "SELECT id, name FROM global_tags ORDER BY id ASC"
-            ).fetchall()]
+    @staticmethod
+    def _is_pmemory_id(value: Any) -> bool:
+        try:
+            int(str(value or "").strip())
+            return True
+        except (TypeError, ValueError):
+            return False
 
-            rel = [dict(row) for row in cur.execute(
-                "SELECT memory_id, tag_id FROM memory_tag_rel"
-            ).fetchall()]
+    @staticmethod
+    def _existing_legacy_ids(store) -> Set[str]:
+        """新库里已有的旧 ID（与自动迁移同一口径，避免导入后迁移又写一遍）。"""
+        found: Set[str] = set()
+        try:
+            records = store.list_records(all_scopes=True)
+        except Exception:
+            return found
+        for record in records or []:
+            if not isinstance(record, dict):
+                continue
+            legacy = (record.get("metadata") or {}).get("legacy") or {}
+            legacy_id = str(legacy.get("id") or "").strip()
+            if legacy_id:
+                found.add(legacy_id)
+        return found
 
-            snapshot = {
-                "schema_version": 1,
-                "exported_at": int(time.time()),
-                "records": records,
-                "global_tags": tags,
-                "memory_tag_rel": rel,
-            }
+    @staticmethod
+    def _normalize_snapshot_records(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """旧快照（关系表）与新快照（内嵌标签）统一成带 tags 列表的记录。"""
+        tag_index = LegacyMemoryMigration._tag_index(data)
+        normalized = []
+        for row in data.get("records") or []:
+            if not isinstance(row, dict):
+                continue
+            item = dict(row)
+            legacy_id = str(item.get("id") or "").strip()
+            tags = item.get("tags")
+            if not isinstance(tags, list) or not tags:
+                tags = tag_index.get(legacy_id, [])
+            item["tags"] = [str(t).strip() for t in (tags or []) if str(t).strip()]
+            normalized.append(item)
+        return normalized
+
+    async def export_snapshot(self):
+        """导出记忆快照（从 p-memory，与旧版同结构，标签内嵌在记录里）"""
+        store = self._memory_store()
+        if store is None:
+            return jsonify({"error": "记忆组件不可用"}), 500
+        try:
+            snapshot = await asyncio.to_thread(store.export_snapshot)
             return jsonify(snapshot)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-        finally:
-            conn.close()
 
     async def import_snapshot(self):
-        """导入中央记忆快照"""
+        """导入记忆快照（写进 p-memory）
+
+        新旧快照都收：旧 ID 写回去时带上溯源标记，自动迁移认得，不会重复搬。
+        """
         data = await request.get_json()
         if not data:
             return jsonify({"error": "请求体为空"}), 400
 
-        records = data.get("records", [])
-        tags = data.get("global_tags", [])
-        rel = data.get("memory_tag_rel", [])
-
-        conn = self._get_central_conn()
-        if not conn:
-            return jsonify({"error": "数据库不可用"}), 500
+        store = self._memory_store()
+        if store is None:
+            return jsonify({"error": "记忆组件不可用"}), 500
 
         try:
-            cur = conn.cursor()
+            records = self._normalize_snapshot_records(data)
+            existing_legacy = await asyncio.to_thread(self._existing_legacy_ids, store)
+            existing_ids: Set[str] = set()
+            try:
+                for record in await asyncio.to_thread(store.list_records, all_scopes=True):
+                    rid = (record or {}).get("id")
+                    if rid is not None:
+                        existing_ids.add(str(rid))
+            except Exception:
+                pass
+
             inserted = 0
             skipped = 0
             failed = 0
-
-            # 导入标签
-            for tag in tags:
+            for item in records:
+                legacy_id = str(item.get("id") or "").strip()
+                judgment = str(item.get("judgment") or "").strip()
+                if not legacy_id or not judgment:
+                    skipped += 1
+                    continue
+                if legacy_id in existing_legacy or legacy_id in existing_ids:
+                    skipped += 1
+                    continue
                 try:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO global_tags(id, name) VALUES (?, ?)",
-                        (int(tag["id"]), str(tag["name"])),
+                    metadata = None
+                    if not self._is_pmemory_id(legacy_id):
+                        metadata = LegacyMemoryMigration._legacy_key(legacy_id)
+                    await asyncio.to_thread(
+                        store.remember,
+                        judgment,
+                        str(item.get("reasoning") or ""),
+                        item.get("tags") or [],
+                        str(item.get("memory_type") or "知识记忆"),
+                        str(item.get("memory_scope") or "public"),
+                        pinned=bool(item.get("is_active")),
+                        strength=item.get("strength"),
+                        useful_count=item.get("useful_count"),
+                        useful_score=item.get("useful_score"),
+                        last_recalled_at=item.get("last_recalled_at"),
+                        last_decay_at=item.get("last_decay_at"),
+                        metadata=metadata,
+                        created_at=item.get("created_at"),
+                        updated_at=item.get("updated_at"),
                     )
-                except Exception:
-                    pass
-
-            # 导入记忆
-            for record in records:
-                try:
-                    existing = cur.execute(
-                        "SELECT id FROM memory_records WHERE id = ?",
-                        (record["id"],),
-                    ).fetchone()
-                    if existing:
-                        skipped += 1
-                        continue
-
-                    cur.execute(
-                        """
-                        INSERT INTO memory_records(
-                            id, memory_type, judgment, reasoning, strength, is_active,
-                            useful_count, useful_score, last_recalled_at, last_decay_at,
-                            memory_scope, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            record["id"], record.get("memory_type", ""),
-                            record.get("judgment", ""), record.get("reasoning", ""),
-                            record.get("strength", 50), record.get("is_active", 0),
-                            record.get("useful_count", 0), record.get("useful_score", 0.0),
-                            record.get("last_recalled_at"), record.get("last_decay_at"),
-                            record.get("memory_scope", "public"),
-                            record.get("created_at", time.time()),
-                            record.get("updated_at", time.time()),
-                        ),
-                    )
+                    if metadata:
+                        existing_legacy.add(legacy_id)
                     inserted += 1
                 except Exception:
                     failed += 1
 
-            # 导入标签关联
-            for r in rel:
-                try:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO memory_tag_rel(memory_id, tag_id) VALUES (?, ?)",
-                        (str(r["memory_id"]), int(r["tag_id"])),
-                    )
-                except Exception:
-                    pass
-
-            conn.commit()
             return jsonify({
                 "success": True,
                 "inserted": inserted,
@@ -221,5 +223,3 @@ class MaintenanceAPI:
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-        finally:
-            conn.close()

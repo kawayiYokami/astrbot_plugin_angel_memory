@@ -41,27 +41,7 @@ class DebugAPI:
         return None
 
     def _get_rerank_provider(self) -> Optional[Any]:
-        # 优先从已创建的组件实例中取
-        for comp_name in ("memory_sql_manager", "note_chunk_search", "vector_store"):
-            try:
-                comp = self.plugin_context.get_component(comp_name)
-                if comp is None:
-                    continue
-                # vector_store 可能是 FaissVectorStore / SqliteVectorStore
-                rp = getattr(comp, "_rerank_provider", None)
-                if rp is not None and hasattr(rp, "rerank"):
-                    return rp
-                rp = getattr(comp, "rerank_provider", None)
-                if rp is not None and hasattr(rp, "rerank"):
-                    return rp
-                # HybridRetrievalEngine 内部
-                hybrid = getattr(comp, "_hybrid_engine", None)
-                if hybrid is not None:
-                    rp2 = getattr(hybrid, "rerank_provider", None)
-                    if rp2 is not None and hasattr(rp2, "rerank"):
-                        return rp2
-            except Exception:
-                continue
+        # p-memory 模式：重排器只从 AstrBot 上下文取，不再经过已下线的旧索引组件。
         # 回退到上游 context 查找
         try:
             ctx = self.plugin_context.get_astrbot_context()

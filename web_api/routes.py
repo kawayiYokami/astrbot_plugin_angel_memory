@@ -21,12 +21,14 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
     from .tags_api import TagsAPI
     from .maintenance_api import MaintenanceAPI
     from .profile_api import ProfileAPI
+    from .group_knowledge_api import GroupKnowledgeAPI
 
     memory_api = MemoryAPI(plugin_context)
     notes_api = NotesAPI(plugin_context)
     tags_api = TagsAPI(plugin_context)
     maintenance_api = MaintenanceAPI(plugin_context)
     profile_api = ProfileAPI(plugin_context)
+    group_knowledge_api = GroupKnowledgeAPI(plugin_context, plugin)
     from .debug_api import DebugAPI
 
     debug_api = DebugAPI(plugin_context)
@@ -43,10 +45,6 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         # 标签
         (f"/{PLUGIN_NAME}/tags", tags_api.get_tags, ["GET"], "全局标签列表"),
         (f"/{PLUGIN_NAME}/tags/hit-search", tags_api.hit_search, ["POST"], "标签命中搜索"),
-        # 向量
-        (f"/{PLUGIN_NAME}/vector/search", memory_api.vector_search, ["GET"], "向量检索"),
-        (f"/{PLUGIN_NAME}/vector/browse", memory_api.vector_browse, ["GET"], "向量浏览"),
-        (f"/{PLUGIN_NAME}/vector/collections", memory_api.vector_collections, ["GET"], "向量集合列表"),
         # 笔记
         (f"/{PLUGIN_NAME}/notes", notes_api.browse_notes, ["GET"], "笔记索引浏览"),
         (f"/{PLUGIN_NAME}/notes/recall", notes_api.recall_note, ["POST"], "笔记内容读取"),
@@ -63,6 +61,9 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         # 用户画像
         (f"/{PLUGIN_NAME}/profiles", profile_api.list_users, ["GET"], "用户画像列表"),
         (f"/{PLUGIN_NAME}/profiles/detail", profile_api.get_user_profile, ["GET"], "用户画像详情"),
+        # 群聊知识库可见性
+        (f"/{PLUGIN_NAME}/group-knowledge", group_knowledge_api.get_groups, ["GET"], "群聊知识库三态表"),
+        (f"/{PLUGIN_NAME}/group-knowledge/save", group_knowledge_api.save_groups, ["POST"], "保存群聊知识库三态表"),
         # 功能调试（探针）
         (f"/{PLUGIN_NAME}/debug/embedding", debug_api.embedding_probe, ["POST"], "嵌入探针（自定义批次/超时）"),
         (f"/{PLUGIN_NAME}/debug/rerank", debug_api.rerank_probe, ["POST"], "重排探针（自定义超时）"),

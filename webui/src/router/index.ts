@@ -2,12 +2,12 @@ import type { RouteRecordRaw } from 'vue-router'
 import OverviewView from '@/views/OverviewView.vue'
 import MemoryBrowseView from '@/views/MemoryBrowseView.vue'
 import TagsDebugView from '@/views/TagsDebugView.vue'
-import VectorSearchView from '@/views/VectorSearchView.vue'
 import NoteIndexView from '@/views/NoteIndexView.vue'
 import NoteRecallView from '@/views/NoteRecallView.vue'
 import ImportExportView from '@/views/ImportExportView.vue'
 import MaintenanceView from '@/views/MaintenanceView.vue'
 import UserProfileView from '@/views/UserProfileView.vue'
+import GroupKnowledgeView from '@/views/GroupKnowledgeView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import DebugView from '@/views/DebugView.vue'
 
@@ -31,16 +31,16 @@ export const routes: RouteRecordRaw[] = [
     meta: { title: '用户画像', icon: 'lucide:users' },
   },
   {
+    path: '/group-knowledge',
+    name: 'group-knowledge',
+    component: GroupKnowledgeView,
+    meta: { title: '群聊知识库', icon: 'lucide:library' },
+  },
+  {
     path: '/tags',
     name: 'tags',
     component: TagsDebugView,
     meta: { title: 'Tags 调试', icon: 'lucide:tags' },
-  },
-  {
-    path: '/vector',
-    name: 'vector',
-    component: VectorSearchView,
-    meta: { title: '向量检索', icon: 'lucide:compass' },
   },
   {
     path: '/notes',

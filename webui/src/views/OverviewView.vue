@@ -49,14 +49,14 @@
                 <n-descriptions-item label="索引目录">
                   <span class="truncate" :title="overview.index_dir">{{ overview.index_dir || '-' }}</span>
                 </n-descriptions-item>
-                <n-descriptions-item label="向量索引">
-                  {{ overview.has_vector_db ? '可用' : '不可用' }}
+                <n-descriptions-item label="p-memory 记忆">
+                  {{ overview.pmemory_count ?? '-' }}
                 </n-descriptions-item>
               </n-descriptions>
             </n-card>
           </n-grid-item>
 
-          <!-- Scope 与向量集合 -->
+          <!-- Scope 列表 -->
           <n-grid-item span="2 m:1">
             <n-space vertical :size="16">
               <n-card title="Scope 列表" embedded>
@@ -72,18 +72,6 @@
                   </n-tag>
                 </template>
                 <n-empty v-else description="暂无 scope" />
-              </n-card>
-
-              <n-card v-if="overview.vector_collections?.length" title="向量集合" embedded>
-                <n-tag
-                  v-for="col in overview.vector_collections"
-                  :key="col"
-                  type="info"
-                  class="chip-item"
-                  :bordered="false"
-                >
-                  {{ col }}
-                </n-tag>
               </n-card>
             </n-space>
           </n-grid-item>
