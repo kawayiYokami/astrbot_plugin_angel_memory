@@ -15,7 +15,6 @@ import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 from p_memory import KnowledgeBase
 
 from .config import (
@@ -25,7 +24,7 @@ from .config import (
     knowledge_namespace,
     memory_namespace,
 )
-from .providers import EmbeddingBridge, RerankBridge
+from .providers import EmbeddingBridge, RerankBridge, running_loop
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +78,8 @@ class PMemory:
         self._reranker: Optional[RerankBridge] = None
         self._space_id: Optional[str] = None
         self._sync_started = False
+        # 提供商对象所属的事件循环：回调必须回到这条循环，否则跨 loop 使用会报错
+        self._owner_loop: Optional[Any] = None
         # 已知 scope 名单：库不支持「跨全部 scope」的读，生命周期操作只能显式列全
         self._scopes: set[str] = {SCOPE_PUBLIC}
         self._scopes_loaded = False
@@ -101,6 +102,7 @@ class PMemory:
             self._embedding_provider = embedding_provider
             self._rerank_provider = rerank_provider
             self._rerank_options = dict(rerank_options or {})
+            self._owner_loop = running_loop() or self._owner_loop
             self._scopes = {SCOPE_PUBLIC}
             self._scopes_loaded = False
 
@@ -247,9 +249,11 @@ class PMemory:
                 logger.exception("[PMEMORY] 笔记根目录登记失败 域=%s 目录=%s", domain, directory)
 
     def _register_callbacks(self, kb: KnowledgeBase) -> None:
+        # 上游提供商对象内部锁绑定在创建它的事件循环上，回调必须投递回同一条循环
+        owner_loop = running_loop() or self._owner_loop
         if self._rerank_provider is not None:
             try:
-                bridge = RerankBridge(self._rerank_provider)
+                bridge = RerankBridge(self._rerank_provider, loop=owner_loop)
                 options = {
                     "max_tokens_total": int(self._rerank_options.get("max_tokens_total", 8192)),
                     "max_candidates": int(self._rerank_options.get("max_candidates", 64)),
@@ -277,7 +281,7 @@ class PMemory:
                     logger.warning("[PMEMORY] 嵌入提供商当前不可用，跳过向量回调注册")
                     return
 
-            bridge = EmbeddingBridge(self._embedding_provider)
+            bridge = EmbeddingBridge(self._embedding_provider, loop=owner_loop)
             dimension = bridge.probe_dimension()
             if dimension <= 0:
                 logger.warning("[PMEMORY] 嵌入维度探测失败，跳过向量空间注册")

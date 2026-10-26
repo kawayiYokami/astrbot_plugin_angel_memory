@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from p_memory.errors import EmbedCallbackError
 
@@ -60,19 +60,91 @@ class _BackgroundLoop:
         self._thread.join(timeout=2)
 
 
+# 循环 id -> 跑这条循环的线程 id：回调若已在该线程上，不能再投递回去等结果
+_LOOP_THREADS: Dict[int, int] = {}
+
+
+def running_loop() -> Optional[asyncio.AbstractEventLoop]:
+    """取当前正在运行的循环；没有则为 None。"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    _LOOP_THREADS[id(loop)] = threading.get_ident()
+    return loop
+
+
+def loop_thread_ident(loop: Optional[asyncio.AbstractEventLoop]) -> Optional[int]:
+    """查这条循环跑在哪个线程上；没记录过就返回 None。"""
+    if loop is None:
+        return None
+    return _LOOP_THREADS.get(id(loop))
+
+
+class _CallbackRunner:
+    """把回调协程送回提供商所属的事件循环执行。
+
+    上游提供商对象（openai AsyncClient 及其内部锁、Event）绑定在创建它的事件循环上，
+    换一条循环去调用会抛 `is bound to a different event loop`。所以优先投递回原循环；
+    只有拿不到归属循环、原循环已停、或回调本身就阻塞在原循环线程上时，
+    才退回自带后台循环（此时可能仍然失败，但不会死锁）。
+    """
+
+    def __init__(self, name: str, owner: Optional[asyncio.AbstractEventLoop] = None) -> None:
+        self._name = name
+        self._owner = owner
+        self._owner_thread = loop_thread_ident(owner)
+        self._fallback: Optional[_BackgroundLoop] = None
+        self._fallback_lock = threading.Lock()
+
+    def run(self, coro, timeout: Optional[float]):
+        owner = self._owner
+        if (
+            owner is not None
+            and owner.is_running()
+            and threading.get_ident() != self._owner_thread
+        ):
+            return asyncio.run_coroutine_threadsafe(coro, owner).result(timeout=timeout)
+        return self._fallback_loop().run(coro, timeout)
+
+    def _fallback_loop(self) -> _BackgroundLoop:
+        with self._fallback_lock:
+            if self._fallback is None:
+                self._fallback = _BackgroundLoop(f"{self._name}-fallback")
+            return self._fallback
+
+    @property
+    def same_loop(self) -> bool:
+        """是否确实绑在提供商自己的循环上（用于日志与自检）。"""
+        return self._owner is not None
+
+    def close(self) -> None:
+        with self._fallback_lock:
+            if self._fallback is not None:
+                self._fallback.close()
+                self._fallback = None
+
+
 class EmbeddingBridge:
     """把异步 `embed_documents(texts) -> list[list[float]]` 包成同步回调。"""
 
-    def __init__(self, provider: Any, timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        provider: Any,
+        timeout: float = 120.0,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> None:
         self._provider = provider
         self._timeout = float(timeout)
-        self._loop = _BackgroundLoop("pmemory-embed")
+        self._runner = _CallbackRunner("pmemory-embed", loop)
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
         try:
-            result = self._loop.run(self._provider.embed_documents(list(texts)), self._timeout)
+            result = self._runner.run(
+                self._provider.embed_documents(list(texts)), self._timeout
+            )
         except asyncio.TimeoutError as exc:
             raise EmbedCallbackError.other(f"嵌入超时 timeout={self._timeout}s") from exc
         except Exception as exc:  # 提供商异常按类别上报，库据此重试或降级
@@ -94,32 +166,47 @@ class EmbeddingBridge:
             info = {}
         return str(info.get("model_name") or info.get("provider_id") or "unknown").strip() or "unknown"
 
+    @property
+    def same_loop(self) -> bool:
+        return self._runner.same_loop
+
     def close(self) -> None:
-        self._loop.close()
+        self._runner.close()
 
 
 class RerankBridge:
     """把异步 `rerank(query, documents)` 包成同步回调，输出与文档等长的分数表。"""
 
-    def __init__(self, provider: Any, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        provider: Any,
+        timeout: float = 60.0,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> None:
         self._provider = provider
         self._timeout = float(timeout)
-        self._loop = _BackgroundLoop("pmemory-rerank")
+        self._runner = _CallbackRunner("pmemory-rerank", loop)
 
     def rerank(self, query: str, documents: Sequence[str]) -> List[float]:
         docs = [str(doc or "") for doc in (documents or [])]
         if not docs:
             return []
         try:
-            response = self._loop.run(self._provider.rerank(query=query, documents=docs), self._timeout)
+            response = self._runner.run(
+                self._provider.rerank(query=query, documents=docs), self._timeout
+            )
         except asyncio.TimeoutError as exc:
             raise EmbedCallbackError.other(f"重排超时 timeout={self._timeout}s") from exc
         except Exception as exc:
             raise EmbedCallbackError.other(str(exc)) from exc
         return _normalize_scores(response, len(docs))
 
+    @property
+    def same_loop(self) -> bool:
+        return self._runner.same_loop
+
     def close(self) -> None:
-        self._loop.close()
+        self._runner.close()
 
 
 def _normalize_scores(response: Any, count: int) -> List[float]:
