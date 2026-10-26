@@ -1,11 +1,12 @@
-"""工具测试探针回归：可见域、自动域、scope 来源、文本计数。
+"""工具测试探针回归：文本输出、错误上报、可见域、只读边界。
 
-只测纯逻辑与形状契约，不依赖 quart 请求上下文与真实事件。
+不依赖 quart 请求上下文与真实事件，只钉形状契约与边界。
 """
 
 from __future__ import annotations
 
-import re
+import json
+import logging
 import tempfile
 from pathlib import Path
 
@@ -13,6 +14,9 @@ import pytest
 
 from astrbot_plugin_angel_memory.core.memory_runtime.pmemory_runtime import (
     to_base_memory,
+)
+from astrbot_plugin_angel_memory.core.services.retrieval_service import (
+    DeepMindRetrievalService,
 )
 from astrbot_plugin_angel_memory.pmemory import MemoryStore, pmemory
 from astrbot_plugin_angel_memory.pmemory.config import (
@@ -25,139 +29,10 @@ from astrbot_plugin_angel_memory.web_api.tool_test_api import (
     DEFAULT_UMO,
     PreviewEvent,
     ToolTestAPI,
-    _MEMORY_COUNT_RE,
-    _NOTE_COUNT_RE,
 )
 
 
-def _fresh_store() -> MemoryStore:
-    root = Path(tempfile.mkdtemp(prefix="pmem-tooltest-"))
-    pmemory.configure(root=root, raw_dir=None)
-    return MemoryStore()
-
-
-def test_hidden_domain_never_visible_or_auto():
-    matrix, _ = build_knowledge_matrix({"123": {"gi": "auto", "hsr": "hidden"}})
-    assert auto_domains_from(matrix, "123") == ["gi"]
-    visible = visible_domains_from(matrix, "123")
-    assert "hsr" not in visible
-    assert "gi" in visible
-    # 未配置的域默认 manual：能搜、不自动注入
-    assert "zzz" in visible
-    assert sorted(visible) == sorted([d for d in DOMAIN_DIRS if d != "hsr"])
-
-
-def test_private_chat_sees_all_domains_but_auto_is_empty():
-    matrix, _ = build_knowledge_matrix({"123": {"gi": "hidden"}})
-    assert auto_domains_from(matrix, "") == []
-    assert sorted(visible_domains_from(matrix, "")) == sorted(DOMAIN_DIRS)
-
-
-def test_count_extracts_tool_headers():
-    raw = "[记忆检索结果 (12条)]\nfoo\n\n[笔记检索结果 (3个文件)]\nbar"
-    assert ToolTestAPI._count(_MEMORY_COUNT_RE, raw) == 12
-    assert ToolTestAPI._count(_NOTE_COUNT_RE, raw) == 3
-
-
-def test_count_returns_none_when_no_result_section():
-    """没命中时不返回 0，避免把「没搜到」和「没有这段」混为一谈。"""
-    empty = "[记忆检索结果]\n无相关记忆。\n\n[笔记检索结果]\n无相关笔记。"
-    assert ToolTestAPI._count(_MEMORY_COUNT_RE, empty) is None
-    assert ToolTestAPI._count(_NOTE_COUNT_RE, empty) is None
-
-
-def test_memory_items_keep_scope_and_type():
-    store = _fresh_store()
-    try:
-        store.remember("红豆喜欢甜食", "聊天里提到", ["红豆"], "知识记忆", "恋爱", pinned=True)
-        record = store.list_records(all_scopes=True)[0]
-        items = ToolTestAPI._memory_items([to_base_memory(record)])
-        assert len(items) == 1
-        assert items[0]["judgment"] == "红豆喜欢甜食"
-        assert items[0]["memory_scope"] == "恋爱"
-        assert items[0]["memory_type"] == "知识记忆"
-        assert items[0]["is_active"] is True
-        assert items[0]["tags"] == ["红豆"]
-    finally:
-        pmemory.close()
-
-
-def test_note_items_accept_pmemory_shape_and_truncate():
-    long_content = "x" * 500
-    notes = [
-        {
-            "content": long_content,
-            "similarity": 0.82,
-            "metadata": {
-                "source_file_path": "原神/钟离.md",
-                "note_id": 7,
-                "line_start": 3,
-                "line_end": 9,
-                "domain": "gi",
-            },
-        },
-        "不是字典，应被跳过",
-    ]
-    items = ToolTestAPI._note_items(notes)
-    assert len(items) == 1
-    assert items[0]["path"] == "原神/钟离.md"
-    assert items[0]["note_id"] == 7
-    assert len(items[0]["content"]) == 200
-
-
-def test_normalize_falls_back_to_default_umo():
-    payload = ToolTestAPI._normalize({"query": "  钟离  ", "umo": "", "group_id": None})
-    assert payload["query"] == "钟离"
-    assert payload["group_id"] == ""
-    assert payload["umo"] == DEFAULT_UMO
-
-
-@pytest.mark.asyncio
-async def test_scope_info_falls_back_to_public_when_unmapped():
-    """替身事件只带必要字段时，scope 解析必须回落 public 而不是抛异常。"""
-
-    class _Ctx:
-        def get_event_conversation_id(self, event):
-            return event.unified_msg_origin
-
-        async def get_event_persona_name(self, event):
-            del event
-            return ""
-
-        def resolve_memory_scope_with_source(self, conversation_id, persona_name=""):
-            del conversation_id, persona_name
-            return "public", "default", "public"
-
-    event = PreviewEvent("aiocqhttp:GroupMessage:0", "", _Ctx())
-    api = ToolTestAPI(_Ctx())
-    info = await api._scope_info(event)
-    assert info["memory_scope"] == "public"
-    assert info["matched_by"] == "default"
-    assert info["conversation_id"] == "aiocqhttp:GroupMessage:0"
-
-
-@pytest.mark.asyncio
-async def test_scope_info_with_real_event_shape():
-    """真实 PluginContext 的 scope 解析对替身事件可用。"""
-
-    class _Ctx:
-        def get_event_conversation_id(self, event):
-            return event.unified_msg_origin
-
-        async def get_event_persona_name(self, event):
-            del event
-            return ""
-
-        def resolve_memory_scope_with_source(self, conversation_id, persona_name=""):
-            del conversation_id, persona_name
-            return "恋爱", "conversation", "aiocqhttp:GroupMessage:830624502"
-
-    event = PreviewEvent("aiocqhttp:GroupMessage:830624502", "830624502", _Ctx())
-    api = ToolTestAPI(_Ctx())
-    info = await api._scope_info(event)
-    assert info["memory_scope"] == "恋爱"
-    assert info["matched_by"] == "conversation"
-    assert info["matched_key"] == "aiocqhttp:GroupMessage:830624502"
+# === 替身 ===
 
 
 class _FakeRequest:
@@ -177,38 +52,56 @@ def _patch_request(monkeypatch, body):
 
 def _body(resp):
     """starlette 的 JSONResponse 只能从 body 取。"""
-    import json as _json
-
-    return _json.loads(resp.body)
-
-
-class _FakeRuntime:
-    def __init__(self, memories):
-        self._memories = memories
-        self.calls = []
-
-    async def chained_recall(self, **kwargs):
-        self.calls.append(kwargs)
-        return self._memories
+    return json.loads(resp.body)
 
 
 class _FakeQueryProcessor:
+    def __init__(self, boom=False):
+        self.boom = boom
+
     def process_query_for_memory(self, query, event):
         del event
+        if self.boom:
+            raise RuntimeError("预处理炸了")
         return f"{query} 预处理"
 
     def process_query_for_notes(self, query, event):
-        del event
-        return f"{query} 预处理"
+        return self.process_query_for_memory(query, event)
 
     def extract_rag_fields(self, event):
         del event
         return {"entities": [], "facts": [], "keywords": []}
 
 
+class _FakeRuntime:
+    def __init__(self, memories, boom=False):
+        self._memories = memories
+        self.boom = boom
+
+    async def chained_recall(self, **kwargs):
+        del kwargs
+        if self.boom:
+            raise RuntimeError("召回炸了")
+        return self._memories
+
+    async def comprehensive_recall(self, query, limit=None, event=None, memory_scope="public"):
+        del query, limit, event, memory_scope
+        return list(self._memories)
+
+
+class _FakeNoteIndex:
+    def __init__(self, notes=None):
+        self._notes = notes or []
+
+    async def search_notes_async(self, query, max_results=50, domains=None):
+        del query, max_results, domains
+        return list(self._notes)
+
+
 class _FakeSoul:
     def __init__(self):
         self.resonated = 0
+        self.energy = {"RecallDepth": 0.0}
 
     def get_value(self, dimension):
         del dimension
@@ -217,31 +110,6 @@ class _FakeSoul:
     def resonate(self, snapshots):
         del snapshots
         self.resonated += 1
-
-
-class _FakeDeepmind:
-    def __init__(self, memories, notes):
-        import logging
-
-        from astrbot_plugin_angel_memory.core.services.retrieval_service import (
-            DeepMindRetrievalService,
-        )
-
-        self.logger = logging.getLogger("test-tool-test")
-        self.memory_system = _FakeRuntime(memories)
-        self.note_service = None
-        self.query_processor = _FakeQueryProcessor()
-        self.soul = _FakeSoul()
-        self.note_recall_enabled = True
-        self.note_inject_top_k = 3
-        self.note_candidate_top_k = 21
-        self.CHAINED_RECALL_PER_TYPE_LIMIT = 7
-        self.retrieval_service = DeepMindRetrievalService(self)
-        self._notes = notes
-
-    async def note_search(self, **kwargs):
-        del kwargs
-        return self._notes
 
 
 class _FakeNoteService:
@@ -253,14 +121,37 @@ class _FakeNoteService:
         return list(self._notes)
 
 
+class _FakeDeepmind:
+    def __init__(self, memories, notes=None, query_boom=False, recall_boom=False):
+        self.logger = logging.getLogger("test-tool-test")
+        self.memory_system = _FakeRuntime(memories, boom=recall_boom)
+        self.note_service = _FakeNoteService(notes)
+        self.query_processor = _FakeQueryProcessor(boom=query_boom)
+        self.soul = _FakeSoul()
+        self.note_recall_enabled = True
+        self.note_inject_top_k = 3
+        self.note_candidate_top_k = 21
+        self.CHAINED_RECALL_PER_TYPE_LIMIT = 7
+        self.retrieval_service = DeepMindRetrievalService(self)
+
+
 class _ProbeCtx:
-    def __init__(self, deepmind, auto=None, visible=None):
+    def __init__(self, deepmind=None, auto=None, visible=None, scope_boom=False):
         self._deepmind = deepmind
         self._auto = auto or []
-        self._visible = visible or list(DOMAIN_DIRS)
+        self._visible = visible if visible is not None else list(DOMAIN_DIRS)
+        self._scope_boom = scope_boom
 
     def get_component(self, name):
-        return self._deepmind if name == "deepmind" else None
+        if self._deepmind is None:
+            return None
+        if name == "deepmind":
+            return self._deepmind
+        if name == "memory_runtime":
+            return self._deepmind.memory_system
+        if name == "note_index":
+            return _FakeNoteIndex()
+        return None
 
     def get_event_conversation_id(self, event):
         return event.unified_msg_origin
@@ -271,6 +162,8 @@ class _ProbeCtx:
 
     def resolve_memory_scope_with_source(self, conversation_id, persona_name=""):
         del conversation_id, persona_name
+        if self._scope_boom:
+            raise RuntimeError("scope 解析炸了")
         return "public", "default", "public"
 
     async def resolve_memory_scope_from_event(self, event):
@@ -286,42 +179,169 @@ class _ProbeCtx:
         return list(self._visible)
 
 
-@pytest.mark.asyncio
-async def test_auto_rag_is_readonly_and_reports_scope(monkeypatch):
-    """探针必须不触发灵魂共鸣：这是「只读」的硬边界。"""
+def _fresh_store() -> MemoryStore:
+    root = Path(tempfile.mkdtemp(prefix="pmem-tooltest-"))
+    pmemory.configure(root=root, raw_dir=None)
+    return MemoryStore()
+
+
+def _seed_memory() -> object:
     store = _fresh_store()
     try:
-        store.remember("红豆喜欢甜食", "r", ["红豆"], "知识记忆", "public")
+        store.remember("红豆喜欢甜食", "聊天里提到", ["红豆"], "知识记忆", "public", pinned=True)
         record = store.list_records(all_scopes=True)[0]
-        memory = to_base_memory(record)
+        return to_base_memory(record)
     finally:
         pmemory.close()
 
-    deepmind = _FakeDeepmind([memory], [])
-    deepmind.note_service = _FakeNoteService()
+
+# === 域可见性 ===
+
+
+def test_hidden_domain_never_visible_or_auto():
+    matrix, _ = build_knowledge_matrix({"123": {"gi": "auto", "hsr": "hidden"}})
+    assert auto_domains_from(matrix, "123") == ["gi"]
+    visible = visible_domains_from(matrix, "123")
+    assert "hsr" not in visible
+    assert "gi" in visible
+    assert "zzz" in visible
+    assert sorted(visible) == sorted([d for d in DOMAIN_DIRS if d != "hsr"])
+
+
+def test_private_chat_sees_all_domains_but_auto_is_empty():
+    matrix, _ = build_knowledge_matrix({"123": {"gi": "hidden"}})
+    assert auto_domains_from(matrix, "") == []
+    assert sorted(visible_domains_from(matrix, "")) == sorted(DOMAIN_DIRS)
+
+
+# === 输入规整 ===
+
+
+def test_normalize_falls_back_to_default_umo():
+    payload = ToolTestAPI._normalize({"query": "  洛伊  ", "umo": "", "group_id": None})
+    assert payload["query"] == "洛伊"
+    assert payload["group_id"] == ""
+    assert payload["umo"] == DEFAULT_UMO
+
+
+@pytest.mark.asyncio
+async def test_empty_query_reports_error(monkeypatch):
+    api = ToolTestAPI(_ProbeCtx(_FakeDeepmind([])))
+    _patch_request(monkeypatch, {"query": "   "})
+    body = _body(await api.run())
+    assert body["text"] == ""
+    assert body["errors"] == ["查询词不能为空"]
+
+
+# === 正常路径 ===
+
+
+@pytest.mark.asyncio
+async def test_run_outputs_plain_text_for_both_chains(monkeypatch):
+    memory = _seed_memory()
+    deepmind = _FakeDeepmind([memory])
     ctx = _ProbeCtx(deepmind, auto=["gi"])
     deepmind.plugin_context = ctx
     api = ToolTestAPI(ctx)
-    _patch_request(monkeypatch, {"query": "钟离", "group_id": "830624502", "umo": ""})
+    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759", "umo": ""})
 
-    resp = await api.auto_rag()
-    body = _body(resp)
-    data = body["data"]
+    body = _body(await api.run())
+    text = body["text"]
 
-    assert data["error"] is None
-    assert data["memory_scope"] == "public"
-    assert data["processed_query"] == "钟离 预处理"
-    assert data["auto_domains"] == ["gi"]
-    assert len(data["memories"]) == 1
-    assert data["memories"][0]["judgment"] == "红豆喜欢甜食"
-    # 只读：共鸣没被触发
+    assert body["errors"] == []
+    assert "【自动 RAG】" in text
+    assert "【主动搜索】" in text
+    assert "预处理后查询词：洛伊 预处理" in text
+    assert "记忆 1 条" in text
+    assert "红豆喜欢甜食" in text
+    # 主动搜索走真实工具，替身事件应能跑通并给出记忆段
+    assert "[记忆检索结果" in text
+    # 只读：灵魂共鸣没被触发
     assert deepmind.soul.resonated == 0
 
 
 @pytest.mark.asyncio
-async def test_auto_rag_rejects_empty_query(monkeypatch):
-    api = ToolTestAPI(_ProbeCtx(_FakeDeepmind([], [])))
-    _patch_request(monkeypatch, {"query": "   "})
-    resp = await api.auto_rag()
-    body = _body(resp)
-    assert body.get("status") != "ok"
+async def test_no_auto_domain_marks_notes_as_config_issue(monkeypatch):
+    deepmind = _FakeDeepmind([])
+    ctx = _ProbeCtx(deepmind, auto=[])
+    deepmind.plugin_context = ctx
+    api = ToolTestAPI(ctx)
+    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759", "umo": ""})
+
+    text = _body(await api.run())["text"]
+    assert "自动域=（无）" in text
+    assert "没有标记为「自动」的知识域" in text
+    assert "（无相关笔记）" in text
+
+
+# === 错误上报 ===
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_failure_is_reported_not_swallowed(monkeypatch):
+    deepmind = _FakeDeepmind([], recall_boom=True)
+    ctx = _ProbeCtx(deepmind, auto=["gi"])
+    deepmind.plugin_context = ctx
+    api = ToolTestAPI(ctx)
+    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
+
+    body = _body(await api.run())
+    assert any("召回炸了" in e for e in body["errors"])
+    assert "[错误]" in body["text"]
+    # 别的段落仍要跑完，不能一段炸全停
+    assert "【主动搜索】" in body["text"]
+
+
+@pytest.mark.asyncio
+async def test_query_preprocess_failure_falls_back_and_reports(monkeypatch):
+    deepmind = _FakeDeepmind([], query_boom=True)
+    ctx = _ProbeCtx(deepmind, auto=["gi"])
+    deepmind.plugin_context = ctx
+    api = ToolTestAPI(ctx)
+    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
+
+    body = _body(await api.run())
+    assert any("预处理炸了" in e for e in body["errors"])
+    # 降级用原查询词，仍然照跑
+    assert "预处理后查询词：洛伊" in body["text"]
+
+
+@pytest.mark.asyncio
+async def test_scope_failure_is_reported(monkeypatch):
+    deepmind = _FakeDeepmind([])
+    ctx = _ProbeCtx(deepmind, scope_boom=True)
+    deepmind.plugin_context = ctx
+    api = ToolTestAPI(ctx)
+    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
+
+    body = _body(await api.run())
+    assert any("scope 解析炸了" in e for e in body["errors"])
+    assert "[错误] 解析记忆域失败" in body["text"]
+
+
+@pytest.mark.asyncio
+async def test_missing_deepmind_component_is_reported(monkeypatch):
+    api = ToolTestAPI(_ProbeCtx(None))
+    _patch_request(monkeypatch, {"query": "洛伊", "group_id": "327313759"})
+
+    body = _body(await api.run())
+    assert any("潜意识组件不可用" in e for e in body["errors"])
+
+
+# === 替身事件 ===
+
+
+@pytest.mark.asyncio
+async def test_scope_line_uses_event_origin():
+    class _Ctx(_ProbeCtx):
+        def resolve_memory_scope_with_source(self, conversation_id, persona_name=""):
+            del persona_name
+            assert conversation_id == "aiocqhttp:GroupMessage:830624502"
+            return "恋爱", "conversation", conversation_id
+
+    event = PreviewEvent("aiocqhttp:GroupMessage:830624502", "830624502", _Ctx())
+    lines: list[str] = []
+    scope, error = await ToolTestAPI(_Ctx())._scope_line(event, lines)
+    assert error == ""
+    assert scope == "恋爱"
+    assert "恋爱" in lines[0]
