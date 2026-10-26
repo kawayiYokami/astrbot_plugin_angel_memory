@@ -58,12 +58,6 @@ def _install_astrbot_stubs() -> None:
 
 _install_astrbot_stubs()
 
-# 被测单元不依赖 tantivy；环境缺少该可选依赖时补一个占位模块，避免收集失败
-try:
-    import tantivy  # noqa: F401
-except ImportError:
-    sys.modules["tantivy"] = types.ModuleType("tantivy")
-
 PACKAGE_NAME = "astrbot_plugin_angel_memory"
 if PACKAGE_NAME not in sys.modules:
     package = types.ModuleType(PACKAGE_NAME)
