@@ -240,105 +240,18 @@ class MemoryConfig:
         self._conversation_scope_map = config_get("conversation_scope_map", {}) or {}
 
         # 灵魂系统配置 - 支持新旧格式兼容
-        # 新格式：enable_soul_system.enabled, enable_soul_system.recall_depth_mid
-        # 旧格式：enable_soul_system (bool), soul_recall_depth_mid
+        # 新格式：enable_soul_system.enabled
+        # 旧格式：enable_soul_system (bool)
         soul_system_config = config_get("enable_soul_system", {})
 
         # 兼容旧格式：如果enable_soul_system是bool，转换为新格式
         if isinstance(soul_system_config, bool):
             self._enable_soul_system = soul_system_config
-            soul_system_config = {}
         else:
             self._enable_soul_system = ConfigValidator.validate_bool(
                 soul_system_config.get("enabled", True),
                 "enable_soul_system.enabled"
             )
-
-        # RecallDepth 参数 - 优先使用新格式，其次旧格式，最后默认值
-        self._soul_recall_depth_min = ConfigValidator.validate_positive_int(
-            config_get("soul_recall_depth_min", 3),
-            "soul_recall_depth_min"
-        )
-        self._soul_recall_depth_mid = ConfigValidator.validate_positive_int(
-            soul_system_config.get("recall_depth_mid") or config_get("soul_recall_depth_mid", 7),
-            "soul_recall_depth_mid"
-        )
-        self._soul_recall_depth_max = ConfigValidator.validate_positive_int(
-            config_get("soul_recall_depth_max", 20),
-            "soul_recall_depth_max"
-        )
-        ConfigValidator.validate_range_order(
-            self._soul_recall_depth_min,
-            self._soul_recall_depth_mid,
-            self._soul_recall_depth_max,
-            "soul_recall_depth"
-        )
-
-        # ImpressionDepth 参数
-        self._soul_impression_depth_min = ConfigValidator.validate_positive_int(
-            config_get("soul_impression_depth_min", 1),
-            "soul_impression_depth_min"
-        )
-        self._soul_impression_depth_mid = ConfigValidator.validate_positive_int(
-            soul_system_config.get("impression_depth_mid") or config_get("soul_impression_depth_mid", 3),
-            "soul_impression_depth_mid"
-        )
-        self._soul_impression_depth_max = ConfigValidator.validate_positive_int(
-            config_get("soul_impression_depth_max", 10),
-            "soul_impression_depth_max"
-        )
-        ConfigValidator.validate_range_order(
-            self._soul_impression_depth_min,
-            self._soul_impression_depth_mid,
-            self._soul_impression_depth_max,
-            "soul_impression_depth"
-        )
-
-        # ExpressionDesire 参数 - 使用归一化值(0-1)
-        self._soul_expression_desire_min = ConfigValidator.validate_positive_number(
-            config_get("soul_expression_desire_min", 0.0),
-            "soul_expression_desire_min",
-            max_value=1.0
-        )
-        self._soul_expression_desire_mid = ConfigValidator.validate_positive_number(
-            soul_system_config.get("expression_desire_mid") or config_get("soul_expression_desire_mid", 0.5),
-            "soul_expression_desire_mid",
-            max_value=1.0
-        )
-        self._soul_expression_desire_max = ConfigValidator.validate_positive_number(
-            config_get("soul_expression_desire_max", 1.0),
-            "soul_expression_desire_max",
-            max_value=1.0
-        )
-        ConfigValidator.validate_range_order(
-            self._soul_expression_desire_min,
-            self._soul_expression_desire_mid,
-            self._soul_expression_desire_max,
-            "soul_expression_desire"
-        )
-
-        # Creativity 参数 - 使用归一化值(0-1)
-        self._soul_creativity_min = ConfigValidator.validate_positive_number(
-            config_get("soul_creativity_min", 0.0),
-            "soul_creativity_min",
-            max_value=1.0
-        )
-        self._soul_creativity_mid = ConfigValidator.validate_positive_number(
-            soul_system_config.get("creativity_mid") or config_get("soul_creativity_mid", 0.7),
-            "soul_creativity_mid",
-            max_value=1.0
-        )
-        self._soul_creativity_max = ConfigValidator.validate_positive_number(
-            config_get("soul_creativity_max", 1.0),
-            "soul_creativity_max",
-            max_value=1.0
-        )
-        ConfigValidator.validate_range_order(
-            self._soul_creativity_min,
-            self._soul_creativity_mid,
-            self._soul_creativity_max,
-            "soul_creativity"
-        )
 
     @property
     def min_message_length(self) -> int:
@@ -417,35 +330,6 @@ class MemoryConfig:
     def enable_soul_system(self) -> bool:
         """是否启用灵魂系统"""
         return self._enable_soul_system
-
-    # 灵魂参数属性
-    @property
-    def soul_recall_depth_min(self) -> int: return self._soul_recall_depth_min
-    @property
-    def soul_recall_depth_mid(self) -> int: return self._soul_recall_depth_mid
-    @property
-    def soul_recall_depth_max(self) -> int: return self._soul_recall_depth_max
-
-    @property
-    def soul_impression_depth_min(self) -> int: return self._soul_impression_depth_min
-    @property
-    def soul_impression_depth_mid(self) -> int: return self._soul_impression_depth_mid
-    @property
-    def soul_impression_depth_max(self) -> int: return self._soul_impression_depth_max
-
-    @property
-    def soul_expression_desire_min(self) -> float: return self._soul_expression_desire_min
-    @property
-    def soul_expression_desire_mid(self) -> float: return self._soul_expression_desire_mid
-    @property
-    def soul_expression_desire_max(self) -> float: return self._soul_expression_desire_max
-
-    @property
-    def soul_creativity_min(self) -> float: return self._soul_creativity_min
-    @property
-    def soul_creativity_mid(self) -> float: return self._soul_creativity_mid
-    @property
-    def soul_creativity_max(self) -> float: return self._soul_creativity_max
 
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """

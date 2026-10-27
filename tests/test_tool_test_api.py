@@ -97,14 +97,13 @@ class _FakeRuntime:
 class _FakeSoul:
     def __init__(self):
         self.resonated = 0
-        self.energy = {"RecallDepth": 0.0}
+        self.axes = {"joy": 0.5, "anger": 0.5, "surprise": 0.5, "disgust": 0.5}
 
-    def get_value(self, dimension):
-        del dimension
-        return 7.0
+    def get_scores(self):
+        return dict(self.axes)
 
-    def resonate(self, snapshots):
-        del snapshots
+    def resonate(self, entries):
+        del entries
         self.resonated += 1
 
 

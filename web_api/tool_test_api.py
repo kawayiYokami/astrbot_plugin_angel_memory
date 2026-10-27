@@ -133,12 +133,7 @@ class ToolTestAPI:
         soul_values = None
         if getattr(deepmind, "soul", None):
             try:
-                soul_values = {
-                    "RecallDepth": deepmind.soul.get_value("RecallDepth"),
-                    "ImpressionDepth": deepmind.soul.get_value("ImpressionDepth"),
-                    "ExpressionDesire": deepmind.soul.get_value("ExpressionDesire"),
-                    "Creativity": deepmind.soul.get_value("Creativity"),
-                }
+                soul_values = deepmind.soul.get_scores()
             except Exception as e:
                 logger.warning(f"[工具测试] 取灵魂状态失败: {e}")
 

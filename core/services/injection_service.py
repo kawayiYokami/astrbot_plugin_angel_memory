@@ -11,21 +11,6 @@ class DeepMindInjectionService:
     def __init__(self, deepmind):
         self.deepmind = deepmind
 
-    def normalize_soul_value(self, dimension: str, value: float) -> float:
-        deepmind = self.deepmind
-        if not deepmind.soul:
-            return 0.5
-
-        cfg = deepmind.soul.config.get(dimension, {})
-        min_val = cfg.get("min", 0)
-        max_val = cfg.get("max", 1)
-
-        if max_val == min_val:
-            return 0.5
-
-        normalized = (value - min_val) / (max_val - min_val)
-        return max(0.0, min(1.0, normalized))
-
     def create_tendency_bar(self, normalized_value: float) -> str:
         bar_length = 10
         filled_length = int(round(normalized_value * bar_length))
@@ -113,30 +98,22 @@ class DeepMindInjectionService:
         system_context_parts.append(instruction)
 
         if soul_state_values and deepmind.config.enable_soul_system:
-            norm_recall = self.normalize_soul_value(
-                "RecallDepth", soul_state_values.get("RecallDepth", 0.5)
-            )
-            norm_impression = self.normalize_soul_value(
-                "ImpressionDepth", soul_state_values.get("ImpressionDepth", 0.5)
-            )
-            norm_expression = self.normalize_soul_value(
-                "ExpressionDesire", soul_state_values.get("ExpressionDesire", 0.5)
-            )
-            norm_creativity = self.normalize_soul_value(
-                "Creativity", soul_state_values.get("Creativity", 0.5)
-            )
+            norm_joy = float(soul_state_values.get("joy", 0.5) or 0.5)
+            norm_surprise = float(soul_state_values.get("surprise", 0.5) or 0.5)
+            norm_anger = float(soul_state_values.get("anger", 0.5) or 0.5)
+            norm_disgust = float(soul_state_values.get("disgust", 0.5) or 0.5)
 
-            bar_recall = self.create_tendency_bar(norm_recall)
-            bar_impression = self.create_tendency_bar(norm_impression)
-            bar_expression = self.create_tendency_bar(norm_expression)
-            bar_creativity = self.create_tendency_bar(norm_creativity)
+            bar_joy = self.create_tendency_bar(norm_joy)
+            bar_surprise = self.create_tendency_bar(norm_surprise)
+            bar_anger = self.create_tendency_bar(norm_anger)
+            bar_disgust = self.create_tendency_bar(norm_disgust)
 
             soul_state_content = (
                 f"<soul_state>\n"
-                f"• 社交倾向: 内向 {bar_recall} 外向 [{norm_recall:.2f}]\n"
-                f"• 认知倾向: 指导 {bar_impression} 好奇 [{norm_impression:.2f}]\n"
-                f"• 表达倾向: 简洁 {bar_expression} 详尽 [{norm_expression:.2f}]\n"
-                f"• 情绪倾向: 严肃 {bar_creativity} 活泼 [{norm_creativity:.2f}]\n"
+                f"• 社交倾向: 内向 {bar_joy} 外向 [{norm_joy:.2f}]\n"
+                f"• 认知倾向: 好奇 {bar_surprise} 观望 [{norm_surprise:.2f}]\n"
+                f"• 表达倾向: 简洁 {bar_anger} 详尽 [{norm_anger:.2f}]\n"
+                f"• 情绪倾向: 活泼 {bar_disgust} 严肃 [{norm_disgust:.2f}]\n"
                 f"</soul_state>"
             )
             system_context_parts.append(soul_state_content)

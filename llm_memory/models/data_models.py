@@ -77,7 +77,7 @@ class BaseMemory:
         is_active: bool = False,
         created_at: float = None,
         is_consolidated: bool = None,  # 废弃字段，仅保留兼容性
-        state_snapshot: dict = None,   # 灵魂状态快照
+        soul_state: dict = None,       # 生成该记忆时的四情绪读数
         memory_scope: str = "public",  # 记忆分类域，默认公共
         useful_count: int = 0,
         useful_score: float = 0.0,
@@ -91,7 +91,7 @@ class BaseMemory:
         self.strength = strength
         self.is_active = is_active  # True=主动记忆(不衰减), False=被动记忆(会衰减)
         self.created_at = created_at or time.time()  # 自动记录创建时间
-        self.state_snapshot = state_snapshot or {} # 记录生成该记忆时的灵魂状态
+        self.soul_state = soul_state or {}  # 生成该记忆时的四情绪读数
         self.memory_scope = memory_scope or "public"
         self.useful_count = int(useful_count or 0)
         self.useful_score = float(useful_score or 0.0)
@@ -120,7 +120,7 @@ class BaseMemory:
             "useful_count": self.useful_count,
             "useful_score": self.useful_score,
             "last_recalled_at": self.last_recalled_at,
-            "state_snapshot": json.dumps(self.state_snapshot) if self.state_snapshot else "{}",
+            "soul_state": json.dumps(self.soul_state) if self.soul_state else "{}",
             "memory_scope": self.memory_scope,
         }
 
@@ -189,7 +189,7 @@ class BaseMemory:
                 strength=data.get("strength", 1),
                 is_active=data.get("is_active", False),
                 created_at=data.get("created_at", time.time()),
-                state_snapshot=cls._parse_json_dict(data.get("state_snapshot", {})),
+                soul_state=cls._parse_json_dict(data.get("soul_state", {})),
                 memory_scope=data.get("memory_scope", "public"),
                 useful_count=data.get("useful_count", 0),
                 useful_score=data.get("useful_score", 0.0),

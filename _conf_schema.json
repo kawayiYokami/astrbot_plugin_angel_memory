@@ -158,37 +158,13 @@
   "enable_soul_system": {
     "type": "object",
     "description": "[灵魂系统] 灵魂状态系统配置",
-    "hint": "启用后会根据AI的精神状态动态调整行为参数（检索量、记忆量、发言长度、创造性）。关闭则使用固定参数，不会在上下文中注入灵魂仪表盘。",
+    "hint": "启用后会按对话中产生的情绪动态调整 AI 的回应风格（内向外向、观望好奇、简洁详尽、严肃活泼）。关闭则使用中性风格，不会在上下文中注入灵魂仪表盘。",
     "items": {
       "enabled": {
         "type": "bool",
         "description": "启用灵魂系统",
         "default": true,
         "hint": "是否启用灵魂状态系统"
-      },
-      "recall_depth_mid": {
-        "type": "int",
-        "description": "社交倾向-回归值 (建议检索记忆数)",
-        "default": 7,
-        "hint": "决定内向|外向人格的基准值，影响检索记忆的数量。范围：3-20（系统自动限制）"
-      },
-      "impression_depth_mid": {
-        "type": "int",
-        "description": "对话姿态-回归值 (建议生成记忆数)",
-        "default": 3,
-        "hint": "决定指导|好奇人格的基准值，影响生成新记忆的数量。范围：1-10（系统自动限制）"
-      },
-      "expression_desire_mid": {
-        "type": "float",
-        "description": "健谈程度-回归值 (归一化)",
-        "default": 0.5,
-        "hint": "决定话少|话多人格的基准值，影响发言长度。范围：0.0-1.0（系统自动限制）"
-      },
-      "creativity_mid": {
-        "type": "float",
-        "description": "创造性-回归值 (归一化)",
-        "default": 0.7,
-        "hint": "决定严肃|调皮人格的基准值，影响LLM温度参数。范围：0.0-1.0（系统自动限制）"
       }
     }
   },

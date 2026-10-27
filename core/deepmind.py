@@ -270,14 +270,6 @@ class DeepMind:
 
 
 
-    def _normalize_soul_value(self, dimension: str, value: float) -> float:
-        """将灵魂状态的物理值归一化到 [0, 1] 区间"""
-        return self.injection_service.normalize_soul_value(dimension, value)
-
-    def _create_tendency_bar(self, normalized_value: float) -> str:
-        """创建一个10格的文本进度条"""
-        return self.injection_service.create_tendency_bar(normalized_value)
-
     async def _inject_memories_to_request(
         self,
         request: ProviderRequest,
@@ -412,18 +404,13 @@ class DeepMind:
                     f"注入上限K={self.note_inject_top_k}"
                 )
 
-        # 7. 获取灵魂状态值
+        # 7. 获取灵魂状态倾向
         soul_state_values = None
         if hasattr(self, "soul") and self.soul:
             try:
-                soul_state_values = {
-                    "RecallDepth": self.soul.get_value("RecallDepth"),
-                    "ImpressionDepth": self.soul.get_value("ImpressionDepth"),
-                    "ExpressionDesire": self.soul.get_value("ExpressionDesire"),
-                    "Creativity": self.soul.get_value("Creativity")
-                }
+                soul_state_values = self.soul.get_scores()
             except Exception as e:
-                self.logger.warning(f"获取灵魂状态值失败: {e}")
+                self.logger.warning(f"获取灵魂状态倾向失败: {e}")
 
         # 8. 刷新当前批次用户画像通道
         try:
@@ -1266,19 +1253,15 @@ class DeepMind:
             feedback_data = full_json_data.get("feedback_data", {})
 
             # --- 灵魂状态更新 (Feedback Loop) ---
-            if hasattr(self, "soul") and self.soul and "soul_state_code" in full_json_data:
-                state_code = full_json_data.get("soul_state_code", "0000")
-                if len(state_code) == 4:
-                    try:
-                        # 使用新的原子化接口（4位代码一次性调整）
-                        # 代码位对应: RecallDepth, ImpressionDepth, ExpressionDesire, Creativity
-                        # 0000 颓废: 话少(Expression-), 死板(Creativity-), 不查历史(Recall-), 拒绝新知(Impression-)
-                        # 1111 觉醒: 话多(Expression+), 飞升(Creativity+), 查阅历史(Recall+), 吸收新知(Impression+)
-
-                        self.soul.adjust(state_code, mode="reflect")
-                        self.logger.debug(f"灵魂反思 ({state_code}): {self.soul.get_state_description()}")
-                    except ValueError:
-                        self.logger.warning(f"无效的灵魂状态代码: {state_code}")
+            if hasattr(self, "soul") and self.soul and "soul_state" in full_json_data:
+                soul_scores = full_json_data.get("soul_state") or {}
+                if isinstance(soul_scores, dict) and soul_scores:
+                    self.soul.reflect(soul_scores)
+                    self.logger.debug(
+                        f"灵魂反思: {self.soul.get_state_description()}"
+                    )
+                else:
+                    self.logger.warning("反思结果里的 soul_state 不是有效字典，跳过情绪更新")
 
             # ID解析：使用映射表将LLM返回的短ID翻译回长ID
             memory_id_mapping = context_data.get("memory_id_mapping", {})
@@ -1319,23 +1302,17 @@ class DeepMind:
                     for memory_id in source_memory_ids
                 ]
 
-            # --- 记忆生成限制 (基于灵魂 ImpressionDepth) ---
+            # --- 记忆写入：附上生成这条记忆时的情绪读数 ---
             if hasattr(self, "soul") and self.soul and memory_actions_normalized:
-                # 获取允许生成的最大数量
-                impression_limit = int(self.soul.get_value("ImpressionDepth"))
-                original_count = len(memory_actions_normalized)
-
-                # 截断列表
-                if original_count > impression_limit:
-                    memory_actions_normalized = memory_actions_normalized[:impression_limit]
-                    self.logger.debug(f"记忆截断: 灵魂仅允许记录 {impression_limit} 条 (原 {original_count} 条)")
-
-                # 为每条新记忆注入当前的灵魂快照
-                snapshot = self.soul.get_snapshot()
+                soul_scores = self.soul.get_scores()
                 for action in memory_actions_normalized:
-                    memory = action.get("memory")
-                    if isinstance(memory, dict):
-                        memory["state_snapshot"] = snapshot
+                    if not isinstance(action, dict):
+                        continue
+                    metadata = action.get("metadata")
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                        action["metadata"] = metadata
+                    metadata["soul_state"] = dict(soul_scores)
 
             # --- 修正结束 ---
 

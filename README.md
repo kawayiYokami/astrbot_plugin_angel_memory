@@ -193,18 +193,18 @@ angel_note_create(
 
 ## 灵魂状态
 
-四维，决定这一刻像什么样：
+四对情绪，每一对都是一条 0 到 1 的刻度，0.5 是平常心：
 
-| 维度 | 影响 |
-|------|------|
-| 回忆深度 | 这次能想起多少 |
-| 印象深度 | 这次愿意新记多少 |
-| 表达欲望 | 话多还是话少 |
-| 创造力 | 正经还是跳脱 |
+| 情绪对 | 偏向前面 | 偏向后面 |
+|--------|---------|---------|
+| 喜 / 悲 | 想亲近，话多起来 | 有点低落，收着说 |
+| 怒 / 恐 | 被冒犯了，说得很细 | 有些不安，说得简短 |
+| 意料中 / 意外 | 一切照旧，按经验来 | 不按常理，想追问 |
+| 厌恶 / 认可 | 排斥，语气严肃 | 认可，语气活泼 |
 
-默认值在 `enable_soul_system` 里调，比如 `recall_depth_mid`、`creativity_mid`。想起旧事时，当时的心情会轻轻带一下现在。
+对话里产生什么情绪，此后几轮的回答就会带一点那个味道。想起旧事时，当时记下这份记忆的心情也会轻轻牵一下现在；记得越牢的事，牵引越明显。
 
-状态只存在内存里，重载插件会回到默认。
+状态只存在内存里，重载插件会回到平常心。想在配置里关掉，就用 `enable_soul_system`。
 
 ## 睡眠整理
 
@@ -246,7 +246,7 @@ ruff format .
 测试在 AstrBot 容器内执行：
 
 ```bash
-docker exec astrbot bash -lc 'cd /AstrBot/data/plugins/astrbot_plugin_angel_memory && python -m pytest -q'
+docker exec astrbot bash -lc 'cd /AstrBot/data/plugins/astrbot_plugin_angel_memory && PYTHONPATH=/AstrBot/data/plugins:/AstrBot/data/plugins/astrbot_plugin_angel_memory python -m pytest -q'
 ```
 
 必须用 `python -m pytest`，不要直接跑 `pytest`。

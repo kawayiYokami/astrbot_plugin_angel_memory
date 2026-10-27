@@ -14,10 +14,10 @@ ruff format .
 测试必须在 AstrBot 容器内执行，宿主机不代表运行环境：
 
 ```bash
-docker exec astrbot bash -lc 'cd /AstrBot/data/plugins/astrbot_plugin_angel_memory && python -m pytest -q'
+docker exec astrbot bash -lc 'cd /AstrBot/data/plugins/astrbot_plugin_angel_memory && PYTHONPATH=/AstrBot/data/plugins:/AstrBot/data/plugins/astrbot_plugin_angel_memory python -m pytest -q'
 ```
 
-必须用 `python -m pytest`，不要直接跑 `pytest`。可执行脚本不会把当前目录加入 `sys.path`，会让 `llm_memory` 导入失败。
+必须用 `python -m pytest`，不要直接跑 `pytest`。可执行脚本不会把当前目录加入 `sys.path`。另外 `tests/` 内混用扁平导入与包导入两种写法，所以要同时把插件目录与 `plugins` 目录加进 `PYTHONPATH`。
 
 WebUI 源码在 `webui/`，改页面后需重新构建，产物落到 `pages/memory-dashboard/`。
 
@@ -25,7 +25,7 @@ WebUI 源码在 `webui/`，改页面后需重新构建，产物落到 `pages/mem
 
 三层认知：
 
-- **灵魂层**（[`SoulState`](core/soul/soul_state.py)）：4 维能量槽，映射检索量、记忆生成量、发言长度、温度。
+- **灵魂层**（[`SoulState`](core/soul/soul_state.py)）：四对互斥情绪轴（喜/悲、怒/恐、意料中/意外、厌恶/认可），注入时换算成社交、认知、表达、情绪四种倾向。
 - **潜意识层**（[`DeepMind`](core/deepmind.py)）：观察 → 回忆 → 注入 → 反馈 → 睡眠。
 - **主意识层**（LLM）：通过 4 个工具主动铭记、回忆、读笔记、写笔记。
 
@@ -196,7 +196,7 @@ Web 页面在 `webui/src/router/index.ts`：总览、记忆浏览、用户画像
 
 ## 灵魂参数
 
-四维：`RecallDepth`、`ImpressionDepth`、`ExpressionDesire`、`Creativity`。各有 min / mid / max，Tanh 橡皮筋映射。状态只在内存，重载插件后回到中庸。
+四对情绪轴：`joy`（喜/悲）、`anger`（怒/恐）、`surprise`（意料中/意外）、`disgust`（厌恶/认可），取值 0.0 ~ 1.0，0.5 为中性。注入上下文时直接使用这份读数，面板标签决定两端含义；橡皮筋保持惯性。状态只在内存，重载插件后回到中性。检索条数与记忆生成条数是工程参数，走固定配置，不受情绪驱动。
 
 ## 故障排查
 

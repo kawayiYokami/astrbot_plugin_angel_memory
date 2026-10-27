@@ -57,14 +57,6 @@ class DeepMindRetrievalService:
                 entities = rag_fields.get("entities", [])
 
                 dynamic_limit = deepmind.CHAINED_RECALL_PER_TYPE_LIMIT
-                if deepmind.soul:
-                    try:
-                        dynamic_limit = deepmind.soul.get_value("RecallDepth")
-                        deepmind.logger.debug(
-                            f"灵魂回忆深度: {dynamic_limit} (E={deepmind.soul.energy['RecallDepth']:.1f})"
-                        )
-                    except Exception as e:
-                        deepmind.logger.warning(f"获取灵魂参数失败，使用默认值: {e}")
 
                 long_term_memories = await deepmind.memory_system.chained_recall(
                     query=memory_query,
@@ -77,13 +69,16 @@ class DeepMindRetrievalService:
                 )
 
                 if deepmind.soul and not readonly:
-                    snapshots = [
-                        mem.state_snapshot
-                        for mem in long_term_memories
-                        if hasattr(mem, "state_snapshot") and mem.state_snapshot
-                    ]
-                    if snapshots:
-                        deepmind.soul.resonate(snapshots)
+                    entries = []
+                    for mem in long_term_memories:
+                        scores = getattr(mem, "soul_state", None)
+                        if not isinstance(scores, dict) or not scores:
+                            continue
+                        entries.append(
+                            {"scores": scores, "strength": getattr(mem, "strength", 1)}
+                        )
+                    if entries:
+                        deepmind.soul.resonate(entries)
 
             except Exception as e:
                 deepmind.logger.error(f"链式召回失败，跳过记忆检索: {e}", exc_info=True)

@@ -30,7 +30,12 @@
 
 ```text
 {
-  "soul_state_code": "0110",
+  "soul_state": {
+    "joy": 0.75,
+    "anger": 0.58,
+    "surprise": 0.42,
+    "disgust": 0.85
+  },
   "feedback_data": {
     "useful_memory_ids": ["m0", "m2"],
     "memory_actions": [
@@ -44,9 +49,27 @@
 
 ### 字段说明
 
-- `soul_state_code`：4 位二进制字符串（`0000` ~ `1111`），表示本轮对话最适合的回应精神状态，默认推荐 `0110`。
+- `soul_state`：本轮对话中 AI 应当抱有的情绪，四项独立打分，取值 `0.0` ~ `1.0`，详见下文「情绪打分」。
 - `useful_memory_ids`：仅填入本轮对话中被实际用到且确实有帮助的旧记忆 ID；未使用或无帮助的不要填。
 - `memory_actions`：必须是数组，每个元素都必须包含 `action` 和 `memory`；`action` 只支持三种：**`create`、`merge`、`updata`**（详见下文「动作语义」）。
+
+### 情绪打分（`soul_state`）
+
+四项各自回答一个问题，互不影响，可以四项都写 0.5。每项两端互斥，数值表示偏向分值大那一端的程度。
+
+| 字段 | 1.0 这一端 | 0.0 这一端 | 读什么 |
+|---|---|---|---|
+| `joy` | 喜欢 | 哀伤 | 这段对话让你想亲近，还是让你低落 |
+| `anger` | 生气 | 害怕 | 你被冒犯到了，还是你有些不安 |
+| `surprise` | 出乎意料 | 意料之中 | 事情是否偏离了你的预判，还是一如你所料 |
+| `disgust` | 厌恶 | 认可 | 你排斥眼前这件事，还是认可它 |
+
+打分要求：
+
+- 只衡量**这一轮对话本身**给你带来的情绪，不要写你对这个人的长期看法。
+- `surprise` 量的是「是否出乎意料」，不是「情绪强不强」。平静但反常的事照样可以接近 1.0；而一件完全在你意料之中的事，即便你很喜欢，也该接近 0.0。
+- 不要为了显得有情绪而故意偏向两端。对话平常就给 0.5，四项都是 0.5 完全合法。
+- 只写数值，不要写理由、标签或任何解释。
 
 ### 动作语义（非常重要）
 
@@ -306,7 +329,12 @@
 
 ```json
 {
-  "soul_state_code": "0110",
+  "soul_state": {
+    "joy": 0.62,
+    "anger": 0.45,
+    "surprise": 0.70,
+    "disgust": 0.35
+  },
   "feedback_data": {
     "useful_memory_ids": ["m0", "m2"],
     "memory_actions": [
@@ -357,12 +385,13 @@
 
 ## 六、生成流程与最终自检
 
-1. 先确定 `soul_state_code`。
+1. 先给 `soul_state` 四项打分。
 2. 从旧记忆中挑出真正有帮助的 `useful_memory_ids`。
 3. 判断每条新信息应该是 `create`、`merge` 还是 `updata`。
 4. 生成 `memory_actions`。
 5. 最终自检：
    - JSON 是否合法（字符串内部没有未转义的英文双引号，引用内容用「」）
+   - `soul_state` 四项是否都是 0.0 ~ 1.0 之间的数值
    - `memory_actions` 是否只使用 `create` / `merge` / `updata`
    - `create` 是否没有 `source_memory_ids`
    - `merge` / `updata` 是否同时包含 `source_memory_ids` 和 `memory`

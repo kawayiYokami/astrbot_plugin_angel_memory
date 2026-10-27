@@ -51,7 +51,7 @@ def to_base_memory(record: dict) -> BaseMemory:
         strength=int(state.get("strength", 1)),
         is_active=bool(state.get("pinned", False)),
         created_at=to_seconds(record.get("created_at_us")),
-        state_snapshot=dict(metadata.get("state_snapshot") or {}),
+        soul_state=dict(metadata.get("soul_state") or {}),
         memory_scope=str(record.get("scope") or "public"),
         useful_count=int(state.get("useful_count", 0)),
         useful_score=float(state.get("useful_score", 0.0)),
@@ -215,7 +215,7 @@ class PMemoryMemoryRuntime(MemoryRuntime):
             record = self._store.get(target, scope)
             if record is None:
                 return None
-            metadata.setdefault("state_snapshot", (record.get("metadata") or {}).get("state_snapshot") or {})
+            metadata.setdefault("soul_state", (record.get("metadata") or {}).get("soul_state") or {})
             updated = self._store.update(
                 int(target),
                 judgment=judgment,
