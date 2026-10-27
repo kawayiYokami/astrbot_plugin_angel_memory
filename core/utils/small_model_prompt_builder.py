@@ -116,31 +116,6 @@ class SmallModelPromptBuilder:
         return "\n".join(formatted_lines), user_list
 
     @staticmethod
-    def format_note_query(chat_records: List[Dict]) -> str:
-        """
-        格式化笔记查询文本，仅提取is_processed=false的最新对话记录内容。
-
-        Args:
-            chat_records: 对话记录列表
-
-        Returns:
-            格式化后的查询文本字符串（纯文本内容拼接）
-        """
-        # 过滤出未处理的记录
-        unprocessed_records = [
-            msg for msg in chat_records if not msg.get("is_processed", True)
-        ]
-
-        # 如果没有未处理的记录，返回空字符串
-        if not unprocessed_records:
-            return ""
-
-        # 提取最新的未处理记录内容
-        return SmallModelPromptBuilder.extract_text_from_content(
-            unprocessed_records[-1].get("content", [])
-        ).strip()
-
-    @staticmethod
     def build_memory_prompt(
         formatted_query: str,
         memories: List[MemoryItem],

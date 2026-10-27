@@ -321,9 +321,11 @@ class DeepMind:
 
         session_id = self._get_session_id(event)
 
-        # 1. 从 event.angelheart_context 中获取对话历史（仅保留未处理消息）
+        # 1. 从 event.angelheart_context 中获取对话历史
+        # 天使之心送来的是「截到秘书判断点为止」的完整快照，里面没有已处理/未处理的分界，
+        # 整份记录就是本轮该看的对话，因此不再按 is_processed 过滤。
         chat_records: List[Dict[str, Any]] = []
-        unprocessed_chat_records: List[Dict[str, Any]] = []
+        context_chat_records: List[Dict[str, Any]] = []
         secretary_decision = {}
         if hasattr(event, "angelheart_context"):
             try:
@@ -331,10 +333,8 @@ class DeepMind:
                 chat_records = angelheart_data.get("chat_records", []) or []
                 if not isinstance(chat_records, list):
                     chat_records = []
-                unprocessed_chat_records = [
-                    msg
-                    for msg in chat_records
-                    if isinstance(msg, dict) and msg.get("is_processed", True) is False
+                context_chat_records = [
+                    msg for msg in chat_records if isinstance(msg, dict)
                 ]
                 secretary_decision = angelheart_data.get("secretary_decision", {}) or {}
             except (json.JSONDecodeError, KeyError, TypeError):
@@ -365,11 +365,11 @@ class DeepMind:
             query = " ".join(query_parts)
         else:
             # 降级到原始逻辑
-            if not unprocessed_chat_records:
+            if not context_chat_records:
                 message_text = self._extract_message_text(event)
                 query = message_text if message_text else ""
             else:
-                query, user_list = self.prompt_builder.format_chat_records(unprocessed_chat_records)
+                query, user_list = self.prompt_builder.format_chat_records(context_chat_records)
 
         # 3. 如果未配置 provider_id，跳过记忆整理
         if not self.provider_id:
@@ -456,7 +456,7 @@ class DeepMind:
             memory_scope = await self.plugin_context.resolve_memory_scope_from_event(event)
             await self.user_profile_service.refresh_session_profiles(
                 session_id=session_id,
-                chat_records=unprocessed_chat_records,
+                chat_records=context_chat_records,
                 fallback_sender_id=str(getattr(event, "sender_id", "") or ""),
                 fallback_sender_name=str(getattr(event, "sender_name", "") or ""),
                 memory_scope=memory_scope,
@@ -465,7 +465,7 @@ class DeepMind:
             elapsed_ms = int((time.time() - profile_refresh_started_at) * 1000)
             self.logger.warning(
                 f"[用户画像] 失败 任务=刷新当前批次画像 触发条件=对话注入前 "
-                f"session={session_id} 当前批次消息数={len(unprocessed_chat_records)} "
+                f"session={session_id} 当前批次消息数={len(context_chat_records)} "
                 f"耗时毫秒={elapsed_ms} 错误={e}",
                 exc_info=True,
             )
@@ -495,7 +495,7 @@ class DeepMind:
                 "recall_time": time.time(),
                 "session_id": session_id,
                 "user_list": user_list,
-                "raw_chat_records": unprocessed_chat_records,
+                "raw_chat_records": context_chat_records,
                 "raw_memories": [memory.to_dict() for memory in long_term_memories],
                 "raw_notes": candidate_notes,
                 "core_topic": core_topic,
@@ -803,7 +803,7 @@ class DeepMind:
         """
         生成“本轮新增”的反思聊天记录。
         分支：
-        - AngelHeart：取已处理历史 + 最新一条未处理用户消息。
+        - AngelHeart：直接使用整份 chat_records（快照本身就是本轮上下文，不存在已处理分界）。
         - 原生：仅当前轮 用户 -> 助理。
         """
         now_ts = time.time()
@@ -819,31 +819,17 @@ class DeepMind:
                 angelheart_data = json.loads(event.angelheart_context)
                 chat_records = angelheart_data.get("chat_records", []) or []
                 if isinstance(chat_records, list) and chat_records:
-                    processed = [
-                        msg
-                        for msg in chat_records
-                        if isinstance(msg, dict) and bool(msg.get("is_processed", False))
+                    records = [
+                        msg for msg in chat_records if isinstance(msg, dict)
                     ]
-                    latest_user_unprocessed = None
-                    for msg in reversed(chat_records):
-                        if (
-                            isinstance(msg, dict)
-                            and str(msg.get("role", "")).strip() == "user"
-                            and msg.get("is_processed", True) is False
-                        ):
-                            latest_user_unprocessed = msg
-                            break
-                    combined = list(processed)
-                    if latest_user_unprocessed is not None:
-                        combined.append(latest_user_unprocessed)
                     self.logger.debug(
-                        f"[反思调度] 使用天使之心聊天记录: processed={len(processed)} "
-                        f"+ latest_unprocessed_user={1 if latest_user_unprocessed else 0}"
+                        f"[反思调度] 使用天使之心聊天记录: 整份快照 {len(records)} 条"
                     )
                     return self._dedupe_and_sort_chat_records(
-                        combined,
+                        records,
                         source="天使之心聊天记录",
                     )
+                self.logger.debug("[反思调度] 天使之心未提供聊天记录，降级到原生分支")
             except (json.JSONDecodeError, TypeError, KeyError) as e:
                 self.logger.warning(f"反思聊天记录解析失败，降级到原生分支: {e}")
 
@@ -859,7 +845,6 @@ class DeepMind:
                     "sender_id": sender_id,
                     "sender_name": sender_name,
                     "timestamp": float(now_ts),
-                    "is_processed": False,
                     "is_structured_toolcall": False,
                 }
             )
@@ -871,7 +856,6 @@ class DeepMind:
                     "sender_id": "assistant",
                     "sender_name": "助理",
                     "timestamp": float(now_ts + 0.001),
-                    "is_processed": False,
                     "is_structured_toolcall": False,
                 }
             )
@@ -951,6 +935,15 @@ class DeepMind:
             memory_context=memory_context,
         )
 
+    # 摘要与系统消息是压缩产物，不是对话原文，不能作为反思素材
+    NON_REFLECTION_KINDS = frozenset(
+        {"context_summary", "summary_context", "context_compaction"}
+    )
+
+    def _is_non_reflection_message(self, role: str, kind: str) -> bool:
+        """判断是否为不应进入反思的消息。"""
+        return role == "system" or kind in self.NON_REFLECTION_KINDS
+
     def _dedupe_and_sort_chat_records(
         self,
         records: List[Dict[str, Any]],
@@ -958,15 +951,20 @@ class DeepMind:
     ) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = []
         seen = set()
+        skipped_non_reflection = 0
         for msg in records or []:
             if not isinstance(msg, dict):
                 continue
             role = str(msg.get("role", "") or "").strip()
+            kind = str(msg.get("kind", "") or "").strip()
             content = msg.get("content", "")
             sender_id = str(msg.get("sender_id", "") or "").strip()
             sender_name = str(msg.get("sender_name", "") or "").strip()
             timestamp = float(msg.get("timestamp", 0.0) or 0.0)
             if not role:
+                continue
+            if self._is_non_reflection_message(role, kind):
+                skipped_non_reflection += 1
                 continue
             if role == "user" and self._is_missing_user_identity(sender_id, sender_name):
                 self._log_missing_user_identity(
@@ -976,8 +974,13 @@ class DeepMind:
                     content,
                 )
                 continue
-            # 去重键：角色+发送者+时间戳+内容
-            dedupe_key = (role, sender_id, round(timestamp, 6), str(content))
+            # 去重键优先用上游消息 ID：同一条消息在多份快照里内容与时间可能被改写，
+            # 只有 source_message_id 稳定；缺失时回退到角色+发送者+时间戳+内容。
+            source_message_id = str(msg.get("source_message_id", "") or "").strip()
+            if source_message_id:
+                dedupe_key = ("id", source_message_id)
+            else:
+                dedupe_key = ("fp", role, sender_id, round(timestamp, 6), str(content))
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
@@ -988,10 +991,14 @@ class DeepMind:
                     "sender_id": sender_id,
                     "sender_name": sender_name,
                     "timestamp": timestamp,
-                    "is_processed": bool(msg.get("is_processed", False)),
+                    "source_message_id": source_message_id,
                     "is_structured_toolcall": bool(msg.get("is_structured_toolcall", False)),
                     "tool_call_id": msg.get("tool_call_id"),
                 }
+            )
+        if skipped_non_reflection:
+            self.logger.debug(
+                f"[反思调度] 跳过摘要/系统消息 {skipped_non_reflection} 条 source={source}"
             )
         normalized.sort(key=lambda x: float(x.get("timestamp", 0.0) or 0.0))
         return normalized
