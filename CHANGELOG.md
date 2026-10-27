@@ -2,6 +2,12 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [2.0.2] - 2026-10-27
+
+### Fixed
+- `fix(reflection)`: 天使之心送来的快照若全是摘要、系统消息或身份缺失的消息，过滤后为空时不会降级到原生分支，本轮反思被静默跳过，待反思轮次也不再累加。现在过滤结果为空即降级，并在日志中说明原始条数。
+- `chore(log)`: 本轮彻底无消息入池时改为 WARNING 并写明原因，不再是一条看不出问题来源的 DEBUG。
+
 ## [2.0.1] - 2026-10-27
 
 ### Fixed

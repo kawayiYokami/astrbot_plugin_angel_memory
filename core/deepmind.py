@@ -822,14 +822,26 @@ class DeepMind:
                     records = [
                         msg for msg in chat_records if isinstance(msg, dict)
                     ]
-                    self.logger.debug(
-                        f"[反思调度] 使用天使之心聊天记录: 整份快照 {len(records)} 条"
-                    )
-                    return self._dedupe_and_sort_chat_records(
+                    normalized = self._dedupe_and_sort_chat_records(
                         records,
                         source="天使之心聊天记录",
                     )
-                self.logger.debug("[反思调度] 天使之心未提供聊天记录，降级到原生分支")
+                    # 快照里可能全是摘要、系统消息或身份缺失的消息，过滤后为空时
+                    # 必须继续走原生分支，否则本轮反思会被静默跳过。
+                    if normalized:
+                        self.logger.debug(
+                            f"[反思调度] 使用天使之心聊天记录: 整份快照 {len(records)} 条"
+                            f" 可用 {len(normalized)} 条"
+                        )
+                        return normalized
+                    self.logger.warning(
+                        f"[反思调度] 天使之心聊天记录过滤后为空，降级到原生分支 "
+                        f"原始条数={len(records)}"
+                    )
+                else:
+                    self.logger.debug(
+                        "[反思调度] 天使之心未提供聊天记录，降级到原生分支"
+                    )
             except (json.JSONDecodeError, TypeError, KeyError) as e:
                 self.logger.warning(f"反思聊天记录解析失败，降级到原生分支: {e}")
 
@@ -1007,7 +1019,10 @@ class DeepMind:
         reflection_input = await self._build_reflection_input(event, response, session_id)
         turn_records = list(reflection_input.chat_records)
         if not turn_records:
-            self.logger.debug(f"[反思调度] 本轮无消息入池 session={session_id}")
+            self.logger.warning(
+                f"[反思调度] 本轮无消息入池 会话={session_id} "
+                f"原因=天使之心与原生分支均未产出可用记录"
+            )
             return
         now = time.time()
 

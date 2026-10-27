@@ -245,3 +245,68 @@ def test_dedupe_falls_back_to_fingerprint_without_id():
     )
 
     assert len(records) == 1
+
+
+class _AngelHeartNativeEvent:
+    """同时带天使之心上下文与原生事件取数能力的消息事件。"""
+
+    unified_msg_origin = "aiocqhttp:group:100"
+
+    def __init__(self, chat_records, text: str):
+        self.angelheart_context = json.dumps(
+            {"chat_records": chat_records, "secretary_decision": {}},
+            ensure_ascii=False,
+        )
+        self._text = text
+
+    def get_sender_id(self) -> str:
+        return "123456"
+
+    def get_sender_name(self) -> str:
+        return "小明"
+
+    def get_message_outline(self) -> str:
+        return self._text
+
+
+def test_angelheart_snapshot_all_filtered_falls_back_to_native(caplog):
+    """快照里全是摘要与系统消息时，必须降级到原生分支，而不是静默跳过。"""
+    harness = _ReflectionHarness()
+    event = _AngelHeartNativeEvent(
+        [
+            {"role": "system", "content": "系统提示", "sender_id": "system",
+             "sender_name": "system", "timestamp": 0.5, "source_message_id": "s1"},
+            {"role": "user", "content": "[当前摘要]\n旧事", "sender_id": "system",
+             "sender_name": "context_summary", "kind": "context_summary",
+             "timestamp": 1.0, "source_message_id": "s2"},
+        ],
+        text="本轮真实发言",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="reflection-identity-test"):
+        records = harness._build_reflection_records_for_turn(
+            event, SimpleNamespace(completion_text="本轮回复")
+        )
+
+    assert [record["content"] for record in records] == ["本轮真实发言", "本轮回复"]
+    assert "过滤后为空，降级到原生分支" in caplog.text
+
+
+def test_angelheart_snapshot_partially_usable_keeps_snapshot():
+    """只要快照里还有可用记录，就用快照，不降级。"""
+    harness = _ReflectionHarness()
+    event = _AngelHeartNativeEvent(
+        [
+            {"role": "system", "content": "系统提示", "sender_id": "system",
+             "sender_name": "system", "timestamp": 0.5, "source_message_id": "s1"},
+            {"role": "user", "content": "历史发言", "sender_id": "1",
+             "sender_name": "甲", "timestamp": 2.0, "source_message_id": "m1"},
+        ],
+        text="本轮真实发言",
+    )
+
+    records = harness._build_reflection_records_for_turn(
+        event, SimpleNamespace(completion_text="本轮回复")
+    )
+
+    assert [record["content"] for record in records] == ["历史发言"]
