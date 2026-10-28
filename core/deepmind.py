@@ -31,12 +31,7 @@ from .reflection_trace import ReflectionTraceBuffer
 from .sleep_schedule import seconds_until_next_sleep, should_run_sleep, today_key
 from .trace_store import TraceStore
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 @dataclass

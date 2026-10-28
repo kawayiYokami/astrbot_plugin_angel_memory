@@ -6,12 +6,7 @@ Angel Eye 插件 - JSON 解析工具
 import json
 from typing import Dict, Optional, Any, List
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 def _strip_code_fences(text: str) -> str:

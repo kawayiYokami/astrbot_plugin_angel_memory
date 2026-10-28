@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -20,7 +19,7 @@ from p_memory.errors import NotFoundError, PMemoryError
 from .config import memory_namespace, read_scopes
 from .kb import pmemory
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 SECOND_US = 1_000_000
 

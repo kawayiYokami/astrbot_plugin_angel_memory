@@ -9,12 +9,7 @@ import re
 from pathlib import Path
 from typing import Optional, Dict
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 class PathManager:

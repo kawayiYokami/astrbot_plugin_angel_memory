@@ -3,11 +3,7 @@ from astrbot.api import FunctionTool
 from astrbot.api.event import AstrMessageEvent
 from dataclasses import dataclass, field
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 @dataclass

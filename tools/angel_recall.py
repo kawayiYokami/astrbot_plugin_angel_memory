@@ -12,11 +12,7 @@ from dataclasses import dataclass, field
 from ..llm_memory.models.data_models import BaseMemory
 from ..core.utils.memory_formatter import MemoryFormatter
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 @dataclass

@@ -12,11 +12,7 @@ from typing import Any, Dict, Optional, Set
 
 from quart import jsonify, request
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 from ..core.services.legacy_memory_migration import LegacyMemoryMigration
 

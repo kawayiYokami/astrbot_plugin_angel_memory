@@ -13,13 +13,12 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 from typing import Any, Dict, List, Optional, Sequence
 
 from p_memory.errors import EmbedCallbackError
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 _TOO_LARGE_HINTS = ("too large", "too long", "context length", "max tokens", "payload")
 _RATE_LIMIT_HINTS = ("rate limit", "rate_limit", "429", "too many requests")

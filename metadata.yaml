@@ -2,7 +2,7 @@ name: astrbot_plugin_angel_memory
 display_name: 天使之魂
 desc: "长期记忆与人格进化的AI陪伴：记住偏好、关系和约定，本地知识库问答，群聊私聊都能用，越用越懂你。"
 short_desc: "记住你、懂你的长期记忆"
-version: 2.0.3
+version: 2.0.4
 author: kawayiYokami
 repo: https://github.com/kawayiYokami/astrbot_plugin_angel_memory
 social_link: https://github.com/kawayiYokami

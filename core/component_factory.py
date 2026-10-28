@@ -11,12 +11,7 @@ ComponentFactory - 组件工厂
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager

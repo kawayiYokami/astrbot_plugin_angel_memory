@@ -13,12 +13,7 @@ import time
 import threading
 from contextlib import contextmanager
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 @contextmanager

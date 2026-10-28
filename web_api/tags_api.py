@@ -8,11 +8,7 @@ from typing import Any, Dict, List
 
 from quart import jsonify, request
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 def _to_seconds(value: Any) -> float:

@@ -7,12 +7,7 @@ PluginManager - 插件管理器
 from .initialization_manager import InitializationManager
 from .background_initializer import BackgroundInitializer
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 class PluginManager:

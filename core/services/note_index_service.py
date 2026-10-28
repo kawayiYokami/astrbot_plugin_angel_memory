@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 import time
 from pathlib import Path
@@ -17,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ...pmemory import DOMAIN_DIRS, NotesStore
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 SCAN_INTERVAL_SECONDS = 60
 

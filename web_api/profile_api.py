@@ -10,11 +10,7 @@ from typing import Any, Dict, List
 
 from quart import jsonify, request
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 from ..llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,

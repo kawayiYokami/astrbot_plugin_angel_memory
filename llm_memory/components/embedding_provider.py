@@ -17,13 +17,8 @@ import gc
 import sys
 from collections import OrderedDict
 
-# 尝试导入astrbot logger，如果失败则使用标准库logger
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging as logger_module
-
-    logger = logger_module.getLogger(__name__)
+# 统一使用 astrbot 提供的 logger
+from astrbot.api import logger
 
 
 class EmbeddingCache:

@@ -10,12 +10,7 @@ from threading import RLock, Event
 import time
 import asyncio
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 class InitializationState(Enum):

@@ -9,12 +9,7 @@ import asyncio
 from .initialization_manager import InitializationManager
 from .component_factory import ComponentFactory
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 class BackgroundInitializer:

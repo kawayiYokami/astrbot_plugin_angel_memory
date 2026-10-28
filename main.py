@@ -12,14 +12,8 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.star.star_tools import StarTools
 import asyncio
-import logging
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 # 导入核心模块
 from .core.plugin_manager import PluginManager
@@ -28,24 +22,6 @@ from .tools.angel_remember import CoreMemoryRememberTool
 from .tools.angel_recall import CoreMemoryRecallTool
 from .tools.angel_note_read import NoteRecallTool
 from .tools.angel_note_create import NoteCreateTool
-
-
-def configure_logging_behavior():
-    """统一日志行为，避免重复输出与第三方噪音日志。"""
-    try:
-        if isinstance(logger, logging.Logger):
-            logger.propagate = False
-    except Exception:
-        pass
-
-    noisy_logger_names = ["httpx", "httpcore", "urllib3"]
-    for logger_name in noisy_logger_names:
-        try:
-            third_party_logger = logging.getLogger(logger_name)
-            third_party_logger.setLevel(logging.WARNING)
-            third_party_logger.propagate = False
-        except Exception:
-            continue
 
 
 @register(
@@ -72,8 +48,6 @@ class AngelMemoryPlugin(Star):
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
-
-        configure_logging_behavior()
 
         # 使用 astrbot.api 的 logger
         self.logger = logger

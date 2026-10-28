@@ -9,12 +9,7 @@ from __future__ import annotations
 import threading  # 单例模式需要锁
 from typing import Any, Callable, Dict, Optional, Union
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 FeedbackTask = Union[Dict[str, Any], None]

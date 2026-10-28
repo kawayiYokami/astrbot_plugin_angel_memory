@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+from astrbot.api import logger as plugin_logger
 
 EXPORT_FILE = "legacy_memory_export.json"
 BACKUP_GLOB = "memory_backup_*.json"
@@ -41,7 +42,7 @@ class LegacyMemoryMigration:
         self._state_dir = Path(state_dir)
         self._export_file = self._state_dir / EXPORT_FILE
         self._backup_dir = Path(backup_dir) if backup_dir else None
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or plugin_logger
         self._lock = asyncio.Lock()
         self._task: Optional[asyncio.Task] = None
 

@@ -10,12 +10,7 @@ from pathlib import Path
 import re
 import json
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 from ..llm_memory.utils.path_manager import PathManager
 from ..llm_memory.components.embedding_provider import EmbeddingProvider

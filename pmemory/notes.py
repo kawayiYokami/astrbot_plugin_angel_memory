@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -17,7 +16,7 @@ from p_memory.errors import PMemoryError
 from .config import DOMAIN_DIRS, SCOPE_PUBLIC, knowledge_namespace
 from .kb import pmemory
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 SNIPPET_MAX_CHARS = 120
 DEFAULT_TITLE_LIMIT = 5

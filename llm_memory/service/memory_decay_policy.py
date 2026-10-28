@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict
-import logging
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 @dataclass(frozen=True)

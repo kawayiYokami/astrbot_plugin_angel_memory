@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 import threading
 from pathlib import Path
@@ -26,7 +25,7 @@ from .config import (
 )
 from .providers import EmbeddingBridge, RerankBridge, running_loop
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 SPACE_ENCODING = "sq8"
 SCOPES_FILE = "scopes.json"
