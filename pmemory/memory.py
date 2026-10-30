@@ -56,6 +56,10 @@ def to_seconds(microseconds: object) -> float:
 class MemoryStore:
     """记忆读写。所有方法都是同步的，调用方自行决定是否放到线程里跑。"""
 
+    # 重排分口径：只保留不低于最高分一半的命中，最多返回这么多条
+    RERANK_SCORE_RATIO = 0.5
+    MAX_RESULTS = 10
+
     def __init__(self, store=None) -> None:
         self._store = store or pmemory
 
@@ -248,8 +252,16 @@ class MemoryStore:
         limit: int = 10,
         memory_type: Optional[str] = None,
         candicate_multiplier: int = 3,
+        score_ratio: Optional[float] = None,
+        max_results: Optional[int] = None,
     ) -> List[dict]:
-        """检索记忆。类型过滤在拿到结果后做，所以候选窗口按倍数放大。"""
+        """检索记忆。
+
+        类型过滤、分数过滤、条数截断都在拿到结果之后做，所以候选窗口按倍数放大。
+        `score_ratio` 给出时只保留不低于本批最高分该比例的命中：整批都有重排分就按
+        重排分比较，只要有命中缺重排分就统一退回库的融合分，两种尺子不混比。
+        `max_results` 是独立于 `limit` 的最终条数上限，不给就按 `limit` 截断。
+        """
         text = _text(query)
         if not text:
             return []
@@ -270,17 +282,36 @@ class MemoryStore:
         except PMemoryError:
             logger.exception("[PMEMORY] 记忆检索失败 scope=%s", scope)
             return []
-        hits = []
+
+        records: List[dict] = []
+        rerank_scores: List[Optional[float]] = []
+        fused_scores: List[float] = []
         for hit in result.get("hits") or []:
             record = hit.get("record") or {}
             if not record:
                 continue
             if memory_type and _text(record.get("memory_type")) != _text(memory_type):
                 continue
-            hits.append(record)
-            if len(hits) >= want:
-                break
-        return hits
+            rerank = hit.get("rerank_score")
+            records.append(record)
+            rerank_scores.append(float(rerank) if isinstance(rerank, (int, float)) else None)
+            fused_scores.append(float(hit.get("score") or 0.0))
+
+        if not records:
+            return []
+
+        if score_ratio is None:
+            kept = records
+        else:
+            if rerank_scores and all(score is not None for score in rerank_scores):
+                scores = [float(score) for score in rerank_scores]
+            else:
+                scores = fused_scores
+            threshold = max(scores) * float(score_ratio)
+            kept = [record for record, score in zip(records, scores) if score >= threshold]
+
+        cap = want if max_results is None else min(want, int(max_results))
+        return kept[:cap]
 
     def list_records(self, scope: Optional[str] = None, *, all_scopes: bool = False) -> List[dict]:
         """按 scope 翻页取全部记忆；`all_scopes=True` 时跨 scope 取。"""

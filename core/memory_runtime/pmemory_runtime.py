@@ -146,6 +146,8 @@ class PMemoryMemoryRuntime(MemoryRuntime):
             merged,
             memory_scope,
             limit=int(final_limit or per_type_limit or 7),
+            score_ratio=MemoryStore.RERANK_SCORE_RATIO,
+            max_results=MemoryStore.MAX_RESULTS,
         )
         return [to_base_memory(record) for record in records]
 
