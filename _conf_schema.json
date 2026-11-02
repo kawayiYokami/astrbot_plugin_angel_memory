@@ -23,12 +23,6 @@
         "default": "",
         "hint": "推荐使用，检索效果提升明显；不依赖嵌入模型，BM25 候选也可以直接重排。留空则自动尝试复用 provider_id，若不可用则降级为非重排策略。"
       },
-      "enable_local_embedding": {
-        "type": "bool",
-        "description": "启用本地嵌入模型支持",
-        "default": false,
-        "hint": "开启后将使用本地嵌入模型（BAAI/bge-small-zh-v1.5）。并非必须，实测整体提升有限。"
-      },
       "embedding_batch_size": {
         "type": "int",
         "description": "向量请求批次大小",
@@ -73,15 +67,6 @@
     "_special": "scope_map",
     "hint": "键在界面上从下拉里选，按「记忆分柜方式」只显示并编辑对应的那一类键：人格键是人名，群聊键是完整会话ID 平台ID:GroupMessage:群号。切换方式只改生效的一类，另一类键原样保留在表里。值为柜子名；未命中时默认 public。柜子名仅允许字母、数字、中文、下划线和短横线。"
   },
-  "group_domain_map": {
-    "type": "text",
-    "description": "[知识域绑定] 旧版群号到知识域的映射（等价于把该域设为自动）",
-    "default": "{}",
-    "editor_mode": true,
-    "editor_language": "json",
-    "editor_theme": "vs-dark",
-    "hint": "已由 group_knowledge_map 取代，保留仅为兼容旧配置。命中某域时该域按「自动」处理。"
-  },
   "group_knowledge_map": {
     "type": "text",
     "description": "[知识可见性] 群号到各知识库三态的表，auto=自动召回 / manual=只能手动搜 / hidden=完全不可见",
@@ -95,12 +80,6 @@
     "type": "object",
     "description": "[记忆行为参数] 记忆系统的行为配置",    "hint": "控制记忆处理的各种参数，影响记忆的生成、保存和巩固。",
     "items": {
-      "default_passive_strength": {
-        "type": "int",
-        "description": "被动记忆的初始强度值",
-        "default": 10,
-        "hint": "此数值影响被动记忆在遗忘过程中的存活能力，推荐范围10-50。主动记忆不受此影响。"
-      },
       "min_message_length": {
         "type": "int",
         "description": "触发记忆处理的最小消息字符数",
@@ -118,61 +97,6 @@
         "description": "空闲多少秒后补触发一次反思",
         "default": 600,
         "hint": "当有积压轮次、且距离最后一次对话超过这个秒数时触发，避免对话停下来后反思内容一直攒着。最小 1。"
-      },
-      "reflection_tick_seconds": {
-        "type": "int",
-        "description": "反思调度的检查间隔（秒）",
-        "default": 600,
-        "hint": "每隔这么久检查一次是否有积压对话需要反思。改小会让空闲补触发更及时。最小 10。"
-      },
-      "decay_policy_override": {
-        "type": "object",
-        "description": "【可选高级项】遗忘/巩固参数覆盖",
-        "hint": "默认参数经过复杂测试，能兼顾长期记忆积累与垃圾记忆清退。若没有相当信心，请不要修改。仅当 enabled=true 时生效。",
-        "items": {
-          "enabled": {
-            "type": "bool",
-            "description": "启用自定义遗忘策略参数",
-            "default": false,
-            "hint": "关闭时完全使用系统默认参数。"
-          },
-          "tier0_threshold": {
-            "type": "float",
-            "description": "T0->T1 升档阈值（useful_score）",
-            "default": 3.0,
-            "hint": "达到该分数后，记忆从自然遗忘档升到召回判定档。"
-          },
-          "tier1_threshold": {
-            "type": "float",
-            "description": "T1->T2 升档阈值（useful_score）",
-            "default": 10.0,
-            "hint": "达到该分数后进入长期保留档。建议不小于 tier0_threshold。"
-          },
-          "consolidate_speed": {
-            "type": "float",
-            "description": "每次被判定有用时 useful_score 增量",
-            "default": 2.5,
-            "hint": "值越大，记忆升档越快。建议范围 0.5-5.0，必须 > 0。"
-          },
-          "forget_speed": {
-            "type": "float",
-            "description": "全局遗忘速度倍率",
-            "default": 1.0,
-            "hint": "值越大，整体遗忘越快。建议范围 0.5-3.0。"
-          },
-          "tier0_forget_speed": {
-            "type": "float",
-            "description": "T0（自然遗忘档）遗忘速度倍率",
-            "default": 1.0,
-            "hint": "与 forget_speed 相乘后作用于 T0 自然衰减周期。"
-          },
-          "cycle_tier0_days": {
-            "type": "int",
-            "description": "T0 自然遗忘基础周期（天）",
-            "default": 3,
-            "hint": "实际周期会按 forget_speed 与 tier0_forget_speed 调整。"
-          }
-        }
       }
     }
   },

@@ -133,11 +133,6 @@ class MemoryConfig:
             "min_message_length",
             max_value=500,
         )
-        self._default_passive_strength = ConfigValidator.validate_positive_int(
-            memory_behavior.get("default_passive_strength") or config_get("default_passive_strength", 10),
-            "default_passive_strength",
-            max_value=100,
-        )
 
         self._data_directory = config_get("data_directory", self.data_dir)
         self._provider_id = config_get("provider_id", "")
@@ -203,22 +198,6 @@ class MemoryConfig:
         )
         self._note_candidate_top_k = self._note_top_k * 7
         self._note_inject_top_k = self._note_top_k
-        legacy_local_embedding = bool(config_get("enable_local_embedding", False))
-        new_local_embedding = bool(retrieval.get("enable_local_embedding", False))
-        new_embedding_id = str(retrieval.get("embedding_provider_id", "") or "").strip()
-        new_rerank_id = str(retrieval.get("rerank_provider_id", "") or "").strip()
-        if (
-            "enable_local_embedding" in retrieval
-            and not new_local_embedding
-            and not new_embedding_id
-            and not new_rerank_id
-            and legacy_local_embedding
-        ):
-            self._enable_local_embedding = legacy_local_embedding
-        else:
-            self._enable_local_embedding = (
-                new_local_embedding if "enable_local_embedding" in retrieval else legacy_local_embedding
-            )
         self._conversation_scope_map = config_get("conversation_scope_map", {}) or {}
 
         # 灵魂系统配置 - 支持新旧格式兼容
@@ -239,11 +218,6 @@ class MemoryConfig:
     def min_message_length(self) -> int:
         """获取最小消息长度"""
         return self._min_message_length
-
-    @property
-    def default_passive_strength(self) -> int:
-        """获取被动记忆默认强度"""
-        return self._default_passive_strength
 
     @property
     def data_directory(self) -> str:
@@ -294,11 +268,6 @@ class MemoryConfig:
         """获取统一注入Top-K配置值"""
         return self._note_top_k
     @property
-    def enable_local_embedding(self) -> bool:
-        """是否启用本地嵌入模型"""
-        return self._enable_local_embedding
-
-    @property
     def conversation_scope_map(self) -> Dict[str, Any]:
         """会话ID到记忆分类域的映射表（原始值，校验由PluginContext负责）。"""
         return self._conversation_scope_map
@@ -325,8 +294,6 @@ class MemoryConfig:
         """转换为字典"""
         return {
             "min_message_length": self.min_message_length,
-            "default_passive_strength": self.default_passive_strength,
-            "enable_local_embedding": self.enable_local_embedding,
             "conversation_scope_map": self.conversation_scope_map,
             "enable_soul_system": self.enable_soul_system,
             "data_directory": self.data_directory,

@@ -99,7 +99,7 @@ class BackgroundInitializer:
             # 配置已经在主线程中获取，直接使用
             self.logger.debug(f"使用配置: {list(self.config.keys())}")
 
-            components = await self.component_factory.create_all_components(self.config)
+            components = await self.component_factory.create_all_components()
             self.logger.debug("所有组件在当前事件循环中创建完成")
 
             embedding_provider = components.get("embedding_provider")
