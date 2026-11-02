@@ -125,8 +125,9 @@ class AngelMemoryPlugin(Star):
         PluginContext.config 持引用、组件动态读取，多数配置自动生效，
         scope map 缓存已由 update_config 刷新；此处只同步启动时固化的
         NoteCreateTool 注册状态（note_assistant.enable_create）。
-        provider 类改动（provider_id / embedding_provider_id 等）依赖
-        后台初始化时创建的组件实例，需重载插件后生效。
+        DeepMind 的 provider_id 与反思调度参数按次现读，同样即时生效。
+        embedding_provider_id / rerank_provider_id 绑定在初始化时创建的
+        组件实例上，改动仍需重载插件。
         """
         if not self.llm_tools_enabled:
             self.logger.warning("AngelMemory: LLM 工具未启用，跳过 NoteCreateTool 同步")
@@ -277,16 +278,21 @@ class AngelMemoryPlugin(Star):
                     conversation_id, persona_name=persona_name
                 )
             )
+            scope_mode = self.plugin_context.get_conversation_scope_mode()
             match_desc = {
                 "persona": "人格键",
                 "conversation": "会话ID键",
                 "default": "默认规则",
             }.get(matched_by, matched_by)
+            if scope_mode == "group":
+                scope_key_example = f'{{"{conversation_id}": "家人"}}'
+            else:
+                scope_key_example = '{"女友": "恋爱"}'
             self.logger.debug(
-                f"[会话分类提示] 当前人格={persona_name or '(空)'} 当前会话ID={conversation_id} "
-                f"命中来源={match_desc} 命中键={matched_key} 目标scope={resolved_scope}。"
-                f"注意：以下仅为配置示例，不会自动写入。"
-                f"conversation_scope_map 示例：{{\"{conversation_id}\": \"家人\", \"{persona_name or '女友'}\": \"恋爱\"}}"
+                f"[会话分类提示] 分柜方式={scope_mode} 当前人格={persona_name or '(空)'} "
+                f"当前会话ID={conversation_id} 命中来源={match_desc} 命中键={matched_key} "
+                f"目标scope={resolved_scope}。注意：以下仅为配置示例，不会自动写入。"
+                f"conversation_scope_map 示例：{scope_key_example}"
             )
         except Exception as e:
             self.logger.debug(f"会话ID日志记录失败（已忽略）: {e}")

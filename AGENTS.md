@@ -8,7 +8,6 @@ AstrBot 插件。给机器人长期记忆、本地知识库和灵魂状态。当
 
 ```bash
 pip install -r requirements.txt
-ruff format .
 ```
 
 测试必须在 AstrBot 容器内执行，宿主机不代表运行环境：
@@ -78,7 +77,7 @@ WebUI 源码在 `webui/`，改页面后需重新构建，产物落到 `pages/mem
   → on_llm_response 把回复写入 event.angelmemory_context
   → after_message_sent 提交异步反馈
       → 小模型分析 → memory_runtime.feedback
-      → 强化 / 新增 / 合并 / 灵魂反思 / 短期仓更新
+      → 强化 / 新增 / 合并 / 灵魂反思 / 短期记忆更新
 ```
 
 睡眠独立于对话：每天本地时间 04:00 一次，当时进程没跑则当天不补。

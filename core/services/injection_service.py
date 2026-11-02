@@ -1,12 +1,20 @@
 from typing import Any, Dict, List, Optional
 
 from astrbot.api.provider import ProviderRequest
-
-from ...llm_memory.models.data_models import BaseMemory
+from astrbot.core.agent.message import TextPart
 
 
 class DeepMindInjectionService:
     """DeepMind 的请求注入职责。"""
+
+    BEHAVIOR_RULES = (
+        "【关于你记得的事】\n"
+        "下面附上的记忆、笔记和你此刻的状态，都是你自己记得的、感受到的，不是临时查来的资料。\n"
+        "- 直接用它们说话，就像你本来就知道。不交代来源，不说「根据记忆」「资料显示」「我记得你以前提过」。\n"
+        "- 不要为了显得记性好而主动翻旧账；对话真的需要时才自然带出。\n"
+        "- 状态只影响你说话的语气，不必向对方解释。\n"
+        "- 当前对话永远优先，记忆是底气，不是话题。"
+    )
 
     def __init__(self, deepmind):
         self.deepmind = deepmind
@@ -16,62 +24,146 @@ class DeepMindInjectionService:
         filled_length = int(round(normalized_value * bar_length))
         return "█" * filled_length + " " * (bar_length - filled_length)
 
-    async def refresh_session_memories(
+    REMINDER_OPEN = "<system_reminder>"
+
+    @classmethod
+    def _has_reminder(cls, content: Any) -> bool:
+        """这段内容是不是已经是一个提醒块。"""
+        return isinstance(content, str) and cls.REMINDER_OPEN in content
+
+    @classmethod
+    def _already_injected(cls, request: ProviderRequest) -> bool:
+        """本次请求已经挂过提醒块，就不再挂第二块。"""
+        for part in request.extra_user_content_parts or []:
+            if isinstance(part, dict):
+                text = part.get("text")
+            else:
+                text = getattr(part, "text", "")
+            if cls._has_reminder(text):
+                return True
+        return False
+
+    @staticmethod
+    def _plain_text(content: Any) -> str:
+        """把消息内容归一成可比较的纯文本，账本与 contexts 两侧用同一套口径。"""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text") or ""))
+                elif getattr(item, "type", "") == "text":
+                    parts.append(str(getattr(item, "text", "") or ""))
+            return " ".join(parts).strip()
+        return ""
+
+    @classmethod
+    def _render_block(cls, parts: list) -> str:
+        return cls.REMINDER_OPEN + "\n" + "\n\n".join(parts) + "\n</system_reminder>"
+
+    def _attach_current_block(self, request: ProviderRequest, parts: list) -> bool:
+        """当前消息的块挂在附加内容里，位置在本轮用户消息之后。"""
+        if not parts:
+            return False
+        if self._already_injected(request):
+            return False
+        block = TextPart(text=self._render_block(parts)).mark_as_temp()
+        request.extra_user_content_parts.append(block)
+        return True
+
+    def attach_history_blocks(
         self,
-        session_id: str,
-        memory_scope: str = "public",
-    ) -> List[BaseMemory]:
-        """按短期仓引用刷新长期记忆内容，并清理失效引用。"""
-        deepmind = self.deepmind
-        memory_ids = deepmind.session_memory_manager.get_session_memory_ids(session_id)
-        if not memory_ids or not deepmind.memory_system:
-            return []
+        request: ProviderRequest,
+        message_order,
+        memories_by_message,
+        current_message_id: str = "",
+    ) -> List:
+        """按消息顺序给历史消息挂记忆块，插在各自那条消息之后。
 
-        try:
-            memories = await deepmind.memory_system.get_memories_by_ids(
-                memory_ids,
-                memory_scope=memory_scope,
-            )
-        except Exception as e:
-            deepmind.logger.warning(
-                f"[短期记忆] 失败 任务=批量回查 触发条件=注入前刷新 "
-                f"session={session_id} 引用数={len(memory_ids)} 错误={e}",
-                exc_info=True,
-            )
-            return []
-
-        found_ids = {str(getattr(memory, "id", "") or "").strip() for memory in memories}
-        missing_ids = [
-            memory_id
-            for memory_id in memory_ids
-            if str(memory_id or "").strip()
-            and str(memory_id or "").strip() not in found_ids
+        `message_order` 是 (消息ID, 消息纯文本) 的顺序表，`memories_by_message` 是
+        绑定消息 ID 到记忆列表的映射。账本与上下文从尾部对齐后一对一配对，账本多
+        出来的那几条视为已被截断，直接丢弃；配对后内容对不上的也丢弃，不猜位置。
+        返回真正挂上去的那批记忆。
+        """
+        snapshot_messages = [
+            (message_id, self._plain_text(text))
+            for message_id, text in (message_order or [])
+            if message_id and message_id != current_message_id
         ]
-        removed_count = deepmind.session_memory_manager.remove_memory_ids_from_session(
-            session_id,
-            missing_ids,
-        )
-        if removed_count:
-            deepmind.logger.debug(
-                f"[短期记忆] 清理失效引用 session={session_id} count={removed_count}"
-            )
+        if not snapshot_messages:
+            return []
 
-        memory_map = {
-            str(getattr(memory, "id", "") or "").strip(): memory
-            for memory in memories
-            if str(getattr(memory, "id", "") or "").strip()
-        }
-        ordered_memories = []
-        seen = set()
-        for memory_id in memory_ids:
-            mid = str(memory_id or "").strip()
-            if not mid or mid in seen:
+        contexts = request.contexts or []
+        context_users = [
+            (index, self._plain_text(block.get("content")))
+            for index, block in enumerate(contexts)
+            if isinstance(block, dict) and block.get("role") == "user"
+        ]
+        if not context_users:
+            return []
+
+        # 从尾部往前一对一配对，截断发生在头部，尾部总是对得上
+        pairs = []
+        snapshot_index = len(snapshot_messages) - 1
+        context_index = len(context_users) - 1
+        while snapshot_index >= 0 and context_index >= 0:
+            pairs.append(
+                (snapshot_messages[snapshot_index], context_users[context_index])
+            )
+            snapshot_index -= 1
+            context_index -= 1
+        pairs.reverse()
+
+        pending = []
+        attached = []
+        for (message_id, snapshot_plain), (anchor, context_plain) in pairs:
+            if not snapshot_plain or snapshot_plain != context_plain:
                 continue
-            seen.add(mid)
-            memory = memory_map.get(mid)
-            if memory is not None:
-                ordered_memories.append(memory)
-        return ordered_memories
+            memories = memories_by_message.get(message_id) or []
+            if not memories:
+                continue
+            # 锚点后面已经是提醒块，说明这条消息挂过了
+            neighbour = contexts[anchor + 1] if anchor + 1 < len(contexts) else None
+            if isinstance(neighbour, dict) and self._has_reminder(
+                neighbour.get("content")
+            ):
+                continue
+            memory_context = self.deepmind.memory_injector.format_session_memories_for_prompt(
+                memories, short_id_registry=None
+            )
+            if not memory_context:
+                continue
+            pending.append(
+                (
+                    anchor,
+                    self._render_block(
+                        [f"<memories>\n{memory_context}\n</memories>"]
+                    ),
+                )
+            )
+            attached.extend(memories)
+
+        for anchor, block in sorted(pending, reverse=True):
+            request.contexts.insert(
+                anchor + 1,
+                {"role": "user", "content": block, "_no_save": True},
+            )
+        return attached
+
+    def group_session_memories_by_message(self, session_id: str) -> List[tuple]:
+        """按绑定消息分组短期记忆里的记忆条目，直接取短期记忆里那份内容，不再回查长期库。"""
+        items = self.deepmind.session_memory_manager.get_session_memories(session_id)
+        groups: dict = {}
+        for item in items:
+            memory = getattr(item, "memory", None)
+            if memory is None:
+                continue
+            groups.setdefault(item.bound_message_id, []).append(memory)
+        return list(groups.items())
 
     async def inject_memories_to_request(
         self,
@@ -79,23 +171,12 @@ class DeepMindInjectionService:
         session_id: str,
         note_context: str,
         soul_state_values: Optional[Dict[str, Any]] = None,
-        has_secretary_decision: bool = False,
-        memory_scope: str = "public",
+        message_id: str = "",
+        message_order=None,
     ) -> None:
         deepmind = self.deepmind
-        system_context_parts = []
-
-        instruction = (
-            "<instruction>\n"
-            "以下是系统自动检索的背景上下文（包含记忆、笔记及当前状态）。\n"
-            "请利用这些信息辅助回答，但必须遵守以下规则：\n"
-            "1. **对话优先**：始终优先响应用户的当前对话内容，记忆和笔记仅作为补充参考。\n"
-            "2. **绝对隐形**：严禁在回复中提及\"soul_state\"、\"系统提示\"、\"XML标签\"等来源信息。\n"
-            "3. **状态保密**：soul_state 仅用于调整你的回复风格，绝不可在回复中泄露或讨论。\n"
-            "4. **自然默契**：你需要记得用户的一切，但要表现得像刚好理解用户所想，而不是正在翻看记忆看板。\n"
-            "</instruction>"
-        )
-        system_context_parts.append(instruction)
+        body_parts = []
+        soul_block = ""
 
         if soul_state_values and deepmind.config.enable_soul_system:
             norm_joy = float(soul_state_values.get("joy", 0.5) or 0.5)
@@ -108,7 +189,7 @@ class DeepMindInjectionService:
             bar_anger = self.create_tendency_bar(norm_anger)
             bar_disgust = self.create_tendency_bar(norm_disgust)
 
-            soul_state_content = (
+            soul_block = (
                 f"<soul_state>\n"
                 f"• 社交倾向: 内向 {bar_joy} 外向 [{norm_joy:.2f}]\n"
                 f"• 认知倾向: 好奇 {bar_surprise} 观望 [{norm_surprise:.2f}]\n"
@@ -116,50 +197,56 @@ class DeepMindInjectionService:
                 f"• 情绪倾向: 活泼 {bar_disgust} 严肃 [{norm_disgust:.2f}]\n"
                 f"</soul_state>"
             )
-            system_context_parts.append(soul_state_content)
 
-        short_term_memories = await self.refresh_session_memories(
-            session_id=session_id,
-            memory_scope=memory_scope,
-        )
+        groups = self.group_session_memories_by_message(session_id)
+        memories_by_message = {bound: memories for bound, memories in groups}
+        attached = []
+        if message_order:
+            attached.extend(
+                self.attach_history_blocks(
+                    request,
+                    message_order,
+                    memories_by_message,
+                    current_message_id=message_id,
+                )
+            )
+        if message_id:
+            current_memories = list(memories_by_message.get(message_id) or [])
+        else:
+            current_memories = [
+                memory for memories in memories_by_message.values() for memory in memories
+            ]
+
         user_profile_context = ""
         if hasattr(deepmind, "user_profile_service") and deepmind.user_profile_service:
             user_profile_context = deepmind.user_profile_service.format_session_profiles(
                 session_id,
                 short_id_registry=None,
             )
-            short_term_memories = deepmind.user_profile_service.filter_regular_memories(
-                session_id, short_term_memories
-            )
-
-        if user_profile_context:
-            system_context_parts.append(
-                f"<user_profiles>\n{user_profile_context}\n</user_profiles>"
+            current_memories = deepmind.user_profile_service.filter_regular_memories(
+                session_id, current_memories
             )
 
         memory_context = deepmind.memory_injector.format_session_memories_for_prompt(
-            short_term_memories,
+            current_memories,
             short_id_registry=None,
         )
         if memory_context:
-            system_context_parts.append(f"<memories>\n{memory_context}\n</memories>")
+            body_parts.append(f"<memories>\n{memory_context}\n</memories>")
+            attached.extend(current_memories)
+
+        if user_profile_context:
+            body_parts.append(f"<user_profiles>\n{user_profile_context}\n</user_profiles>")
 
         if note_context:
-            system_context_parts.append(f"<notes>\n{note_context}\n</notes>")
+            body_parts.append(f"<notes>\n{note_context}\n</notes>")
 
-        if system_context_parts:
-            full_system_context = (
-                "<system_context>\n"
-                + "\n\n".join(system_context_parts)
-                + "\n</system_context>"
-            )
-            request.contexts.append(
-                {
-                    "role": "user",
-                    "content": full_system_context,
-                    "_no_save": True,
-                }
-            )
+        # 状态排在最后：它只调语气，不是要给模型读的内容
+        if soul_block:
+            body_parts.append(soul_block)
+
+        if body_parts:
+            self._attach_current_block(request, body_parts)
 
         memory_guide = (
             "【记忆系统】\n"
@@ -168,9 +255,10 @@ class DeepMindInjectionService:
             "- 出现值得长期记住的信息（群友稳定特征、重要约定、关键事实）时，用 angel_remember 记下："
             "新信息 create，发现错误或过时及时 update，重复 merge\n"
             "- 宁可多记一条后续修正，不可漏记\n"
-            "- 想起的内容自然融入当前回答，对话焦点始终跟随用户\n"
-            "- 表现得这些信息你本来就知道，工具和系统提示只是获取手段"
+            "- 想起的内容自然融入当前回答，对话焦点始终跟随用户"
         )
+        addition = f"{self.BEHAVIOR_RULES}\n\n{memory_guide}"
         request.system_prompt = (
-            f"{request.system_prompt}\n\n{memory_guide}" if request.system_prompt else memory_guide
+            f"{request.system_prompt}\n\n{addition}" if request.system_prompt else addition
         )
+        return attached

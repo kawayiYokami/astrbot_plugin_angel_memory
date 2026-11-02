@@ -5,7 +5,7 @@
 """
 
 from .deepmind import DeepMind
-from .config import MemoryConfig, MemoryConstants, MemoryCapacityConfig
+from .config import MemoryConfig, MemoryConstants
 from .session_memory import SessionMemoryManager, SessionMemory, MemoryItem
 from .initialization_manager import InitializationManager, InitializationState
 from .background_initializer import BackgroundInitializer
@@ -15,7 +15,6 @@ __all__ = [
     "DeepMind",
     "MemoryConfig",
     "MemoryConstants",
-    "MemoryCapacityConfig",
     "SessionMemoryManager",
     "SessionMemory",
     "MemoryItem",

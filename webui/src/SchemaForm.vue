@@ -37,6 +37,47 @@
               class="control-select"
               @update:value="(v: unknown) => setIn(row.path, v ?? '')"
             />
+            <div v-else-if="isScopeMap(row.meta, row.path)" class="control-scope">
+              <div class="scope-head">
+                <n-radio-group
+                  :value="currentScopeMode"
+                  size="small"
+                  @update:value="(v: string) => setScopeMode(v as ScopeMode)"
+                >
+                  <n-radio-button value="persona">按人格</n-radio-button>
+                  <n-radio-button value="group">按群聊</n-radio-button>
+                </n-radio-group>
+                <span class="scope-mode-hint">{{ scopeModeHint }}</span>
+              </div>
+              <n-dynamic-input
+                :value="scopeRows(row.path)"
+                :on-create="kvCreate"
+                class="control-kv"
+                @update:value="(rows: unknown[]) => scopeWrite(row.path, rows)"
+              >
+                <template #default="{ value }">
+                  <div class="kv-row">
+                    <n-select
+                      class="kv-key"
+                      filterable
+                      :value="value.key || null"
+                      :options="scopeKeyOptions(row.path)"
+                      :placeholder="scopeKeyPlaceholder"
+                      @update:value="(v: string) => { value.key = v ?? ''; scopeSync(row.path) }"
+                    />
+                    <n-select
+                      class="kv-value"
+                      filterable
+                      tag
+                      :value="value.value || null"
+                      :options="scopeValueOptions(value.value)"
+                      placeholder="柜子名（可输入新建）"
+                      @update:value="(v: string) => { value.value = v ?? ''; scopeSync(row.path) }"
+                    />
+                  </div>
+                </template>
+              </n-dynamic-input>
+            </div>
             <n-dynamic-input
               v-else-if="isKvMap(row.meta, row.path)"
               :value="kvRowsOf(row.path)"
@@ -114,12 +155,22 @@ import {
   NDynamicTags,
   NInput,
   NInputNumber,
+  NRadioButton,
+  NRadioGroup,
   NSelect,
   NSwitch,
   useThemeVars,
 } from 'naive-ui'
+import type { SelectGroupOption, SelectOption } from 'naive-ui'
 import { Icon } from '@iconify/vue'
-import type { SchemaMeta } from './schema'
+import type { SchemaMeta, ScopeCandidates } from './schema'
+import {
+  belongsToMode,
+  mergeScopeMap,
+  normalizeScopeMode,
+  pickScopeEntries,
+  type ScopeMode,
+} from './scopeMap'
 
 interface FieldRow {
   kind: 'field'
@@ -149,6 +200,7 @@ const props = defineProps<{
   schema: Record<string, SchemaMeta>
   modelValue?: Record<string, unknown>
   providers?: Record<string, string[]>
+  scopeCandidates?: ScopeCandidates
 }>()
 
 const emit = defineEmits<{
@@ -215,6 +267,8 @@ const groups = computed<Group[]>(() => {
         rows,
       })
     } else {
+      // 分柜方式由分柜表上方的切换按钮读写，不单独占一行
+      if (meta._special === 'scope_mode') continue
       rootRows.push(buildField([], key, meta))
     }
   }
@@ -332,6 +386,118 @@ function kvWrite(path: string[], rows: ReadonlyArray<unknown>) {
 function kvSync(path: string[]) {
   const draft = kvDrafts.get(path.join('.'))
   if (draft) kvWrite(path, draft.rows)
+}
+
+// ---------- 会话分柜表：方式存在独立配置项里，列表只渲染当前方式那一半 ----------
+
+function isScopeMap(meta: SchemaMeta, path: string[]): boolean {
+  return meta._special === 'scope_map' && parseKvObject(getIn(path)) !== null
+}
+
+function scopeMapKeys(path: string[]): string[] {
+  return Object.keys(parseKvObject(getIn(path)) || {})
+}
+
+// 分柜方式字段由 schema 标记定位，不在表单里单独成行（下面这张表自带切换按钮）
+const scopeModePath = computed<string[]>(() => {
+  const found = Object.entries(props.schema || {}).find(
+    ([, meta]) => meta?._special === 'scope_mode',
+  )
+  return found ? [found[0]] : ['conversation_scope_mode']
+})
+
+const currentScopeMode = computed<ScopeMode>(() => normalizeScopeMode(getIn(scopeModePath.value)))
+
+const scopeModeHint = computed(() =>
+  currentScopeMode.value === 'group'
+    ? '按群号识别会话，只显示会话键；人格键保留不参与匹配'
+    : '按人格名识别会话，只显示人格键；群聊键保留不参与匹配',
+)
+
+const scopeKeyPlaceholder = computed(() =>
+  currentScopeMode.value === 'group' ? '选择群聊' : '选择人格',
+)
+
+// 只负责改方式：一条数据都不动，另一半留着
+function setScopeMode(next: ScopeMode) {
+  setIn(scopeModePath.value, next)
+}
+
+// 行数据按「方式 + 当前表内容」缓存，保证输入过程中行对象不被重建
+const scopeDrafts = new Map<string, { source: string; rows: KvRow[] }>()
+
+function scopeRows(path: string[]): KvRow[] {
+  const id = path.join('.')
+  const mode = currentScopeMode.value
+  const source = `${mode}|${asString(getIn(path))}`
+  let draft = scopeDrafts.get(id)
+  if (!draft || draft.source !== source) {
+    draft = {
+      source,
+      rows: pickScopeEntries(parseKvObject(getIn(path)) || {}, mode).map(([key, value]) => ({
+        key,
+        value: String(value),
+      })),
+    }
+    scopeDrafts.set(id, draft)
+  }
+  return draft.rows
+}
+
+// 写回时把当前方式的可见半边与另一半合并，隐藏侧一个键都不丢
+function scopeWrite(path: string[], rows: ReadonlyArray<unknown>) {
+  const mode = currentScopeMode.value
+  const visible: Record<string, string> = {}
+  for (const row of rows) {
+    const r = row as Partial<KvRow>
+    const key = String(r.key ?? '').trim()
+    if (!key || !belongsToMode(key, mode)) continue
+    visible[key] = String(r.value ?? '')
+  }
+  const merged = mergeScopeMap(parseKvObject(getIn(path)) || {}, visible, mode)
+  const source = JSON.stringify(merged)
+  scopeDrafts.set(path.join('.'), { source: `${mode}|${source}`, rows: rows as KvRow[] })
+  setIn(path, source)
+}
+
+// 行内输入直接 mutate 行对象（不触发 update:value），变化后手动合并写回
+function scopeSync(path: string[]) {
+  const draft = scopeDrafts.get(path.join('.'))
+  if (draft) scopeWrite(path, draft.rows)
+}
+
+function scopeKeyOptions(path: string[]): Array<SelectOption | SelectGroupOption> {
+  const candidates = props.scopeCandidates || {}
+  const base: SelectOption[] =
+    currentScopeMode.value === 'group'
+      ? (candidates.groups || []).map((g) => ({
+          // 标签带「群」前缀，与「原配置」里裸群号的老键区分开
+          label: g.group_name ? `${g.group_name}（${g.group_id}）` : `群 ${g.group_id}`,
+          value: g.session_id,
+        }))
+      : (candidates.personas || []).map((name) => ({ label: name, value: name }))
+
+  // 当前方式的候选之外的键（含裸群号等历史写法）单独成组，保证能看见、能重选
+  const known = new Set(base.map((item) => item.value))
+  const legacy = scopeMapKeys(path).filter(
+    (key) => belongsToMode(key, currentScopeMode.value) && !known.has(key),
+  )
+  if (!legacy.length) return base
+  return [
+    ...base,
+    {
+      type: 'group',
+      key: 'legacy',
+      label: '原配置（不在当前方式的候选里）',
+      children: legacy.map((key) => ({ label: key, value: key })),
+    },
+  ]
+}
+
+function scopeValueOptions(current: string): SelectOption[] {
+  const scopes = props.scopeCandidates?.scopes || []
+  const names = current && !scopes.includes(current) ? [...scopes, current] : scopes
+  return names.map((name) => ({ label: name, value: name }))
 }
 
 // provider 字段判定：显式标记，或 string 类型的 *_provider_id 键且对应列表非空
@@ -452,6 +618,24 @@ function providerOptions(path: string[]) {
 
 .control-kv {
   width: 100%;
+}
+
+.control-scope {
+  width: 100%;
+}
+
+/* 分柜方式切换：先选方式，再编辑下方列表 */
+.scope-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.scope-mode-hint {
+  font-size: 12px;
+  color: var(--sf-muted);
+  line-height: 1.6;
 }
 
 .kv-row {

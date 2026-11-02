@@ -62,23 +62,10 @@ class ConfigValidator:
             )
 
 
-@dataclass
-class MemoryCapacityConfig:
-    """记忆容量配置类"""
-
-    knowledge: int = 14  # 普通知识记忆容量
-    knowledge_user_info: int = 14  # 用户信息专用知识记忆容量
-    emotional: int = 1
-    skill: int = 7
-    task: int = 1
-    event: int = 3
-
-
 class MemoryConstants:
     """记忆系统常量定义"""
 
     MIN_MESSAGE_LENGTH = 5
-    SHORT_TERM_MEMORY_CAPACITY = 1.0
     DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
     NOTE_TOP_K = 3  # 默认注入笔记数量（候选固定为 7 倍）
 
@@ -112,7 +99,7 @@ class MemoryConfig:
     """记忆插件配置类
 
     负责管理插件的用户可配置参数，与llm_memory的系统配置形成分层结构：
-    - 本类：用户级别的插件配置（min_message_length, short_term_memory_capacity等）
+    - 本类：用户级别的插件配置（min_message_length 等）
     - system_config：系统级别的技术配置（向量存储、嵌入模型等）
 
     配置验证确保用户输入的参数在合理范围内，防止异常配置导致系统不稳定。
@@ -145,11 +132,6 @@ class MemoryConfig:
             memory_behavior.get("min_message_length") or config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH),
             "min_message_length",
             max_value=500,
-        )
-        self._short_term_memory_capacity = ConfigValidator.validate_positive_number(
-            memory_behavior.get("short_term_memory_capacity") or config_get("short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY),
-            "short_term_memory_capacity",
-            max_value=10.0,
         )
         self._default_passive_strength = ConfigValidator.validate_positive_int(
             memory_behavior.get("default_passive_strength") or config_get("default_passive_strength", 10),
@@ -259,11 +241,6 @@ class MemoryConfig:
         return self._min_message_length
 
     @property
-    def short_term_memory_capacity(self) -> float:
-        """获取短期记忆容量倍数"""
-        return self._short_term_memory_capacity
-
-    @property
     def default_passive_strength(self) -> int:
         """获取被动记忆默认强度"""
         return self._default_passive_strength
@@ -348,7 +325,6 @@ class MemoryConfig:
         """转换为字典"""
         return {
             "min_message_length": self.min_message_length,
-            "short_term_memory_capacity": self.short_term_memory_capacity,
             "default_passive_strength": self.default_passive_strength,
             "enable_local_embedding": self.enable_local_embedding,
             "conversation_scope_map": self.conversation_scope_map,
@@ -364,7 +340,3 @@ class MemoryConfig:
             "note_candidate_top_k": self.note_candidate_top_k,
             "note_inject_top_k": self.note_inject_top_k,
         }
-
-    def get_capacity_config(self) -> MemoryCapacityConfig:
-        """获取记忆容量配置"""
-        return MemoryCapacityConfig()

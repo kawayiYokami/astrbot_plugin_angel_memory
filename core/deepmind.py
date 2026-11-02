@@ -92,7 +92,8 @@ class DeepMind:
         self.memory_system = memory_runtime
         self.note_service = note_service
         self.context = context
-        self.provider_id = provider_id
+        # provider_id 每次使用时现读（见下方同名属性），这里只留无 plugin_context 时的兜底
+        self._provider_id_fallback = str(provider_id or "").strip()
         self.plugin_context = plugin_context # 保存引用
 
         # 从全局容器获取logger
@@ -103,37 +104,10 @@ class DeepMind:
         # 过程追踪持久化（反思与睡眠共用一份 JSONL，追加写入、永不自动删除）
         self.trace_store = TraceStore(self._resolve_trace_base_dir(plugin_context))
 
-        # 获取配置值（嵌套配置）
-        # 当前格式：memory_behavior.*, note_topk.*
+        # 记忆行为与笔记参数不在此处快照，全部按次现读（见下方同名属性）
 
-        # 记忆行为参数
-        memory_behavior = getattr(config, "memory_behavior", {})
-        self.min_message_length = memory_behavior.get("min_message_length") if isinstance(memory_behavior, dict) else getattr(config, "min_message_length", 5)
-        self.short_term_memory_capacity = memory_behavior.get("short_term_memory_capacity") if isinstance(memory_behavior, dict) else getattr(config, "short_term_memory_capacity", 1.0)
-
-        # 笔记 Top-K 参数（候选固定为注入的 7 倍）
-        note_assistant = getattr(config, "note_assistant", {})
-        note_top_k = (
-            int(note_assistant.get("top_k", 3))
-            if isinstance(note_assistant, dict)
-            else int(getattr(config, "note_top_k", 3))
-        )
-        if note_top_k < 0:
-            note_top_k = 0
-        self.note_inject_top_k = note_top_k
-        self.note_candidate_top_k = note_top_k * 7
-
-        # 笔记检索开关（note_assistant.enable_recall）
-        note_assistant = getattr(config, "note_assistant", {})
-        if isinstance(note_assistant, dict):
-            self.note_recall_enabled = bool(note_assistant.get("enable_recall", True))
-        else:
-            self.note_recall_enabled = True
-
-        # 初始化会话工作记忆缓存
-        self.session_memory_manager = SessionMemoryManager(
-            capacity_multiplier=self.short_term_memory_capacity
-        )
+        # 初始化短期记忆
+        self.session_memory_manager = SessionMemoryManager()
 
         # 睡眠调度状态：每天 04:00 一次，按运行环境本地时间，不做启动补偿
         self._sleep_tick_task: Optional[asyncio.Task] = None
@@ -155,39 +129,7 @@ class DeepMind:
         self._reflection_states: Dict[str, Dict[str, Any]] = {}
         self._reflection_tick_task: Optional[asyncio.Task] = None
         self._reflection_stop_event = asyncio.Event()
-        self._reflection_turn_threshold = max(
-            1,
-            int(
-                (
-                    memory_behavior.get("reflection_turn_threshold", 6)
-                    if isinstance(memory_behavior, dict)
-                    else getattr(config, "reflection_turn_threshold", 6)
-                )
-                or 6
-            ),
-        )
-        self._reflection_idle_seconds = max(
-            1,
-            int(
-                (
-                    memory_behavior.get("reflection_idle_seconds", 600)
-                    if isinstance(memory_behavior, dict)
-                    else getattr(config, "reflection_idle_seconds", 600)
-                )
-                or 600
-            ),
-        )
-        self._reflection_tick_seconds = max(
-            10,
-            int(
-                (
-                    memory_behavior.get("reflection_tick_seconds", 600)
-                    if isinstance(memory_behavior, dict)
-                    else getattr(config, "reflection_tick_seconds", 600)
-                )
-                or 600
-            ),
-        )
+        # 反思调度三项参数同样现读，见下方 _reflection_turn_threshold 等属性
 
         # 初始化灵魂状态管理器
         try:
@@ -197,6 +139,79 @@ class DeepMind:
             self.logger.error(f"灵魂状态管理器初始化失败: {e}")
             self.soul = None
 
+    @property
+    def provider_id(self) -> str:
+        """LLM 提供商 ID。实时读取配置，WebUI 保存后立即生效，无需重载。"""
+        if self.plugin_context is None:
+            return self._provider_id_fallback
+        try:
+            return str(self.plugin_context.get_llm_provider_id() or "").strip()
+        except Exception:
+            return self._provider_id_fallback
+
+    def _read_group_value(self, section: str, key: str, default: Any) -> Any:
+        """实时读取分组配置；分组里没有该项时回落到构造时的扁平旧格式。"""
+        if self.plugin_context is not None:
+            group = self.plugin_context.get_config(section, {}) or {}
+            if isinstance(group, dict) and key in group:
+                return group[key]
+        return getattr(self.config, key, default)
+
+    def _read_reflection_param(self, key: str, default: int, minimum: int) -> int:
+        """实时读取反思调度参数，缺失或非法时回落默认值。"""
+        raw = self._read_group_value("memory_behavior", key, default)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = default
+        if value <= 0:
+            value = default
+        return max(minimum, value)
+
+    @property
+    def _reflection_turn_threshold(self) -> int:
+        """攒够多少次机器人回话后触发一次反思。"""
+        return self._read_reflection_param("reflection_turn_threshold", 6, 1)
+
+    @property
+    def _reflection_idle_seconds(self) -> int:
+        """空闲多少秒后由调度 tick 触发一次反思。"""
+        return self._read_reflection_param("reflection_idle_seconds", 600, 1)
+
+    @property
+    def _reflection_tick_seconds(self) -> int:
+        """反思调度 tick 的检查间隔。"""
+        return self._read_reflection_param("reflection_tick_seconds", 600, 10)
+
+    @property
+    def min_message_length(self) -> int:
+        """触发记忆处理的最小消息字符数。"""
+        raw = self._read_group_value("memory_behavior", "min_message_length", 5)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 5
+        return max(0, value)
+
+    @property
+    def note_inject_top_k(self) -> int:
+        """笔记注入条数。"""
+        raw = self._read_group_value("note_assistant", "top_k", 3)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 3
+        return max(0, value)
+
+    @property
+    def note_candidate_top_k(self) -> int:
+        """笔记候选条数，固定为注入条数的七倍。"""
+        return self.note_inject_top_k * 7
+
+    @property
+    def note_recall_enabled(self) -> bool:
+        """是否允许自动检索并注入笔记。"""
+        return bool(self._read_group_value("note_assistant", "enable_recall", True))
 
     def is_enabled(self) -> bool:
         """检查记忆系统是否可用"""
@@ -271,19 +286,21 @@ class DeepMind:
         session_id: str,
         note_context: str,
         soul_state_values: Optional[Dict[str, Any]] = None,
-        has_secretary_decision: bool = False,
-        memory_scope: str = "public",
-    ) -> None:
+        message_id: str = "",
+        message_order=None,
+    ) -> list:
         """
         将记忆、笔记和灵魂状态统一注入到LLM请求中（使用 extra_user_content_parts）
+
+        返回真正挂进请求的那批记忆。
         """
-        await self.injection_service.inject_memories_to_request(
+        return await self.injection_service.inject_memories_to_request(
             request,
             session_id,
             note_context,
             soul_state_values,
-            has_secretary_decision,
-            memory_scope=memory_scope,
+            message_id=message_id,
+            message_order=message_order,
         )
 
     def _clean_note_content(self, content: str) -> str:
@@ -377,9 +394,16 @@ class DeepMind:
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
 
-        # 5. 将检索到的长期记忆填入会话工作缓存
+        # 5. 将检索到的长期记忆填入会话工作缓存，连同带入它的消息一起绑定
+        current_message_id = self._event_message_id(event)
+        current_message_text = str(self._extract_message_text(event) or "").strip()
         if long_term_memories and self.memory_system:
-            self.session_memory_manager.add_memories_to_session(session_id, long_term_memories)
+            self.session_memory_manager.add_memories_to_session(
+                session_id,
+                long_term_memories,
+                bound_message_id=current_message_id,
+                bound_message_text=current_message_text,
+            )
 
         # 6. 构建笔记上下文（复用NoteContextBuilder）
         note_context = ""
@@ -408,6 +432,7 @@ class DeepMind:
                 self.logger.warning(f"获取灵魂状态倾向失败: {e}")
 
         # 8. 刷新当前批次用户画像通道
+        memory_scope = "public"
         try:
             profile_refresh_started_at = time.time()
             memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
@@ -465,24 +490,42 @@ class DeepMind:
                 exc_info=True,
             )
 
-        # 9. 注入记忆、笔记和灵魂状态到请求
-        has_secretary_decision = bool(secretary_decision)
-        await self._inject_memories_to_request(
+        # 9. 注入记忆、笔记和灵魂状态到请求（注入源是短期记忆，不重新检索）
+        alive_ids = self._alive_message_ids(context_chat_records, current_message_id)
+        if alive_ids is not None:
+            departed_items = (
+                self.session_memory_manager.prune_absent_messages_from_session(
+                    session_id, alive_ids
+                )
+            )
+            if departed_items:
+                self.logger.debug(
+                    f"[短期记忆] 清理离场记忆条目 session={session_id} count={len(departed_items)}"
+                )
+                await self._reflect_departed_memories(
+                    session_id,
+                    memory_scope,
+                    current_message_id,
+                    departed_items,
+                )
+        injected_memories = await self._inject_memories_to_request(
             request,
             session_id,
             note_context,
             soul_state_values,
-            has_secretary_decision=has_secretary_decision,
-            memory_scope=memory_scope,
+            message_id=current_message_id,
+            message_order=self._message_order(context_chat_records),
         )
 
         # 10. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
+        #     账目按实际挂进请求的那批记忆写，反思强化对象与模型看到的一致
         try:
+            injected_memories = list(injected_memories or [])
             memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
             memory_id_mapping = (
-                memory_sql_manager.build_id_mapping([mem.id for mem in long_term_memories])
+                memory_sql_manager.build_id_mapping([mem.id for mem in injected_memories])
                 if memory_sql_manager
-                else MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in long_term_memories], "id")
+                else MemoryIDResolver.generate_id_mapping([mem.to_dict() for mem in injected_memories], "id")
             )
             angelmemory_context = {
                 "memories": self._memories_to_json(self.session_memory_manager.get_session_memories(session_id)),
@@ -491,7 +534,7 @@ class DeepMind:
                 "session_id": session_id,
                 "user_list": user_list,
                 "raw_chat_records": context_chat_records,
-                "raw_memories": [memory.to_dict() for memory in long_term_memories],
+                "raw_memories": [memory.to_dict() for memory in injected_memories],
                 "raw_notes": candidate_notes,
                 "core_topic": core_topic,
                 "memory_id_mapping": memory_id_mapping,
@@ -531,6 +574,151 @@ class DeepMind:
             
         # 只有当 ID 无效且名字也无效时, 才判定为缺失身份。
         return sid.lower() in invalid_ids and name.lower() in invalid_names
+
+    @staticmethod
+    def _event_message_id(event: AstrMessageEvent) -> str:
+        """当前这条用户消息的 ID，用于注入幂等判定。"""
+        message_obj = getattr(event, "message_obj", None)
+        return str(getattr(message_obj, "message_id", "") or "").strip()
+
+    @staticmethod
+    def _chat_record_message_id(record: Dict[str, Any]) -> str:
+        """账本记录里带入这条消息的原始消息 ID。"""
+        return str(record.get("source_message_id") or "").strip()
+
+    def _latest_user_message(self, context_data) -> tuple:
+        """反思链路里触发本次回复的那条用户消息，返回 (消息 ID, 消息纯文本)。"""
+        records = (context_data or {}).get("raw_chat_records") or []
+        for record in reversed(records):
+            if str(record.get("role") or "") != "user":
+                continue
+            message_id = self._chat_record_message_id(record)
+            if message_id:
+                return message_id, self.injection_service._plain_text(
+                    record.get("content")
+                )
+        return "", ""
+
+    def _alive_message_ids(
+        self, chat_records: List[Dict[str, Any]], current_message_id: str
+    ) -> Optional[set]:
+        """本次请求里真实存在的用户消息 ID 集合。
+
+        有天使之心账本时是账本里的用户消息，没有账本时只剩当前这一条——老记忆因此
+        找不到绑定消息，随下一次清理离开短期记忆。判定不了当前消息 ID 时返回 None，
+        表示不做清理。
+        """
+        current = str(current_message_id or "").strip()
+        if not current:
+            return None
+        alive = {current}
+        for record in chat_records or []:
+            if str(record.get("role") or "") != "user":
+                continue
+            message_id = self._chat_record_message_id(record)
+            if message_id:
+                alive.add(message_id)
+        return alive
+
+    def _message_order(self, chat_records: List[Dict[str, Any]]) -> List[tuple]:
+        """账本里用户消息的顺序表，元素为 (消息 ID, 消息纯文本)。"""
+        plain = self.injection_service._plain_text
+        order = []
+        for record in chat_records or []:
+            if str(record.get("role") or "") != "user":
+                continue
+            message_id = self._chat_record_message_id(record)
+            if not message_id:
+                continue
+            order.append((message_id, plain(record.get("content"))))
+        return order
+
+    async def _reflect_departed_memories(
+        self,
+        session_id: str,
+        memory_scope: str,
+        current_message_id: str,
+        departed_items: List[Any],
+    ) -> None:
+        """绑定的消息离场时，把那条消息和它带回的记忆一起送去反思。"""
+        if not departed_items or not self.memory_system:
+            return
+
+        memories = []
+        for item in departed_items:
+            memory = getattr(item, "memory", None)
+            if memory is None:
+                continue
+            memory_id = str(getattr(memory, "id", "") or "").strip()
+            if memory_id and all(
+                str(getattr(existing, "id", "") or "") != memory_id
+                for existing in memories
+            ):
+                memories.append(memory)
+        if not memories:
+            return
+
+        texts: List[str] = []
+        for item in departed_items:
+            text = str(getattr(item, "bound_message_text", "") or "").strip()
+            if text and text not in texts:
+                texts.append(text)
+        message_text = "\n".join(texts)
+        records = (
+            [
+                {
+                    "role": "user",
+                    "content": message_text,
+                    "source_message_id": current_message_id,
+                }
+            ]
+            if message_text
+            else []
+        )
+
+        memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
+        memory_id_mapping = (
+            memory_sql_manager.build_id_mapping([memory.id for memory in memories])
+            if memory_sql_manager
+            else MemoryIDResolver.generate_id_mapping(
+                [memory.to_dict() for memory in memories], "id"
+            )
+        )
+        reflection_input = ReflectionInput(
+            session_id=session_id,
+            memory_scope=memory_scope,
+            persona_name="",
+            latest_user_text=message_text,
+            latest_assistant_text="",
+            chat_records=list(records),
+            memory_context={
+                "session_id": session_id,
+                "query": message_text,
+                "user_list": [],
+                "raw_chat_records": list(records),
+                "raw_memories": [memory.to_dict() for memory in memories],
+                "raw_notes": [],
+                "core_topic": "",
+                "memory_id_mapping": memory_id_mapping,
+                "note_id_mapping": {},
+            },
+        )
+
+        submitted = await get_feedback_queue().submit(
+            {
+                "feedback_fn": self._execute_async_analysis_task,
+                "session_id": session_id,
+                "payload": {
+                    "reflection_input": reflection_input,
+                    "historical_chat_text_override": message_text,
+                },
+            }
+        )
+        self.logger.info(
+            f"[反思调度] 离场记忆送审 session={session_id} "
+            f"消息数={len(texts)} 记忆数={len(memories)} "
+            f"结果={'已提交' if submitted else '提交失败'}"
+        )
 
     def _get_event_sender_identity(self, event: AstrMessageEvent) -> tuple[str, str]:
         sender_id = ""
@@ -1357,11 +1545,17 @@ class DeepMind:
                 mem for mem in long_term_memories if mem.id in useful_ids
             ]
 
-            # 将有用的旧记忆和全新的记忆合并，一起放入会话工作缓存
+            # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆，绑定触发这次回复的消息
             memories_for_session = useful_long_term_memories + newly_created_memories
             if memories_for_session:
+                bound_message_id, bound_message_text = self._latest_user_message(
+                    context_data
+                )
                 self.session_memory_manager.add_memories_to_session(
-                    session_id, memories_for_session
+                    session_id,
+                    memories_for_session,
+                    bound_message_id=bound_message_id,
+                    bound_message_text=bound_message_text,
                 )
             self.logger.info(
                 f"[反思执行] 完成 session={session_id} "

@@ -37,7 +37,7 @@ class MemoryFormatter:
         reasoning = ""
         memory_reasoning = str(getattr(memory, "reasoning", "") or "")
         if memory_reasoning and memory_reasoning.strip():
-            reasoning = f"\n——因为{memory_reasoning.strip()}"
+            reasoning = f" ——因为{memory_reasoning.strip()}"
 
         # 格式化时间（相对时间）
         time_suffix = ""
@@ -260,7 +260,7 @@ class MemoryFormatter:
                 counter += 1
                 judgment = str(getattr(memory, "judgment", "") or "").strip()
                 reasoning = (
-                    f"\n   ——因为{str(getattr(memory, 'reasoning', '') or '').strip()}"
+                    f" ——因为{str(getattr(memory, 'reasoning', '') or '').strip()}"
                     if str(getattr(memory, "reasoning", "") or "").strip()
                     else ""
                 )

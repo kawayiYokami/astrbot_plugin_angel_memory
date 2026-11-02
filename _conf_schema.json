@@ -55,14 +55,23 @@
       }
     }
   },
+  "conversation_scope_mode": {
+    "type": "string",
+    "description": "[记忆分类] 记忆分柜方式。按人格或按群聊，二选一。",
+    "default": "persona",
+    "options": ["persona", "group"],
+    "_special": "scope_mode",
+    "hint": "只决定下面那张表里哪一类键生效：persona 按人格名分柜（键是人名），group 按群聊分柜（键是完整会话ID 平台ID:GroupMessage:群号）。另一类键原样保留，但不参与匹配。"
+  },
   "conversation_scope_map": {
     "type": "text",
-    "description": "[记忆分类] 文本键到记忆分类域的映射（人格名优先，其次会话ID）",
+    "description": "[记忆分类] 会话到记忆柜子的映射（按人格或按群聊，二选一）",
     "default": "{}",
     "editor_mode": true,
     "editor_language": "json",
     "editor_theme": "vs-dark",
-    "hint": "键为人格名（优先匹配）或会话ID，值为记忆分类域；未命中时默认 public。scope 名仅允许字母、数字、中文、下划线和短横线。"
+    "_special": "scope_map",
+    "hint": "键在界面上从下拉里选，按「记忆分柜方式」只显示并编辑对应的那一类键：人格键是人名，群聊键是完整会话ID 平台ID:GroupMessage:群号。切换方式只改生效的一类，另一类键原样保留在表里。值为柜子名；未命中时默认 public。柜子名仅允许字母、数字、中文、下划线和短横线。"
   },
   "group_domain_map": {
     "type": "text",
@@ -98,11 +107,23 @@
         "default": 5,
         "hint": "过滤过短的消息，以提高记忆质量。"
       },
-      "short_term_memory_capacity": {
+      "reflection_turn_threshold": {
         "type": "int",
-        "description": "短期记忆通道的容量倍数",
-        "default": 1,
-        "hint": "设置为2则容量翻倍，设置为3则容量变为3倍。"
+        "description": "攒够多少轮对话触发一次反思",
+        "default": 6,
+        "hint": "机器人每回复一次算一轮。数值越小反思越频繁，消耗的模型调用也越多。最小 1。"
+      },
+      "reflection_idle_seconds": {
+        "type": "int",
+        "description": "空闲多少秒后补触发一次反思",
+        "default": 600,
+        "hint": "当有积压轮次、且距离最后一次对话超过这个秒数时触发，避免对话停下来后反思内容一直攒着。最小 1。"
+      },
+      "reflection_tick_seconds": {
+        "type": "int",
+        "description": "反思调度的检查间隔（秒）",
+        "default": 600,
+        "hint": "每隔这么久检查一次是否有积压对话需要反思。改小会让空闲补触发更及时。最小 10。"
       },
       "decay_policy_override": {
         "type": "object",

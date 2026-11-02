@@ -22,6 +22,7 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
     from .maintenance_api import MaintenanceAPI
     from .profile_api import ProfileAPI
     from .group_knowledge_api import GroupKnowledgeAPI
+    from .scope_map_api import ScopeMapAPI
 
     memory_api = MemoryAPI(plugin_context)
     notes_api = NotesAPI(plugin_context)
@@ -29,6 +30,7 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
     maintenance_api = MaintenanceAPI(plugin_context)
     profile_api = ProfileAPI(plugin_context)
     group_knowledge_api = GroupKnowledgeAPI(plugin_context, plugin)
+    scope_map_api = ScopeMapAPI(plugin_context, plugin)
     from .debug_api import DebugAPI
 
     debug_api = DebugAPI(plugin_context)
@@ -70,6 +72,8 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         # 群聊知识库可见性
         (f"/{PLUGIN_NAME}/group-knowledge", group_knowledge_api.get_groups, ["GET"], "群聊知识库三态表"),
         (f"/{PLUGIN_NAME}/group-knowledge/save", group_knowledge_api.save_groups, ["POST"], "保存群聊知识库三态表"),
+        # 会话分柜映射的候选名单（人格 / 群聊 / 柜子名）
+        (f"/{PLUGIN_NAME}/scope-map/candidates", scope_map_api.get_candidates, ["GET"], "会话分柜映射的候选名单"),
         # 功能调试（探针）
         (f"/{PLUGIN_NAME}/debug/embedding", debug_api.embedding_probe, ["POST"], "嵌入探针（自定义批次/超时）"),
         (f"/{PLUGIN_NAME}/debug/rerank", debug_api.rerank_probe, ["POST"], "重排探针（自定义超时）"),

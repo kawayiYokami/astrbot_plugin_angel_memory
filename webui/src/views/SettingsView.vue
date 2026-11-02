@@ -17,6 +17,7 @@
       :schema="schema"
       v-model:model-value="values"
       :providers="providers"
+      :scope-candidates="scopeCandidates"
     />
     <n-spin v-else style="margin-top: 40px" />
 
@@ -49,7 +50,7 @@ import {
 import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
 import SchemaForm from '@/SchemaForm.vue'
-import type { SchemaMeta } from '@/schema'
+import type { SchemaMeta, ScopeCandidates } from '@/schema'
 
 const { apiGet, apiPost } = useBridge()
 const message = useMessage()
@@ -57,6 +58,7 @@ const message = useMessage()
 const schema = ref<Record<string, SchemaMeta>>({})
 const values = ref<Record<string, unknown>>({})
 const providers = ref<Record<string, string[]>>({})
+const scopeCandidates = ref<ScopeCandidates>({})
 const loaded = ref(false)
 const saving = ref(false)
 // 草稿基线：与当前值不一致即有变更，浮出保存按钮
@@ -79,6 +81,12 @@ async function load() {
     loaded.value = true
   } catch (e) {
     message.error(`加载插件设置失败: ${(e as Error).message}`)
+  }
+  // 候选名单独立加载：失败只影响下拉选项，不挡住整页配置
+  try {
+    scopeCandidates.value = (await apiGet<ScopeCandidates>('scope-map/candidates')) || {}
+  } catch (e) {
+    console.warn('[设置] 分柜候选名单加载失败:', e)
   }
 }
 

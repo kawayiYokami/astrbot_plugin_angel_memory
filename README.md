@@ -51,27 +51,35 @@ pip install -r requirements.txt
 | `provider_id` | 空 | 记忆整理用的模型，建议带思考能力。留空则只做基础记忆。 |
 | `retrieval.embedding_provider_id` | 空 | 可选。语义检索增强，不是必须。 |
 | `retrieval.rerank_provider_id` | 空 | 推荐。结果会再排一次序，提升明显。留空会尝试复用 `provider_id`。 |
-| `conversation_scope_map` | `{}` | 记忆分类表。先按人格名匹配，再按会话 ID 匹配。 |
+| `conversation_scope_mode` | 按人格 | 记忆分类方式，决定分类表按什么识别会话：按人格，或按群聊。 |
+| `conversation_scope_map` | `{}` | 记忆分类表。按人格或按群聊二选一。 |
 | `group_knowledge_map` | `{}` | 每个群对每个知识库的用法。建议在面板「群聊知识库」里改。 |
 | `memory_behavior.min_message_length` | 5 | 太短的消息不进入记忆处理。 |
-| `memory_behavior.short_term_memory_capacity` | 1 | 最近在意的记忆保留多少，2 就是两倍。 |
 | `enable_soul_system.enabled` | 开 | 关掉后行为固定，上下文里也不再出现灵魂仪表盘。 |
 | `note_assistant.enable_recall` | 开 | 回忆时要不要一并查知识库。 |
 | `note_assistant.enable_create` | 开 | AI 能不能自己写笔记。 |
 | `note_assistant.top_k` | 3 | 一次最多带几篇笔记进上下文。 |
 
-记忆分类表这样写：
+记忆分类表按人格或按群聊二选一，不能混着填。在设置页从下拉里选，不用手写。
+
+按人格分柜：
 
 ```json
 {
   "女友": "恋爱",
-  "aiocqhttp:group:12345": "家人"
+  "旅人": "须弥"
 }
 ```
 
-匹配顺序：当前人格名优先，会话 ID 其次。没写到的进公共。
+按群聊分柜：
 
-写错分类名、写成空值都不会崩，会回落到公共。
+```json
+{
+  "default:GroupMessage:12345": "家人"
+}
+```
+
+没写到的进公共柜子。写错柜子名、写成空值都不会崩，会回落到公共。
 
 ## 知识库
 
@@ -238,10 +246,6 @@ angel_note_create(
 ## 开发
 
 开发约定见 [AGENTS.md](AGENTS.md)。
-
-```bash
-ruff format .
-```
 
 测试在 AstrBot 容器内执行：
 

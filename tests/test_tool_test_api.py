@@ -9,6 +9,7 @@ import json
 import logging
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -121,18 +122,41 @@ class _FakeSessionMemory:
         self.store = {}
         self.cleared = []
 
-    def add_memories_to_session(self, session_id, memories):
-        self.store.setdefault(session_id, []).extend(memories)
-
-    def get_session_memory_ids(self, session_id):
-        return [str(getattr(m, "id", "")) for m in self.store.get(session_id, [])]
+    def add_memories_to_session(self, session_id, memories, bound_message_id="", bound_message_text=""):
+        items = self.store.setdefault(session_id, [])
+        existing = {item.id for item in items}
+        for memory in memories:
+            memory_id = str(getattr(memory, "id", ""))
+            if memory_id in existing:
+                continue
+            existing.add(memory_id)
+            items.append(
+                SimpleNamespace(
+                    id=memory_id,
+                    bound_message_id=str(bound_message_id or ""),
+                    bound_message_text=str(bound_message_text or ""),
+                    memory=memory,
+                )
+            )
 
     def get_session_memories(self, session_id):
         return list(self.store.get(session_id, []))
 
-    def remove_memory_ids_from_session(self, session_id, memory_ids):
-        del session_id, memory_ids
-        return 0
+    def prune_absent_messages_from_session(self, session_id, alive_message_ids):
+        alive = {str(mid) for mid in (alive_message_ids or [])}
+        items = self.store.get(session_id, [])
+        kept = [
+            item
+            for item in items
+            if item.bound_message_id and item.bound_message_id in alive
+        ]
+        departed = [
+            item
+            for item in items
+            if not item.bound_message_id or item.bound_message_id not in alive
+        ]
+        self.store[session_id] = kept
+        return departed
 
     def clear_session(self, session_id):
         self.cleared.append(session_id)
@@ -158,20 +182,22 @@ class _FakeInjectionService:
         session_id,
         note_context,
         soul_state_values=None,
-        has_secretary_decision=False,
-        memory_scope="public",
+        message_id="",
     ):
-        del soul_state_values, has_secretary_decision, memory_scope
+        del soul_state_values, message_id
         if self.boom:
             raise RuntimeError("注入炸了")
         parts = ["<instruction>固定说明</instruction>"]
-        memories = self.deepmind.session_memory_manager.get_session_memories(session_id)
+        memories = [
+            item.memory
+            for item in self.deepmind.session_memory_manager.get_session_memories(session_id)
+        ]
         memory_text = self.deepmind.memory_injector.format_session_memories_for_prompt(memories)
         if memory_text:
             parts.append(f"<memories>\n{memory_text}\n</memories>")
         if note_context:
             parts.append(f"<notes>\n{note_context}\n</notes>")
-        request.contexts.append({"role": "user", "content": "\n\n".join(parts), "_no_save": True})
+        request.extra_user_content_parts.append({"type": "text", "text": "\n\n".join(parts)})
 
 
 class _FakeDeepmind:

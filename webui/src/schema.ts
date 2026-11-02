@@ -8,3 +8,10 @@ export interface SchemaMeta {
   default?: unknown
   editor_language?: string
 }
+
+/** 会话分柜映射的可选来源：人格名 / 群聊会话ID / 柜子名 */
+export interface ScopeCandidates {
+  personas?: string[]
+  groups?: Array<{ group_id: string; group_name: string; session_id: string }>
+  scopes?: string[]
+}

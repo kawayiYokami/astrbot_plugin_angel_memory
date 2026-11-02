@@ -1,614 +1,237 @@
 """
-会话工作记忆缓存模块
+短期记忆模块
 
-负责管理所有会话的工作记忆缓存，支持并发和线程安全。
-短期仓只保存近期召回或新生成的长期记忆引用，并按类型容量裁剪。
+负责管理所有会话的短期记忆，支持并发和线程安全。
+短期记忆的生命周期只有一条规则：带入这条记忆的消息还在请求里，它就留着；
+消息走了，它就离开。不再按容量裁剪。
 """
 
 import threading
 import time
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
 from dataclasses import dataclass
+
 from ..llm_memory.models.data_models import BaseMemory
-from .config import MemoryConstants, MemoryCapacityConfig
 
 
 @dataclass
 class MemoryItem:
-    """会话短期仓中的长期记忆引用。
+    """短期记忆里的一条记忆条目。
 
-    这里不保存 judgment/reasoning/tags 等事实字段，注入前必须按 id 回查长期库。
+    记忆内容跟着记忆条目一起存，注入和反思都直接用短期记忆里的这份，不再回查长期库。
+    代价是长期记忆被改写后，短期记忆里仍是进入时的文本，下一次进入前保持原样。
     """
 
     id: str
     memory_type: str
-    priority_points: int = 3  # 缓存优先级，当前用于容量裁剪时的稳定排序
-    added_at: float = 0.0  # 进入短期仓的时间戳
-    user_id: str = ""  # 仅用于用户相关容量均衡，不作为事实来源
+    added_at: float = 0.0  # 进入短期记忆的时间戳
+    bound_message_id: str = ""  # 绑定消息 ID，该消息离场则这条记忆条目随之离场
+    bound_message_text: str = ""  # 绑定消息正文，离场时要连它一起送审
+    memory: Any = None  # 记忆本体，进入时一并留下
 
 
 class SessionMemory:
-    """单个会话的工作记忆缓存。"""
+    """单个会话的短期记忆。"""
 
-    def __init__(
-        self,
-        session_id: str,
-        capacity_config: MemoryCapacityConfig,
-        capacity_multiplier: float = 1.0,
-    ):
+    def __init__(self, session_id: str):
         """
         初始化会话记忆
 
         Args:
             session_id: 会话ID
-            capacity_config: 容量配置
-            capacity_multiplier: 容量倍数
         """
         self.session_id = session_id
-        self.capacity_config = capacity_config
-        self.capacity_multiplier = capacity_multiplier
         self.lock = threading.Lock()
-
-        # 使用列表存储记忆引用，按缓存优先级和进入时间裁剪
         self.memories = []  # List[MemoryItem]
-
-        # 记忆ID到记忆引用的映射（用于快速查找）
         self.memory_map = {}  # Dict[str, MemoryItem]
 
-
-
-    def add_memories(self, memories: List[BaseMemory]) -> None:
+    def add_memories(
+        self,
+        memories: List[BaseMemory],
+        bound_message_id: str = "",
+        bound_message_text: str = "",
+    ) -> None:
         """
-        将记忆放入会话工作缓存
+        将记忆条目放入短期记忆
 
         Args:
             memories: 长期记忆列表
+            bound_message_id: 绑定消息 ID，该消息离场后这条记忆条目随之离场
+            bound_message_text: 绑定消息正文，离场时反思要带上
         """
         with self.lock:
-            # 按类型分组记忆
-            memories_by_type = {}
             for memory in memories:
-                memory_type_str = (
-                    memory.memory_type.value
-                    if hasattr(memory.memory_type, "value")
-                    else str(memory.memory_type)
+                self._add_memory_item(
+                    self._create_memory_item(
+                        memory,
+                        bound_message_id=bound_message_id,
+                        bound_message_text=bound_message_text,
+                    )
                 )
-                memory_type_key = MemoryConstants.MEMORY_TYPE_MAPPING.get(
-                    memory_type_str, memory_type_str.lower()
-                )
-                memories_by_type.setdefault(memory_type_key, []).append(memory)
 
-            # 处理每种类型的记忆
-            for memory_type, type_memories in memories_by_type.items():
-                if memory_type == "knowledge":
-                    self._add_knowledge_memories_with_priority(type_memories)
-                else:
-                    self._add_regular_memories(type_memories, memory_type)
-
-    def _add_knowledge_memories_with_priority(self, memories: List[BaseMemory]) -> None:
-        """
-        智能添加知识记忆，优先处理昵称/印象记忆
-
-        Args:
-            memories: 知识记忆列表
-        """
-        # 分离昵称/印象记忆和其他用户信息记忆
-        nickname_memories = []
-        user_info_memories = []
-        regular_memories = []
-
-        for memory in memories:
-            memory_item = self._create_memory_item(memory, "knowledge")
-
-            if self._is_nickname_memory(memory_item):
-                nickname_memories.append(memory_item)
-            elif self._is_user_info_memory(memory_item):
-                user_info_memories.append(memory_item)
-            else:
-                regular_memories.append(memory_item)
-
-        # 1. 优先添加昵称记忆（无容量限制）
-        for memory_item in nickname_memories:
-            self._add_memory_item(memory_item)
-
-        # 2. 智能分配用户信息记忆容量
-        if user_info_memories:
-            self._add_user_info_memories_with_capacity_management(user_info_memories)
-
-        # 3. 添加普通知识记忆
-        for memory_item in regular_memories:
-            self._add_memory_item(memory_item)
-
-        # 4. 清理容量
-        self._cleanup_by_capacity("knowledge")
-
-    def _is_nickname_memory(self, memory: MemoryItem) -> bool:
-        """
-        判断是否为昵称/印象记忆
-
-        Args:
-            memory: 记忆对象
-
-        Returns:
-            是否为昵称/印象记忆
-        """
-        return int(getattr(memory, "priority_points", 3) or 3) > 5
-
-    def _is_user_info_memory(self, memory: MemoryItem) -> bool:
-        """
-        判断是否为用户相关信息记忆
-
-        Args:
-            memory: 记忆对象
-
-        Returns:
-            是否为用户相关信息记忆
-        """
-        return bool(str(getattr(memory, "user_id", "") or "").strip())
-
-    def _add_user_info_memories_with_capacity_management(self, user_info_memories: List[MemoryItem]) -> None:
-        """
-        按用户剩余容量智能分配用户信息记忆
-
-        Args:
-            user_info_memories: 用户信息记忆列表
-        """
-        if not user_info_memories:
-            return
-
-        # 获取总容量和当前各用户的使用情况
-        total_capacity = int(getattr(self.capacity_config, "knowledge_user_info", 0) * self.capacity_multiplier)
-        current_user_memories = self._get_current_user_info_memories()
-
-        # 计算每个用户的剩余容量
-        user_remaining_capacity = self._calculate_user_remaining_capacity(current_user_memories, total_capacity)
-
-        # 高优先级、较新的用户信息优先进入短期仓
-        user_info_memories.sort(key=lambda x: (-x.priority_points, x.added_at))
-
-        # 为每个用户分配记忆
-        for memory in user_info_memories:
-            user_id = self._extract_user_id(memory)
-            if user_id and user_remaining_capacity[user_id] > 0:
-                self._add_memory_item(memory)
-                user_remaining_capacity[user_id] -= 1
-            # 用户容量已满时直接跳过，不添加记忆
-
-    def _get_current_user_info_memories(self) -> Dict[str, List[MemoryItem]]:
-        """
-        获取当前各用户的记忆信息
-
-        Returns:
-            按用户ID分组的记忆字典
-        """
-        user_memories = {}
-        for memory in self.memories:
-            if memory.memory_type == "knowledge" and self._is_user_info_memory(memory):
-                user_id = self._extract_user_id(memory)
-                if user_id:
-                    user_memories.setdefault(user_id, []).append(memory)
-        return user_memories
-
-    def _calculate_user_remaining_capacity(self, current_user_memories: Dict[str, List[MemoryItem]], total_capacity: int) -> Dict[str, int]:
-        """
-        计算每个用户的剩余容量
-
-        Args:
-            current_user_memories: 当前用户记忆字典
-            total_capacity: 总容量
-
-        Returns:
-            每个用户的剩余容量字典（使用defaultdict为新用户分配初始容量）
-        """
-        from collections import defaultdict
-
-        num_users = max(1, len(current_user_memories))  # 至少为1，确保新用户有容量
-        capacity_per_user = total_capacity // num_users
-
-        # 使用defaultdict为新用户自动分配初始容量
-        remaining_capacity = defaultdict(lambda: capacity_per_user)
-
-        for user_id, memories in current_user_memories.items():
-            used = len(memories)
-            remaining_capacity[user_id] = max(0, capacity_per_user - used)
-
-        return remaining_capacity
-
-    
-
-    def _add_regular_memories(self, memories: List[BaseMemory], memory_type: str) -> None:
-        """
-        添加普通类型的记忆
-
-        Args:
-            memories: 记忆列表
-            memory_type: 记忆类型
-        """
-        for memory in memories:
-            memory_item = self._create_memory_item(memory, memory_type)
-            self._add_memory_item(memory_item)
-
-        # 清理容量
-        self._cleanup_by_capacity(memory_type)
-
-    def _create_memory_item(self, memory: BaseMemory, memory_type: str) -> MemoryItem:
-        """
-        创建记忆项对象
-
-        Args:
-            memory: 基础记忆对象
-            memory_type: 记忆类型
-
-        Returns:
-            记忆项对象
-        """
-        tags = getattr(memory, "tags", [])
-        if not isinstance(tags, list):
-            tags = []
-
-        nickname_tags = {"昵称", "印象", "称呼", "名字", "用户别名"}
-        priority_points = 6 if any(tag in nickname_tags for tag in tags) else 3
-
+    def _create_memory_item(
+        self,
+        memory: BaseMemory,
+        bound_message_id: str = "",
+        bound_message_text: str = "",
+    ) -> MemoryItem:
+        """创建记忆条目。"""
+        raw_memory_type = getattr(memory, "memory_type", "")
         return MemoryItem(
             id=str(getattr(memory, "id", "") or "").strip(),
-            memory_type=memory_type,
-            priority_points=priority_points,
+            memory_type=str(
+                raw_memory_type.value
+                if hasattr(raw_memory_type, "value")
+                else raw_memory_type
+            ),
             added_at=time.time(),
-            user_id=self._extract_user_id_from_tags(tags),
+            bound_message_id=str(bound_message_id or "").strip(),
+            bound_message_text=str(bound_message_text or "").strip(),
+            memory=memory,
         )
 
     def _add_memory_item(self, memory_item: MemoryItem) -> None:
         """
-        添加单个记忆项
+        添加单个记忆条目
 
         Args:
-            memory_item: 记忆项对象
+            memory_item: 记忆条目
         """
         if not memory_item.id:
             return
 
-        # 如果引用已存在，先移除旧的
+        # 进入侧去重：同一条记忆只绑定一次，后来的召回不再刷新它
         if memory_item.id in self.memory_map:
-            old_memory = self.memory_map[memory_item.id]
-            if old_memory in self.memories:
-                self.memories.remove(old_memory)
+            return
 
-        # 添加新引用
         self.memories.append(memory_item)
         self.memory_map[memory_item.id] = memory_item
 
-    def _cleanup_by_capacity(self, memory_type: str) -> None:
-        """
-        根据容量清理记忆：删除该类型中优先级最低且最旧的记忆
-        知识记忆类型有独立的用户信息容量管理
-
-        Args:
-            memory_type: 记忆类型
-        """
-        # 获取该类型的记忆
-        type_memories = [
-            memory for memory in self.memories if memory.memory_type == memory_type
-        ]
-
-        # 知识记忆类型需要特殊处理
-        if memory_type == "knowledge":
-            self._cleanup_knowledge_memories(type_memories)
-            return
-
-        # 其他类型按原逻辑处理
-        base_capacity = getattr(self.capacity_config, memory_type, 0)
-        capacity = int(base_capacity * self.capacity_multiplier)
-
-        # 如果容量为0或未超限，不需要清理
-        if capacity <= 0 or len(type_memories) <= capacity:
-            return
-
-        # 计算需要删除的数量
-        excess_count = len(type_memories) - capacity
-
-        # 按优先级升序、进入时间升序排序（优先级最低且最旧的排在前面）
-        type_memories.sort(key=lambda x: (x.priority_points, x.added_at))
-
-        # 删除最差的记忆
-        for i in range(excess_count):
-            memory_to_remove = type_memories[i]
-            if memory_to_remove in self.memories:
-                self.memories.remove(memory_to_remove)
-            if memory_to_remove.id in self.memory_map:
-                del self.memory_map[memory_to_remove.id]
-
-    def _cleanup_knowledge_memories(self, knowledge_memories: List[MemoryItem]) -> None:
-        """
-        清理知识记忆，分别管理普通知识记忆和用户信息记忆
-        用户信息记忆按用户平分容量
-
-        Args:
-            knowledge_memories: 所有知识记忆列表
-        """
-        # 分离用户信息记忆和普通知识记忆
-        user_info_memories = []
-        regular_memories = []
-
-        for memory in knowledge_memories:
-            if self._is_user_info_memory(memory):
-                user_info_memories.append(memory)
-            else:
-                regular_memories.append(memory)
-
-        # 获取容量限制
-        regular_capacity = int(getattr(self.capacity_config, "knowledge", 0) * self.capacity_multiplier)
-        user_info_capacity = int(getattr(self.capacity_config, "knowledge_user_info", 0) * self.capacity_multiplier)
-
-        # 清理普通知识记忆
-        regular_excess = len(regular_memories) - regular_capacity
-        if regular_excess > 0:
-            regular_memories.sort(key=lambda x: (x.priority_points, x.added_at))
-            for i in range(regular_excess):
-                memory_to_remove = regular_memories[i]
-                if memory_to_remove in self.memories:
-                    self.memories.remove(memory_to_remove)
-                if memory_to_remove.id in self.memory_map:
-                    del self.memory_map[memory_to_remove.id]
-
-        # 按用户分组清理用户信息记忆
-        self._cleanup_user_info_memories_by_user(user_info_memories, user_info_capacity)
-
-    def _cleanup_user_info_memories_by_user(self, user_info_memories: List[MemoryItem], total_capacity: int) -> None:
-        """
-        按用户平分容量清理用户信息记忆
-
-        Args:
-            user_info_memories: 用户信息记忆列表
-            total_capacity: 用户信息记忆总容量
-        """
-        if not user_info_memories or total_capacity <= 0:
-            return
-
-        # 按用户ID分组
-        user_groups = {}
-        for memory in user_info_memories:
-            user_id = self._extract_user_id(memory)
-            if user_id:
-                user_groups.setdefault(user_id, []).append(memory)
-
-        if not user_groups:
-            return
-
-        # 计算每个用户的容量（平分）
-        num_users = len(user_groups)
-        capacity_per_user = total_capacity // num_users if num_users > 0 else 0
-
-        # 为每个用户清理记忆
-        for user_id, memories in user_groups.items():
-            # 按缓存优先级排序，优先保留高优先级记忆
-            memories.sort(key=lambda x: (-x.priority_points, x.added_at))
-
-            # 删除超出的记忆
-            for memory in memories[capacity_per_user:]:
-                if memory in self.memories:
-                    self.memories.remove(memory)
-                if memory.id in self.memory_map:
-                    del self.memory_map[memory.id]
-
-    def _extract_user_id(self, memory: MemoryItem) -> str:
-        """
-        从记忆中提取用户ID
-
-        Args:
-            memory: 记忆对象
-
-        Returns:
-            用户ID字符串，如果未找到返回空字符串
-        """
-        return str(getattr(memory, "user_id", "") or "").strip()
-
-    @staticmethod
-    def _extract_user_id_from_tags(tags: List[str]) -> str:
-        for tag in tags or []:
-            text = str(tag or "").strip()
-            if text.isdigit() and len(text) > 5:
-                return text
-        return ""
+    def prune_absent_messages(self, alive_message_ids) -> List[MemoryItem]:
+        """移除绑定消息已不在本次请求里的记忆条目，返回被移除的记忆条目本身。"""
+        alive = {
+            str(mid).strip() for mid in (alive_message_ids or []) if str(mid).strip()
+        }
+        with self.lock:
+            departed = [
+                memory
+                for memory in self.memories
+                if not memory.bound_message_id or memory.bound_message_id not in alive
+            ]
+            if not departed:
+                return []
+            departed_ids = {memory.id for memory in departed}
+            self.memories = [
+                memory for memory in self.memories if memory.id not in departed_ids
+            ]
+            for memory_id in departed_ids:
+                self.memory_map.pop(memory_id, None)
+            return departed
 
     def get_memories(self) -> List[MemoryItem]:
         """
-        获取会话工作缓存中的所有记忆
+        获取短期记忆中的所有记忆条目
 
         Returns:
-            记忆列表
+            记忆条目列表
         """
         with self.lock:
             return list(self.memories)
 
-    def get_memory_ids(self) -> List[str]:
-        """获取短期仓中的长期记忆 ID，保持当前引用顺序。"""
-        with self.lock:
-            return [memory.id for memory in self.memories if memory.id]
-
-    def remove_memory_ids(self, memory_ids: List[str]) -> int:
-        """从短期仓移除指定失效引用。"""
-        ids = {str(mid).strip() for mid in (memory_ids or []) if str(mid).strip()}
-        if not ids:
-            return 0
-        with self.lock:
-            before = len(self.memories)
-            self.memories = [memory for memory in self.memories if memory.id not in ids]
-            for memory_id in ids:
-                self.memory_map.pop(memory_id, None)
-            return before - len(self.memories)
-
-
-
     def clear(self) -> None:
-        """清空会话工作缓存。"""
+        """清空短期记忆。"""
         with self.lock:
             self.memories.clear()
             self.memory_map.clear()
 
     def get_stats(self) -> Dict[str, Any]:
         """
-        获取会话工作缓存统计信息
+        获取短期记忆统计信息
 
         Returns:
             统计信息字典
         """
         with self.lock:
-            stats = {
-                "session_id": self.session_id,
-                "capacity_multiplier": self.capacity_multiplier,
-                "total_memories": len(self.memories),
-                "by_type": {},
-                "priority_distribution": {
-                    "high": 0,  # >5
-                    "medium": 0,  # 2-5
-                    "low": 0,  # 1
-                    "critical": 0,  # =0
-                },
-            }
-
-            # 按类型统计
+            by_type: Dict[str, int] = {}
             for memory in self.memories:
-                memory_type = memory.memory_type
-
-                # 知识记忆需要特殊处理
-                if memory_type == "knowledge":
-                    # 判断是否为用户信息记忆
-                    if self._is_user_info_memory(memory):
-                        sub_type = "knowledge_user_info"
-                    else:
-                        sub_type = "knowledge_regular"
-                else:
-                    sub_type = memory_type
-
-                if sub_type not in stats["by_type"]:
-                    if sub_type == "knowledge_regular":
-                        capacity = int(
-                            getattr(self.capacity_config, "knowledge", 0)
-                            * self.capacity_multiplier
-                        )
-                    elif sub_type == "knowledge_user_info":
-                        capacity = int(
-                            getattr(self.capacity_config, "knowledge_user_info", 0)
-                            * self.capacity_multiplier
-                        )
-                    else:
-                        capacity = int(
-                            getattr(self.capacity_config, memory_type, 0)
-                            * self.capacity_multiplier
-                        )
-
-                    stats["by_type"][sub_type] = {
-                        "current": 0,
-                        "capacity": capacity,
-                        "usage": 0.0,
-                    }
-                stats["by_type"][sub_type]["current"] += 1
-
-                # 缓存优先级分布统计
-                if memory.priority_points > 5:
-                    stats["priority_distribution"]["high"] += 1
-                elif memory.priority_points >= 2:
-                    stats["priority_distribution"]["medium"] += 1
-                elif memory.priority_points == 1:
-                    stats["priority_distribution"]["low"] += 1
-
-            # 计算使用率
-            for memory_type, type_stats in stats["by_type"].items():
-                capacity = type_stats["capacity"]
-                if capacity > 0:
-                    type_stats["usage"] = type_stats["current"] / capacity
-
-            return stats
+                by_type[memory.memory_type] = by_type.get(memory.memory_type, 0) + 1
+            return {
+                "session_id": self.session_id,
+                "total_memories": len(self.memories),
+                "by_type": by_type,
+            }
 
 
 class SessionMemoryManager:
-    """会话工作记忆管理器 - 管理所有会话的短期缓存。"""
+    """短期记忆管理器，管理所有会话的短期记忆。"""
 
-    def __init__(self, capacity_multiplier: float = 1.0):
-        """
-        初始化会话工作缓存管理器
-
-        Args:
-            capacity_multiplier: 容量倍数
-        """
-        self.capacity_multiplier = capacity_multiplier
-        self.capacity_config = MemoryCapacityConfig()
+    def __init__(self):
         self.lock = threading.Lock()
         self.sessions: Dict[str, SessionMemory] = {}
 
     def get_or_create_session(self, session_id: str) -> SessionMemory:
         """
-        获取或创建会话工作缓存
+        获取或创建短期记忆
 
         Args:
             session_id: 会话ID
 
         Returns:
-            会话工作缓存对象
+            短期记忆对象
         """
         with self.lock:
             if session_id not in self.sessions:
-                self.sessions[session_id] = SessionMemory(
-                    session_id, self.capacity_config, self.capacity_multiplier
-                )
+                self.sessions[session_id] = SessionMemory(session_id)
             return self.sessions[session_id]
 
     def add_memories_to_session(
-        self, session_id: str, memories: List[BaseMemory]
+        self,
+        session_id: str,
+        memories: List[BaseMemory],
+        bound_message_id: str = "",
+        bound_message_text: str = "",
     ) -> None:
         """
-        向指定会话工作缓存添加记忆
+        向指定会话的短期记忆添加记忆条目
 
         Args:
             session_id: 会话ID
             memories: 记忆列表
+            bound_message_id: 绑定消息 ID
+            bound_message_text: 绑定消息正文
         """
         session = self.get_or_create_session(session_id)
-        session.add_memories(memories)
+        session.add_memories(memories, bound_message_id, bound_message_text)
+
+    def prune_absent_messages_from_session(
+        self, session_id: str, alive_message_ids
+    ) -> List[MemoryItem]:
+        """按本次请求实际存在的消息清理短期记忆，返回被移除的记忆条目本身。"""
+        with self.lock:
+            if session_id not in self.sessions:
+                return []
+        session = self.sessions[session_id]
+        return session.prune_absent_messages(alive_message_ids)
 
     def get_session_memories(self, session_id: str) -> List[MemoryItem]:
         """
-        获取会话工作缓存
+        获取短期记忆
 
         Args:
             session_id: 会话ID
 
         Returns:
-            记忆列表
+            记忆条目列表
         """
         with self.lock:
             if session_id in self.sessions:
                 return self.sessions[session_id].get_memories()
             return []
 
-    def get_session_memory_ids(self, session_id: str) -> List[str]:
-        """
-        获取指定会话短期仓中的长期记忆 ID。
-        """
-        with self.lock:
-            if session_id in self.sessions:
-                return self.sessions[session_id].get_memory_ids()
-            return []
-
-    def remove_memory_ids_from_session(
-        self, session_id: str, memory_ids: List[str]
-    ) -> int:
-        """
-        从指定会话短期仓移除失效记忆引用。
-
-        Returns:
-            实际移除的引用数量。
-        """
-        with self.lock:
-            if session_id in self.sessions:
-                return self.sessions[session_id].remove_memory_ids(memory_ids)
-            return 0
-
-
-
     def clear_session(self, session_id: str) -> None:
         """
-        清空指定会话的工作缓存
+        清空指定会话的短期记忆
 
         Args:
             session_id: 会话ID
@@ -619,14 +242,7 @@ class SessionMemoryManager:
                 del self.sessions[session_id]
 
     def get_all_session_stats(self) -> Dict[str, Dict[str, Any]]:
-        """
-        获取所有会话的统计信息
-
-        Returns:
-            所有会话的统计信息
-        """
+        """获取全部会话的统计信息。"""
         with self.lock:
-            return {
-                session_id: session.get_stats()
-                for session_id, session in self.sessions.items()
-            }
+            sessions = list(self.sessions.items())
+        return {session_id: session.get_stats() for session_id, session in sessions}

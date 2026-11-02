@@ -51,6 +51,7 @@ class PluginContext:
         self._component_factory = None
         self._scope_name_pattern = re.compile(r"^[a-zA-Z0-9\u4e00-\u9fff_-]+$")
         self._conversation_scope_map: Dict[str, str] = {}
+        self._conversation_scope_mode: str = "persona"
         self._group_knowledge_map: Dict[str, Dict[str, str]] = {}
 
         # 初始化插件资源
@@ -215,8 +216,24 @@ class PluginContext:
         """获取LLM提供商ID"""
         return self.config.get("provider_id", "")
 
+    def _refresh_scope_mode(self) -> str:
+        """读取分柜方式，非法值回落 persona 并告警（不抛异常、不静默取首项）。"""
+        raw_mode = self.config.get("conversation_scope_mode", "persona")
+        mode = str(raw_mode if raw_mode is not None else "").strip().lower()
+        if mode not in ("persona", "group"):
+            self.logger.warning(
+                f"conversation_scope_mode 取值非法: {raw_mode!r}，已回落为 persona。"
+            )
+            mode = "persona"
+        self._conversation_scope_mode = mode
+        return mode
+
     def _refresh_scope_map(self) -> None:
-        """读取并校验 conversation_scope_map（非法配置仅告警并忽略）。"""
+        """读取分柜方式与 conversation_scope_map（非法配置仅告警并忽略）。
+
+        分柜方式的读取放在最前面，保证下面任何早退分支都不会漏刷方式。
+        """
+        self._refresh_scope_mode()
         raw_map = self.config.get("conversation_scope_map", {}) or {}
         if isinstance(raw_map, str):
             raw_text = raw_map.strip()
@@ -265,8 +282,12 @@ class PluginContext:
         self._conversation_scope_map = validated
 
     def get_conversation_scope_map(self) -> Dict[str, str]:
-        """获取已校验的会话映射。"""
+        """获取已校验的会话映射，始终返回全量（不按分柜方式过滤）。"""
         return self._conversation_scope_map.copy()
+
+    def get_conversation_scope_mode(self) -> str:
+        """获取当前分柜方式：persona 或 group。"""
+        return self._conversation_scope_mode
 
     def _refresh_domain_map(self) -> None:
         """读取知识可见性三态表，兼容旧的 group_domain_map。
@@ -338,7 +359,7 @@ class PluginContext:
         return visible_domains_from(self._group_knowledge_map, group_id)
 
     def resolve_memory_scope(self, conversation_id: str, persona_name: str = "") -> str:
-        """解析当前记忆域：优先人格名键，其次会话ID键，未命中返回 public。"""
+        """解析当前记忆域：按分柜方式只匹配对应一类键，未命中返回 public。"""
         scope, _, _ = self.resolve_memory_scope_with_source(
             conversation_id, persona_name=persona_name
         )
@@ -347,18 +368,27 @@ class PluginContext:
     def resolve_memory_scope_with_source(
         self, conversation_id: str, persona_name: str = ""
     ) -> Tuple[str, str, str]:
-        """解析记忆域并返回命中来源：scope, matched_by, matched_key。"""
+        """解析记忆域并返回命中来源：scope, matched_by, matched_key。
+
+        conversation_scope_mode 为 persona 时只看人格键，为 group 时只看会话 ID 键，
+        另一类键完全不参与匹配，因此不存在优先级问题。
+        matched_by 的取值固定为 persona / conversation / default。
+        """
         normalized_id = str(conversation_id or "").strip()
         if not normalized_id:
             raise ValueError("conversation_id 为空，无法解析 memory_scope")
         normalized_persona = str(persona_name or "").strip()
+
+        if self._conversation_scope_mode == "group":
+            scope_by_conversation = self._conversation_scope_map.get(normalized_id, "")
+            if scope_by_conversation:
+                return scope_by_conversation, "conversation", normalized_id
+            return "public", "default", "public"
+
         if normalized_persona:
             scope_by_persona = self._conversation_scope_map.get(normalized_persona, "")
             if scope_by_persona:
                 return scope_by_persona, "persona", normalized_persona
-        scope_by_conversation = self._conversation_scope_map.get(normalized_id, "")
-        if scope_by_conversation:
-            return scope_by_conversation, "conversation", normalized_id
         return "public", "default", "public"
 
     @staticmethod

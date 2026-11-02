@@ -108,7 +108,7 @@ class ToolTestAPI:
             errors.append(inner)
 
         try:
-            text = await self._inject_preview(deepmind, event, retrieval)
+            text = await self._inject_preview(deepmind, event, retrieval, payload["query"])
         except Exception as e:
             logger.error(f"[工具测试] 自动RAG 注入预览失败: {e}", exc_info=True)
             errors.append(f"注入预览失败：{_format_error(e)}")
@@ -116,7 +116,9 @@ class ToolTestAPI:
 
         return _ok(text, errors)
 
-    async def _inject_preview(self, deepmind, event: PreviewEvent, retrieval: Dict[str, Any]) -> str:
+    async def _inject_preview(
+        self, deepmind, event: PreviewEvent, retrieval: Dict[str, Any], query: str = ""
+    ) -> str:
         """跑真实注入流程，返回最终会交给模型的那段上下文。"""
         from astrbot.api.provider import ProviderRequest
 
@@ -137,11 +139,13 @@ class ToolTestAPI:
             except Exception as e:
                 logger.warning(f"[工具测试] 取灵魂状态失败: {e}")
 
-        memory_scope = await self._ctx.resolve_memory_scope_from_event(event)
-        has_secretary_decision = bool(retrieval.get("secretary_decision"))
-
         # 注入读的是会话工作缓存，真实链路也是先把召回结果填进去再注入
-        deepmind.session_memory_manager.add_memories_to_session(PREVIEW_SESSION_ID, memories)
+        deepmind.session_memory_manager.add_memories_to_session(
+            PREVIEW_SESSION_ID,
+            memories,
+            bound_message_id=self._message_id(event),
+            bound_message_text=str(query or ""),
+        )
         try:
             provider_request = ProviderRequest()
             provider_request.system_prompt = ""
@@ -150,17 +154,23 @@ class ToolTestAPI:
                 PREVIEW_SESSION_ID,
                 note_context,
                 soul_values,
-                has_secretary_decision,
-                memory_scope=memory_scope,
+                message_id=self._message_id(event),
             )
-            parts = [
-                str(block.get("content") or "")
-                for block in (provider_request.contexts or [])
-                if isinstance(block, dict)
-            ]
+            parts = []
+            for block in provider_request.extra_user_content_parts or []:
+                if isinstance(block, dict):
+                    text = block.get("text")
+                else:
+                    text = getattr(block, "text", "")
+                parts.append(str(text or ""))
             return "\n\n".join(part for part in parts if part)
         finally:
             deepmind.session_memory_manager.clear_session(PREVIEW_SESSION_ID)
+
+    @staticmethod
+    def _message_id(event) -> str:
+        message_obj = getattr(event, "message_obj", None)
+        return str(getattr(message_obj, "message_id", "") or "").strip()
 
     # === 主动搜索 ===
 
