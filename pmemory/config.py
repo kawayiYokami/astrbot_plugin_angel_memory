@@ -78,29 +78,16 @@ def normalize_mode(value: object) -> Optional[str]:
     return text if text in KNOWLEDGE_MODES else None
 
 
-def resolve_domain_for_group(group_id: object, mapping: Optional[dict]) -> Optional[str]:
-    """按 `group_domain_map` 解析群聊绑定的知识域。未绑定返回 None。"""
-    if not isinstance(mapping, dict):
-        return None
-    key = str(group_id or "").strip()
-    if not key:
-        return None
-    return normalize_domain(mapping.get(key))
-
-
 def iter_domains() -> Iterable[str]:
     return DOMAIN_DIRS.keys()
 
 
 def build_knowledge_matrix(
     knowledge_map: Optional[dict],
-    legacy_map: Optional[dict] = None,
 ) -> Tuple[Dict[str, Dict[str, str]], List[str]]:
     """把配置里的可见性表规整成「每个群 × 全部域」的完整矩阵。
 
     规则：
-    - 旧 `group_domain_map` 命中的域视作 auto，只作为默认值；
-    - 新表覆盖旧值；
     - 没写的群与域一律 manual；
     - 非法项不落进矩阵，作为错误信息返回给调用方打日志。
     """
@@ -111,15 +98,6 @@ def build_knowledge_matrix(
         if group_id not in groups:
             groups[group_id] = {domain: DEFAULT_KNOWLEDGE_MODE for domain in DOMAIN_DIRS}
         return groups[group_id]
-
-    if isinstance(legacy_map, dict):
-        for raw_key, raw_domain in legacy_map.items():
-            group_id = str(raw_key).strip()
-            domain = normalize_domain(raw_domain)
-            if not group_id or not domain:
-                errors.append(f"group_domain_map 非法项: {raw_key}={raw_domain}")
-                continue
-            _ensure(group_id)[domain] = MODE_AUTO
 
     if isinstance(knowledge_map, dict):
         for raw_key, raw_modes in knowledge_map.items():

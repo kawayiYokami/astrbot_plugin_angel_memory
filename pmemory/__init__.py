@@ -14,7 +14,6 @@ from .config import (
     memory_namespace,
     normalize_domain,
     read_scopes,
-    resolve_domain_for_group,
 )
 from .kb import PMemory, pmemory
 from .memory import MemoryStore, to_seconds, to_us
@@ -31,7 +30,6 @@ __all__ = [
     "normalize_domain",
     "pmemory",
     "read_scopes",
-    "resolve_domain_for_group",
     "to_seconds",
     "to_us",
 ]

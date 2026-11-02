@@ -271,16 +271,8 @@ class PMemory:
             return
         try:
             if not self._embedding_provider.is_available():
-                provider_type = ""
-                try:
-                    provider_type = str(self._embedding_provider.get_provider_type() or "")
-                except Exception:
-                    provider_type = ""
-                if provider_type == "local":
-                    logger.info("[PMEMORY] 本地嵌入提供商懒加载，首次向量化时载入")
-                else:
-                    logger.warning("[PMEMORY] 嵌入提供商当前不可用，跳过向量回调注册")
-                    return
+                logger.warning("[PMEMORY] 嵌入提供商当前不可用，跳过向量回调注册")
+                return
 
             bridge = EmbeddingBridge(self._embedding_provider, loop=owner_loop)
             dimension = bridge.probe_dimension()

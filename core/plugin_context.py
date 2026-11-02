@@ -133,20 +133,6 @@ class PluginContext:
         legacy = str(self.config.get("astrbot_embedding_provider_id", "") or "").strip()
         return legacy
 
-    def get_enable_local_embedding(self) -> bool:
-        """获取是否启用本地嵌入模型"""
-        legacy_value = bool(self.config.get("enable_local_embedding", False))
-        retrieval = self.config.get("retrieval", {}) or {}
-        if isinstance(retrieval, dict) and "enable_local_embedding" in retrieval:
-            new_value = bool(retrieval.get("enable_local_embedding", False))
-            # 兼容迁移：当 retrieval 仍是默认空配置时，回退旧字段。
-            new_embedding_id = str(retrieval.get("embedding_provider_id", "") or "").strip()
-            new_rerank_id = str(retrieval.get("rerank_provider_id", "") or "").strip()
-            if not new_value and not new_embedding_id and not new_rerank_id and legacy_value:
-                return legacy_value
-            return new_value
-        return legacy_value
-
     def get_rerank_provider_id(self) -> str:
         """获取检索重排提供商ID。"""
         retrieval = self.config.get("retrieval", {}) or {}
@@ -290,16 +276,14 @@ class PluginContext:
         return self._conversation_scope_mode
 
     def _refresh_domain_map(self) -> None:
-        """读取知识可见性三态表，兼容旧的 group_domain_map。
+        """读取知识可见性三态表。
 
-        表结构：`{群号: {域: auto|manual|hidden}}`。未写的群与域按 manual 处理；
-        旧表命中的域视作 auto，新表出现同名群时以新表为准。
+        表结构：`{群号: {域: auto|manual|hidden}}`。未写的群与域按 manual 处理。
         """
         from ..pmemory.config import build_knowledge_matrix
 
         matrix, errors = build_knowledge_matrix(
             self._parse_json_config("group_knowledge_map"),
-            self._parse_json_config("group_domain_map"),
         )
         for message in errors:
             self.logger.warning(f"{message}，已忽略该配置项")

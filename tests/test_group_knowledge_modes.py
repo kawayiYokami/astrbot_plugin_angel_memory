@@ -33,23 +33,6 @@ def test_matrix_defaults_every_domain_to_manual():
     assert sorted(visible_domains_from(matrix, "123")) == sorted(DOMAIN_DIRS)
 
 
-def test_legacy_group_domain_map_becomes_auto():
-    matrix, errors = build_knowledge_matrix({}, {"123456": "原神"})
-    assert errors == []
-    assert matrix["123456"]["gi"] == "auto"
-    assert matrix["123456"]["hsr"] == "manual"
-    assert auto_domains_from(matrix, "123456") == ["gi"]
-
-
-def test_new_map_overrides_legacy():
-    matrix, _ = build_knowledge_matrix(
-        {"123456": {"gi": "hidden"}},
-        {"123456": "gi"},
-    )
-    assert matrix["123456"]["gi"] == "hidden"
-    assert auto_domains_from(matrix, "123456") == []
-
-
 def test_invalid_entries_are_reported_not_stored():
     matrix, errors = build_knowledge_matrix(
         {

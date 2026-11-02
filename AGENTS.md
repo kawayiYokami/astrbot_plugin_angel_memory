@@ -111,7 +111,7 @@ WebUI 源码在 `webui/`，改页面后需重新构建，产物落到 `pages/mem
 | `docs/` | 设计文档与上游能力参考 |
 | `plan/` | 计划与归档 |
 
-配置键以 `_conf_schema.json` 为准。群知识三态写在 `group_knowledge_map`；旧 `group_domain_map` 只作兼容，命中的域视为 `auto`。
+配置键以 `_conf_schema.json` 为准。群知识三态写在 `group_knowledge_map`，未写的群与域默认按 `manual` 处理。
 
 Web 页面在 `webui/src/router/index.ts`：总览、记忆浏览、用户画像、群聊知识库、Tags 调试、笔记索引、笔记读取、导入导出、维护状态、工具测试、功能调试、插件设置。没有向量检索页。
 

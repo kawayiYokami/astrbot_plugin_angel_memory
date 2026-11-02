@@ -204,7 +204,6 @@ class PathManager:
         """获取供应商显示名称"""
         provider_id = self.get_current_provider()
         provider_names = {
-            "local": "本地模型",
             "openai": "OpenAI",
             "claude": "Claude",
             "gemini": "Gemini",

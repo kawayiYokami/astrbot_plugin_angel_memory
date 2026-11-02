@@ -15,10 +15,6 @@ from astrbot.api import logger
 
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager
-from ..llm_memory.service.memory_decay_policy import (
-    MemoryDecayConfig,
-    build_decay_config,
-)
 from ..pmemory import MemoryStore, pmemory
 from .deepmind import DeepMind
 from .memory_runtime import PMemoryMemoryRuntime
@@ -53,12 +49,9 @@ class ComponentFactory:
         self.logger.debug("ComponentFactory初始化完成")
         self.logger.debug(f"当前提供商: {plugin_context.get_current_provider()}")
 
-    async def create_all_components(self, config: dict = None) -> Dict[str, Any]:
+    async def create_all_components(self) -> Dict[str, Any]:
         """
         异步创建所有核心组件
-
-        Args:
-            config: 插件配置（可选，如果不提供则从PluginContext获取）
 
         Returns:
             包含所有组件的字典
@@ -66,13 +59,8 @@ class ComponentFactory:
         if self._initialized:
             return self._components
 
-        # 如果没有提供配置，从PluginContext获取
-        if config is None:
-            config = self.plugin_context.get_all_config()
-
         try:
             self.logger.debug("开始创建核心组件...")
-            decay_config = build_decay_config(config)
             rerank_provider = self._resolve_rerank_provider()
             rerank_max_docs = self._resolve_rerank_max_docs()
             rerank_max_tokens = self._resolve_rerank_max_tokens()
@@ -95,7 +83,7 @@ class ComponentFactory:
             # 3. 记忆运行时
             memory_store = MemoryStore()
             self._components["memory_store"] = memory_store
-            memory_runtime = self._create_memory_runtime(memory_store, decay_config)
+            memory_runtime = self._create_memory_runtime(memory_store)
             self._components["memory_runtime"] = memory_runtime
 
             # 4. 笔记索引服务
@@ -158,24 +146,18 @@ class ComponentFactory:
             return None
 
     @staticmethod
-    def _build_decay_policy(decay_config: MemoryDecayConfig) -> Dict[str, Any]:
-        """把旧三档参数翻译成 p-memory 的 DecayPolicy。
+    def _build_decay_policy() -> Dict[str, Any]:
+        """把内置三档参数翻译成 p-memory 的 DecayPolicy。
 
-        旧实现用 `cycle_tier0_days / (forget_speed * tier0_forget_speed)` 折算周期，
-        库侧只接受整数天数，这里沿用同一口径把速度合进周期。
+        这几个值经过长期实测，固定写在此处，不对外暴露覆盖入口：
+        tier0=3.0 / tier1=10.0 / 巩固增量 2.5 / T0 周期 3 天 / 遗忘倍率 1.0。
         """
-        speed = max(0.01, float(decay_config.forget_speed)) * max(
-            0.01, float(decay_config.tier0_forget_speed)
-        )
-        cycle_days = max(1, int(round(float(decay_config.cycle_tier0_days) / speed)))
-        tier0 = float(decay_config.tier0_threshold)
-        tier1 = max(float(decay_config.tier1_threshold), tier0 + 0.001)
         return {
-            "tier0_threshold": tier0,
-            "tier1_threshold": tier1,
-            "useful_score_boost": max(0.01, float(decay_config.consolidate_speed)),
+            "tier0_threshold": 3.0,
+            "tier1_threshold": 10.0,
+            "useful_score_boost": 2.5,
             "strength_boost": 1,
-            "tier0_cycle_days": cycle_days,
+            "tier0_cycle_days": 3,
         }
 
     def _configure_pmemory(
@@ -211,11 +193,10 @@ class ComponentFactory:
     # === 组件创建 ===
 
     async def _try_create_embedding_provider(self):
-        """创建嵌入提供商；不可用时返回 None，由库降级为纯全文检索。"""
+        """创建嵌入提供商；未配置或不可用时返回 None，由库降级为纯全文检索。"""
         embedding_provider_id = self.plugin_context.get_embedding_provider_id()
-        enable_local = self.plugin_context.get_enable_local_embedding()
-        if not str(embedding_provider_id or "").strip() and not enable_local:
-            self.logger.info("未启用嵌入能力，记忆检索走纯全文")
+        if not str(embedding_provider_id or "").strip():
+            self.logger.info("未配置嵌入提供商，记忆检索走纯全文")
             return None
 
         self.logger.debug(f"创建嵌入提供商: '{embedding_provider_id}'")
@@ -235,7 +216,6 @@ class ComponentFactory:
         factory = EmbeddingProviderFactory(self.context)
         embedding_provider = await factory.create_provider(
             embedding_provider_id,
-            enable_local_embedding=self.plugin_context.get_enable_local_embedding(),
             batch_size=self.plugin_context.get_embedding_batch_size(),
             timeout=60,
         )
@@ -304,10 +284,9 @@ class ComponentFactory:
     def _create_memory_runtime(
         self,
         memory_store: MemoryStore,
-        decay_config: Optional[MemoryDecayConfig] = None,
     ) -> PMemoryMemoryRuntime:
         """创建统一记忆运行时。"""
-        policy = self._build_decay_policy(decay_config or MemoryDecayConfig())
+        policy = self._build_decay_policy()
         runtime = PMemoryMemoryRuntime(memory_store, decay_policy=policy)
         self.logger.debug(f"统一记忆运行时创建完成 (p-memory) 衰减策略={policy}")
         return runtime
