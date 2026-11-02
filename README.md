@@ -48,7 +48,7 @@ pip install -r requirements.txt
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
-| `provider_id` | 空 | 记忆整理用的模型，建议带思考能力。留空则只做基础记忆。 |
+| `provider_id` | 空 | 记忆整理用的模型，建议带思考能力。留空则记忆照常能查能带，只是不再自动整理新记忆。 |
 | `retrieval.embedding_provider_id` | 空 | 可选。不填则记忆检索走纯全文（关键词匹配），不需要额外模型或依赖。 |
 | `retrieval.rerank_provider_id` | 空 | 推荐。结果会再排一次序，提升明显。留空会尝试复用 `provider_id`。 |
 | `conversation_scope_mode` | 按人格 | 记忆分类方式，决定分类表按什么识别会话：按人格，或按群聊。 |
