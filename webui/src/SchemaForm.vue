@@ -247,6 +247,9 @@ const groups = computed<Group[]>(() => {
 
   for (const [key, meta] of Object.entries(schema)) {
     if (!meta || typeof meta !== 'object') continue
+    // 明确标记为 hidden 的字段不渲染：该配置另有专门入口（如「群聊知识库」页面）。
+    // 值仍留在 modelValue 里随保存原样提交，不因为没渲染而丢失。
+    if (meta._special === 'hidden') continue
     if (meta.type === 'object') {
       const rows: CardRow[] = []
       for (const [subKey, subMeta] of Object.entries(meta.items || {})) {

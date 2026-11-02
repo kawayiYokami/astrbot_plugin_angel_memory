@@ -74,6 +74,7 @@
     "editor_mode": true,
     "editor_language": "json",
     "editor_theme": "vs-dark",
+    "_special": "hidden",
     "hint": "结构为 {\"群号\": {\"gi\": \"auto\", \"hsr\": \"manual\", \"zzz\": \"hidden\"}}。域取 gi / hsr / zzz / personal / angel；未写的群与域默认 manual。推荐在「群聊知识库」页面里改，不用手写 JSON。"
   },
   "memory_behavior": {
