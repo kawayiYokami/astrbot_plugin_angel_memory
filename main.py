@@ -18,6 +18,7 @@ from astrbot.api import logger
 # 导入核心模块
 from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
+from .pmemory import pmemory
 from .tools.angel_remember import CoreMemoryRememberTool
 from .tools.angel_recall import CoreMemoryRecallTool
 from .tools.angel_note_read import NoteRecallTool
@@ -28,7 +29,7 @@ from .tools.angel_note_create import NoteCreateTool
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "1.3.37",
+    "2.0.9",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -388,9 +389,9 @@ class AngelMemoryPlugin(Star):
 
     async def terminate(self) -> None:
         """插件卸载时的清理工作"""
+        self._is_terminating = True
         try:
             self.logger.debug("Angel Memory Plugin 正在关闭...")
-            self._is_terminating = True
 
             # 先停止插件内自行提交的后台任务，避免与组件关闭并发冲突。
             pending_tasks = [t for t in self._background_tasks if not t.done()]
@@ -415,8 +416,22 @@ class AngelMemoryPlugin(Star):
                 f"Angel Memory Plugin 已关闭，最终状态: {status.get('state', 'unknown')}"
             )
 
-        except (AttributeError, RuntimeError) as e:
+        except Exception as e:
             self.logger.error(f"Angel Memory Plugin: 插件卸载清理失败: {e}", exc_info=True)
+        finally:
+            await self._close_pmemory()
+
+    async def _close_pmemory(self) -> None:
+        """无条件关闭 p-memory 知识库，释放 native 目录锁。
+
+        关闭链（plugin_manager → background_initializer → component_factory）任一环
+        没建好或抛异常，都靠这里兜底。pmemory.close() 自身幂等，重复调用无害。
+        """
+        try:
+            await asyncio.to_thread(pmemory.close)
+            self.logger.info("p-memory 知识库已关闭")
+        except Exception as e:
+            self.logger.error(f"p-memory 知识库关闭失败: {e}", exc_info=True)
 
     def get_plugin_status(self):
         """
