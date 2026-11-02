@@ -522,7 +522,13 @@ function providerOptions(path: string[]) {
     : /rerank/i.test(key)
       ? p.rerank || []
       : p.chat || []
-  return [{ label: '(留空)', value: '' }, ...ids.map((id) => ({ label: id, value: id }))]
+  // 留空在不同字段上语义不同：重排留空是复用核心模型，嵌入留空是不做语义检索
+  const emptyLabel = /embed/i.test(key)
+    ? '(留空，只用关键词查找)'
+    : /rerank/i.test(key)
+      ? '(留空，复用核心模型)'
+      : '(留空)'
+  return [{ label: emptyLabel, value: '' }, ...ids.map((id) => ({ label: id, value: id }))]
 }
 </script>
 

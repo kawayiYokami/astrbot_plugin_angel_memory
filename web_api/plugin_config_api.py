@@ -81,13 +81,14 @@ class PluginConfigAPI:
         try:
             host = self._ctx.astrbot_context
             for p in host.get_all_providers():
-                providers["chat"].append(p.meta().id)
+                provider_meta = p.meta()
+                providers["chat"].append(provider_meta.id)
+                # 重排候选按能力筛：框架没有 get_all_rerank_providers，
+                # 与 component_factory 解析重排提供商同理，凡带 rerank() 的都算候选。
+                if hasattr(p, "rerank"):
+                    providers["rerank"].append(provider_meta.id)
             for p in host.get_all_embedding_providers():
                 providers["embedding"].append(p.meta().id)
-            rerank_getter = getattr(host, "get_all_rerank_providers", None)
-            if callable(rerank_getter):
-                for p in rerank_getter():
-                    providers["rerank"].append(p.meta().id)
         except Exception as e:
             logger.warning(f"AngelMemory: 获取 provider 列表失败: {e}")
 
