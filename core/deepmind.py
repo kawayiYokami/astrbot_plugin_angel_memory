@@ -383,18 +383,17 @@ class DeepMind:
             else:
                 query, user_list = self.prompt_builder.format_chat_records(context_chat_records)
 
-        # 3. 如果未配置 provider_id，跳过记忆整理
-        if not self.provider_id:
-            return
-
-        # 4. 检索长期记忆和笔记
+        # 3. 检索长期记忆和笔记
+        # 召回与注入全是查询和拼装，一次模型都不调，因此不依赖 provider_id。
+        # 只有「整理 / 反思」才需要模型，守卫加在那几处（见第 9 步与
+        # async_analyze_and_update_memory），不能因为没配模型就把召回一起停掉。
         retrieval_data = await self._retrieve_memories_and_notes(event, query)
 
         long_term_memories = retrieval_data["long_term_memories"]
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
 
-        # 5. 将检索到的长期记忆填入会话工作缓存，连同带入它的消息一起绑定
+        # 4. 将检索到的长期记忆填入会话工作缓存，连同带入它的消息一起绑定
         current_message_id = self._event_message_id(event)
         current_message_text = str(self._extract_message_text(event) or "").strip()
         if long_term_memories and self.memory_system:
@@ -405,7 +404,7 @@ class DeepMind:
                 bound_message_text=current_message_text,
             )
 
-        # 6. 构建笔记上下文（复用NoteContextBuilder）
+        # 5. 构建笔记上下文（复用NoteContextBuilder）
         note_context = ""
         if candidate_notes:
             from .utils.note_context_builder import NoteContextBuilder
@@ -423,7 +422,7 @@ class DeepMind:
                     f"注入上限K={self.note_inject_top_k}"
                 )
 
-        # 7. 获取灵魂状态倾向
+        # 6. 获取灵魂状态倾向
         soul_state_values = None
         if hasattr(self, "soul") and self.soul:
             try:
@@ -431,7 +430,7 @@ class DeepMind:
             except Exception as e:
                 self.logger.warning(f"获取灵魂状态倾向失败: {e}")
 
-        # 8. 刷新当前批次用户画像通道
+        # 7. 刷新当前批次用户画像通道
         memory_scope = "public"
         try:
             profile_refresh_started_at = time.time()
@@ -490,7 +489,7 @@ class DeepMind:
                 exc_info=True,
             )
 
-        # 9. 注入记忆、笔记和灵魂状态到请求（注入源是短期记忆，不重新检索）
+        # 8. 注入记忆、笔记和灵魂状态到请求（注入源是短期记忆，不重新检索）
         alive_ids = self._alive_message_ids(context_chat_records, current_message_id)
         if alive_ids is not None:
             departed_items = (
@@ -502,12 +501,20 @@ class DeepMind:
                 self.logger.debug(
                     f"[短期记忆] 清理离场记忆条目 session={session_id} count={len(departed_items)}"
                 )
-                await self._reflect_departed_memories(
-                    session_id,
-                    memory_scope,
-                    current_message_id,
-                    departed_items,
-                )
+                # 离场反思要把记忆送去模型做强化/合并，没配核心模型就跳过，
+                # 否则只会提交一个注定失败的后台任务。
+                if self.provider_id:
+                    await self._reflect_departed_memories(
+                        session_id,
+                        memory_scope,
+                        current_message_id,
+                        departed_items,
+                    )
+                else:
+                    self.logger.debug(
+                        f"[反思调度] 未配置核心模型，跳过离场记忆送审 "
+                        f"session={session_id} 记忆数={len(departed_items)}"
+                    )
         injected_memories = await self._inject_memories_to_request(
             request,
             session_id,
@@ -517,7 +524,7 @@ class DeepMind:
             message_order=self._message_order(context_chat_records),
         )
 
-        # 10. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
+        # 9. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
         #     账目按实际挂进请求的那批记忆写，反思强化对象与模型看到的一致
         try:
             injected_memories = list(injected_memories or [])
@@ -940,6 +947,12 @@ class DeepMind:
             event: 消息事件
             response: 主LLM的响应
         """
+        # 整理新记忆整条链（攒轮次、调度 tick、反思送审）最终都要调模型识别该记什么。
+        # 没配核心模型就直接收工：召回与注入不走这里，不受影响。
+        if not self.provider_id:
+            self.logger.debug("[反思调度] 未配置核心模型，跳过本次记忆整理")
+            return
+
         # 获取会话ID
         session_id = self._get_session_id(event)
         await self._ensure_reflection_tick_task()
