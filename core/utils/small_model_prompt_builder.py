@@ -7,37 +7,11 @@
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 from ..session_memory import MemoryItem
-from ..config import MemoryConstants
 from .memory_formatter import MemoryFormatter
 
 
 class SmallModelPromptBuilder:
     """小模型提示词构建器"""
-
-    @staticmethod
-    def format_relative_time(timestamp: float) -> str:
-        """
-        格式化相对时间
-
-        Args:
-            timestamp: Unix时间戳
-
-        Returns:
-            相对时间字符串，如"刚刚"、"2分钟前"等
-        """
-        if not timestamp:
-            return ""
-
-        now = datetime.now().timestamp()
-        diff = now - timestamp
-
-        if diff < MemoryConstants.TIME_MINUTE:
-            return "刚刚"
-        if diff < MemoryConstants.TIME_HOUR:
-            return f"{int(diff / MemoryConstants.TIME_MINUTE)}分钟前"
-        if diff < MemoryConstants.TIME_DAY:
-            return f"{int(diff / MemoryConstants.TIME_HOUR)}小时前"
-        return f"{int(diff / MemoryConstants.TIME_DAY)}天前"
 
     @staticmethod
     def extract_text_from_content(content) -> str:
@@ -141,7 +115,7 @@ class SmallModelPromptBuilder:
         排版规则：
         - 严格按发送时间升序，时间戳相同保持传入顺序
         - 相邻两条间隔达到 600 秒就插一行 HH:MM（UTC+8），第一条之前也插
-        - 换人才起新段，段首写「名字（号）」不缩进，该人后续消息逐行缩进两空格
+        - 换人起新段；插过时间行也一律重新署名，段首写「名字（号）」不缩进，该人后续消息逐行缩进两空格
         - 引用片段单列成「> 名字：内容」，放在该条消息正文之前
         - [At:...]、[图片] 这类占位符留在正文原位，不加任何 markdown 标记
 
@@ -198,10 +172,12 @@ class SmallModelPromptBuilder:
                 timestamp = 0.0
 
             clock = SmallModelPromptBuilder._format_chat_clock(timestamp)
-            if clock and (
+            # 插了时间行就等于断开连续段：下一条必须重新署名，否则读不出是谁说的
+            clock_inserted = bool(clock) and (
                 last_timestamp is None
                 or timestamp - last_timestamp >= SmallModelPromptBuilder.CHAT_TIME_GAP_SECONDS
-            ):
+            )
+            if clock_inserted:
                 lines.append(clock)
 
             if role == "assistant":
@@ -231,8 +207,8 @@ class SmallModelPromptBuilder:
                         "name": sender_name or "群友",
                     }
 
-            # 换人才起新段；同一个人连续发言不重复署名
-            if speaker_key != last_speaker_key:
+            # 换人起新段；插过时间行也一律重新署名；同一个人紧接着说才不重复署名
+            if clock_inserted or speaker_key != last_speaker_key:
                 lines.append(speaker_label)
                 last_speaker_key = speaker_key
 

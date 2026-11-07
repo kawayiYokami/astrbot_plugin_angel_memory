@@ -111,6 +111,39 @@ def test_clock_uses_utc_plus_eight():
     assert text.splitlines()[0] == "12:00"
 
 
+def test_gap_forces_repeated_header_for_same_speaker():
+    """插了时间行之后，同一个人再说话也要重新署名。"""
+    text = fmt(
+        [
+            user("甲", "1", "先说", ts(12, 40)),
+            user("甲", "1", "隔了二十多分钟", ts(13, 5)),
+        ]
+    )
+    assert text.splitlines() == [
+        "12:40",
+        "甲（1）",
+        "  先说",
+        "13:05",
+        "甲（1）",
+        "  隔了二十多分钟",
+    ]
+    assert text.count("甲（1）") == 2, "时间行之后必须重新署名"
+
+
+def test_short_gap_keeps_same_speaker_without_repeated_header():
+    """断档不到十分钟不插时间行，同一个人继续接下去，不重复署名。"""
+    text = fmt(
+        [
+            user("甲", "1", "先说", ts(12, 0)),
+            user("甲", "1", "八分钟后", ts(12, 8)),
+            user("甲", "1", "九分钟后", ts(12, 9)),
+        ]
+    )
+    assert "12:08" not in text and "12:09" not in text
+    assert text.count("甲（1）") == 1, "没有时间行就接在同一段里"
+    assert text.splitlines() == ["12:00", "甲（1）", "  先说", "  八分钟后", "  九分钟后"]
+
+
 # ---------- 三、时间排序 ----------
 
 def test_out_of_order_input_is_sorted_by_timestamp():
