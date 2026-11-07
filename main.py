@@ -29,7 +29,7 @@ from .tools.angel_note_create import NoteCreateTool
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "2.0.12",
+    "2.0.13",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
@@ -358,6 +358,9 @@ class AngelMemoryPlugin(Star):
                 self.logger.debug("没有记忆上下文，跳过记忆整理")
                 return
 
+            # 发送现场捕获本轮回复文本：on_llm_response 是单点来源，实测大量为空
+            self._capture_sent_reply(event)
+
             # 将记忆整理任务提交到事件循环，但不等待其完成，以避免阻塞主事件流程
             task = asyncio.create_task(
                 self.plugin_manager.handle_memory_consolidation(
@@ -369,6 +372,61 @@ class AngelMemoryPlugin(Star):
 
         except Exception as e:
             self.logger.error(f"记忆整理提交异常: {e}", exc_info=True)
+
+    def _capture_sent_reply(self, event: AstrMessageEvent) -> None:
+        """从发送现场捕获本轮回复文本，写回记忆上下文。
+
+        on_llm_response 是单点来源，流式与部分场景下取不到文本。
+        框架在 OnAfterMessageSentEvent 钩子之后才 clear_result，
+        所以钩子执行时 event 的 result 仍然可用，用它作为首选来源；
+        取不到时保留 on_llm_response 存下的那份，不覆盖。
+        """
+        import json
+        import time
+
+        sent_text = ""
+        try:
+            result = event.get_result()
+            if result is not None:
+                sent_text = str(result.get_plain_text() or "").strip()
+        except Exception as e:
+            self.logger.debug(f"[反思调度] 读取发送现场回复失败: {e}")
+
+        raw_context = getattr(event, "angelmemory_context", None)
+        try:
+            context_data = json.loads(raw_context) if raw_context else {}
+        except (json.JSONDecodeError, TypeError) as e:
+            self.logger.warning(f"[反思调度] 记忆上下文无法解析，放弃回复捕获: {e}")
+            return
+
+        if not isinstance(context_data, dict):
+            self.logger.warning("[反思调度] 记忆上下文不是对象，放弃回复捕获")
+            return
+
+        stored = context_data.get("llm_response") or {}
+        stored_text = str(stored.get("completion_text") or "") if isinstance(stored, dict) else ""
+
+        if sent_text:
+            context_data["llm_response"] = {
+                "completion_text": sent_text,
+                "timestamp": stored.get("timestamp") if isinstance(stored, dict) else time.time(),
+                "source": "after_message_sent",
+            }
+            event.angelmemory_context = json.dumps(context_data)
+            self.logger.info(
+                f"[反思调度] 回复文本取自发送现场，{len(sent_text)} 字"
+                f"（LLM 响应钩子记录 {len(stored_text)} 字，已覆盖）"
+            )
+            return
+
+        if stored_text:
+            self.logger.info(
+                f"[反思调度] 回复文本取自 LLM 响应钩子，{len(stored_text)} 字（发送现场为空）"
+            )
+        else:
+            self.logger.info(
+                "[反思调度] 回复文本缺失：发送现场为空，LLM 响应钩子也没有内容"
+            )
 
     def _track_background_task(self, task: asyncio.Task) -> None:
         """追踪后台任务，便于 terminate 阶段统一取消并等待收束。"""

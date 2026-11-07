@@ -1,6 +1,6 @@
 """剧本式对话记录排版的断言。
 
-覆盖：分段与署名、时间断档、时间排序、引用单列、@ 占位符、署名兜底。
+覆盖：分段与署名、时间断档、时间排序、引用单列（含多行与半角括号）、@ 占位符、署名兜底。
 """
 
 from datetime import datetime, timedelta, timezone
@@ -144,6 +144,24 @@ def test_short_gap_keeps_same_speaker_without_repeated_header():
     assert text.splitlines() == ["12:00", "甲（1）", "  先说", "  八分钟后", "  九分钟后"]
 
 
+def test_exactly_six_hundred_seconds_inserts_clock():
+    """正好 600 秒要插时间行（判定是 >= 而不是 >），同一人也重新署名。"""
+    text = fmt(
+        [
+            user("甲", "1", "整点前", ts(12, 0)),
+            user("甲", "1", "整点后", ts(12, 10)),
+        ]
+    )
+    assert text.splitlines() == [
+        "12:00",
+        "甲（1）",
+        "  整点前",
+        "12:10",
+        "甲（1）",
+        "  整点后",
+    ]
+
+
 # ---------- 三、时间排序 ----------
 
 def test_out_of_order_input_is_sorted_by_timestamp():
@@ -197,6 +215,37 @@ def test_message_with_only_quote_still_renders():
     text = fmt([user("甲", "1", "[引用消息(乙: 只有引用)]", ts(12, 0))])
     assert "  > 乙：只有引用" in text
     assert "甲（1）" in text
+
+
+def test_multiline_quote_prefixes_every_line():
+    """被引内容带换行时，每一行都要带「  > 」前缀，不能出现顶格续行。"""
+    text = fmt([user("甲", "1", "[引用消息(乙: 第一行\n第二行)]好的", ts(12, 0))])
+    assert text.splitlines() == [
+        "12:00",
+        "甲（1）",
+        "  > 乙：第一行",
+        "  > 第二行",
+        "  好的",
+    ]
+    # 顶格行只允许是时间行或发言人署名行，续行必须缩进
+    assert "\n第二行" not in text
+    for line in text.splitlines():
+        if line and not line.startswith(" "):
+            assert line in ("12:00", "甲（1）"), f"顶格行只能是时间或署名：{line!r}"
+
+
+def test_quote_with_halfwidth_paren_is_not_truncated():
+    """被引内容含半角 ) 时不能被截断，")]" 才是收尾。"""
+    cases = [
+        ("[引用消息(乙: 今天天气:) 挺好)]我的回复", "  > 乙：今天天气:) 挺好"),
+        ("[引用消息(乙: 第一条1) 第二条)]我的回复", "  > 乙：第一条1) 第二条"),
+        ("[引用消息(乙: 哈哈哈(笑))]我的回复", "  > 乙：哈哈哈(笑)"),
+    ]
+    for content, expected_quote in cases:
+        text = fmt([user("甲", "1", content, ts(12, 0))])
+        assert expected_quote in text, f"引用被截断了：{content!r} -> {text!r}"
+        assert "  我的回复" in text
+        assert "引用消息" not in text
 
 
 # ---------- 五、@ 与占位符留在正文 ----------
@@ -276,15 +325,23 @@ def test_participants_list_deduped_by_sender_id():
     ]
 
 
-# ---------- 八、不加 markdown ----------
+# ---------- 八、不使用 markdown 修饰 ----------
 
-def test_output_has_no_markdown_markers():
-    """整段是纯文本，不出现 markdown 标记。"""
+def test_output_uses_no_markdown_decorations():
+    """除了「  > 」这个引用排版符号，不出现加粗、标题、代码块等 markdown 修饰。"""
     text = fmt(
         [
             user("甲", "1", "普通内容", ts(12, 0)),
             assistant("回答", ts(12, 1)),
+            user("乙", "2", "[引用消息(甲: 被引内容)]回复", ts(12, 2)),
         ]
     )
-    for marker in ("**", "##", "`", "```"):
-        assert marker not in text
+    for marker in ("**", "__", "##", "###", "`", "```", "~~", "- ["):
+        assert marker not in text, f"出现了 markdown 修饰：{marker!r}"
+    # 顶格的 ">" 是 markdown 引用块，出现即视为修饰越界
+    assert not [line for line in text.splitlines() if line.startswith(">")]
+    # 「  > 」是引用行的排版符号，不属于被禁的 markdown 修饰，按既定样例保留
+    assert text.count("  > ") == 1
+    assert [line for line in text.splitlines() if line.startswith("  > ")] == [
+        "  > 甲：被引内容"
+    ]

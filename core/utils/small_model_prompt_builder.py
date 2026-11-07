@@ -52,8 +52,9 @@ class SmallModelPromptBuilder:
     def _split_quote_fragments(text: str) -> Tuple[List[str], str]:
         """抽出 [引用消息(某人: 被引内容)] 片段，返回 (引用列表, 剩余正文)。
 
-        括号里可能嵌套 [At:...] 或圆括号，所以按深度配对吃到最外层右括号，
-        不能在第一个 ')' 处断开。括号没闭合时原样留在正文里。
+        收尾以 ")]" 为准：被引内容里常出现半角 ")"（"笑)"、"1)"、":)" 这类），
+        纯括号深度配对会在第一个 ')' 处截断。找不到 ")]" 时才退回深度配对，
+        仍不闭合就整段留在正文里。
         """
         marker = "[引用消息("
         quotes: List[str] = []
@@ -66,41 +67,63 @@ class SmallModelPromptBuilder:
                 break
             rest.append(text[cursor:start])
 
-            depth = 1
-            index = start + len(marker)
-            while index < len(text) and depth > 0:
-                if text[index] == "(":
-                    depth += 1
-                elif text[index] == ")":
-                    depth -= 1
-                index += 1
+            inner_start = start + len(marker)
+            end = text.find(")]", inner_start)
+            if end >= 0:
+                inner = text[inner_start:end]
+                cursor = end + 2
+            else:
+                # 没有 ")]" 收尾：退回括号深度配对，仍不闭合就整段留在正文
+                depth = 1
+                index = inner_start
+                while index < len(text) and depth > 0:
+                    if text[index] == "(":
+                        depth += 1
+                    elif text[index] == ")":
+                        depth -= 1
+                    index += 1
+                if depth > 0:
+                    rest.append(text[start:])
+                    break
+                inner = text[inner_start : index - 1]
+                cursor = index + 1 if index < len(text) and text[index] == "]" else index
 
-            if depth > 0:
-                rest.append(text[start:])
-                break
-
-            inner = text[start + len(marker) : index - 1].strip()
-            if index < len(text) and text[index] == "]":
-                index += 1
-            if inner:
-                quotes.append(inner)
-            cursor = index
+            if inner.strip():
+                quotes.append(inner.strip())
 
         return quotes, "".join(rest)
 
     @staticmethod
-    def _render_quote(inner: str) -> str:
-        """把「某人: 被引内容」渲染成「  > 某人：被引内容」。"""
+    def _render_quote(inner: str) -> List[str]:
+        """把「某人: 被引内容」渲染成带前缀的引用行列表。
+
+        被引内容可能自带换行，每一行都必须带 "  > " 前缀：顶格出现的续行
+        会被读成发言人署名行，正是这套排版要避免的误判。
+        """
         text = (inner or "").strip()
+        head = ""
+        body = text
         for separator in (": ", "：", ":"):
             if separator in text:
                 name, _, content = text.partition(separator)
                 name = name.strip()
-                content = content.strip()
                 if name:
-                    return f"  > {name}：{content}"
+                    head = f"{name}："
+                    body = content.strip()
                 break
-        return f"  > {text}"
+
+        rendered: List[str] = []
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if not rendered:
+                rendered.append(f"  > {head}{stripped}")
+            else:
+                rendered.append(f"  > {stripped}")
+        if not rendered:
+            rendered.append(f"  > {head}".rstrip())
+        return rendered
 
     @staticmethod
     def _render_chat_body(text: str) -> List[str]:
@@ -116,8 +139,9 @@ class SmallModelPromptBuilder:
         - 严格按发送时间升序，时间戳相同保持传入顺序
         - 相邻两条间隔达到 600 秒就插一行 HH:MM（UTC+8），第一条之前也插
         - 换人起新段；插过时间行也一律重新署名，段首写「名字（号）」不缩进，该人后续消息逐行缩进两空格
-        - 引用片段单列成「> 名字：内容」，放在该条消息正文之前
-        - [At:...]、[图片] 这类占位符留在正文原位，不加任何 markdown 标记
+        - 引用片段单列成「  > 名字：内容」，被引内容有换行时每行都带「  > 」前缀
+        - [At:...]、[图片] 这类占位符留在正文原位，不使用加粗、标题、代码块等修饰
+        - 「  > 」是引用排版符号，不属于被禁的 markdown 修饰
 
         Args:
             chat_records: 对话记录列表
@@ -213,7 +237,7 @@ class SmallModelPromptBuilder:
                 last_speaker_key = speaker_key
 
             for quote in quotes:
-                lines.append(SmallModelPromptBuilder._render_quote(quote))
+                lines.extend(SmallModelPromptBuilder._render_quote(quote))
             lines.extend(SmallModelPromptBuilder._render_chat_body(body))
 
             last_timestamp = timestamp
@@ -335,8 +359,18 @@ class SmallModelPromptBuilder:
 
         # 构建数据上下文（仅包含实际数据，不包含指令）
         sections = ["# 本次对话数据", "", "## 历史对话内容", historical_query]
-        if str(main_llm_response or "").strip():
-            sections += ["", "## 你的最新回复", str(main_llm_response)]
+        reply_text = str(main_llm_response or "").strip()
+        if reply_text:
+            sections += ["", "## 你的最新回复", reply_text]
+        else:
+            sections += [
+                "",
+                "## 你的最新回复",
+                "本轮没有回复记录：发送现场和 LLM 响应钩子都没有取到文本。"
+                "这是记录缺失，不代表你没有说话，也不代表本轮没有回复；"
+                "不要据此推断自己没开口，也不要为补全这一点编造回复内容。",
+            ]
+
         sections += ["", "## 召回的相关记忆"]
         data_context = "\n".join(sections) + "\n"
 
