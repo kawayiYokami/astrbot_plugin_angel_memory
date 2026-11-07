@@ -229,16 +229,11 @@ class SmallModelPromptBuilder:
         system_prompt = PromptAssembler.build_memory_system_guide()
 
         # 构建数据上下文（仅包含实际数据，不包含指令）
-        data_context = f"""# 本次对话数据
-
-## 历史对话内容
-{historical_query}
-
-## 你的最新回复
-{main_llm_response}
-
-## 召回的相关记忆
-"""
+        sections = ["# 本次对话数据", "", "## 历史对话内容", historical_query]
+        if str(main_llm_response or "").strip():
+            sections += ["", "## 你的最新回复", str(main_llm_response)]
+        sections += ["", "## 召回的相关记忆"]
+        data_context = "\n".join(sections) + "\n"
 
         # 添加记忆信息
         if raw_memories:
@@ -248,11 +243,7 @@ class SmallModelPromptBuilder:
                     if memory_id_mapping
                     else memory.id
                 )
-                data_context += f"""
-- **id**: `{short_id}`
-- **type**: `{memory.memory_type.value if hasattr(memory.memory_type, "value") else memory.memory_type}`
-- **judgment**: `{memory.judgment}`
-"""
+                data_context += f"id:{short_id} - {memory.judgment}\n"
         else:
             data_context += "\n无相关记忆\n"
 
