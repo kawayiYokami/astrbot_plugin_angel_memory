@@ -88,12 +88,20 @@ def test_type_filter_applies_before_score_threshold():
     assert [item["id"] for item in got] == [2, 3]
 
 
-def test_auto_recall_filters_but_manual_recall_does_not():
+def test_auto_recall_filters_below_half_of_top_score():
     hits = [_hit(1, 10.0), _hit(2, 9.0), _hit(3, 1.0), _hit(4, 0.5), _hit(5, 0.2)]
     runtime = PMemoryMemoryRuntime(MemoryStore(_FakeStore(hits)))
 
     auto = asyncio.run(runtime.chained_recall("查询", entities=[], final_limit=5))
-    manual = asyncio.run(runtime.comprehensive_recall("查询", limit=5))
 
     assert len(auto) == 2
-    assert len(manual) == 5
+
+
+def test_manual_recall_filters_below_half_of_top_score():
+    """主动回忆与自动召回同一把尺子：库里有五十条也挡不住一句无关的问。"""
+    hits = [_hit(1, 10.0), _hit(2, 9.0), _hit(3, 1.0), _hit(4, 0.5), _hit(5, 0.2)]
+    runtime = PMemoryMemoryRuntime(MemoryStore(_FakeStore(hits)))
+
+    manual = asyncio.run(runtime.comprehensive_recall("查询", limit=5))
+
+    assert len(manual) == 2

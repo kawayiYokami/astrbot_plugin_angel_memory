@@ -123,6 +123,7 @@ class PMemoryMemoryRuntime(MemoryRuntime):
             query,
             memory_scope,
             limit=int(limit or 10),
+            score_ratio=MemoryStore.RERANK_SCORE_RATIO,
         )
         return [to_base_memory(record) for record in records]
 

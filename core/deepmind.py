@@ -9,6 +9,7 @@ DeepMind潜意识核心模块
 """
 
 import asyncio
+import re
 import time
 import json
 from typing import List, Dict, Any, Optional
@@ -32,6 +33,9 @@ from .sleep_schedule import seconds_until_next_sleep, should_run_sleep, today_ke
 from .trace_store import TraceStore
 
 from astrbot.api import logger
+
+# 框架识别图片失败时塞进内容块的原文，反思时靠它认出「有图但没识别出来」
+_IMAGE_CAPTION_FAILED = "[Image Captioning Failed]"
 
 
 @dataclass
@@ -1069,10 +1073,12 @@ class DeepMind:
         return merged
 
     def _request_user_text(self, request) -> str:
-        """取一轮的用户输入：优先 prompt，其次 extra_user_content_parts。
+        """取一轮的用户输入：优先 prompt，其次附件转出来的文本。
 
         contexts 不能当兜底：纯媒体轮 message_str 为空时，
         contexts 里最后一条 user 是上一轮那个人的话，会张冠李戴。
+        extra_user_content_parts 也不能整段拼：知识库结果、系统提醒、
+        引用块都塞在里面，只有附件转出来的那份才是用户这轮发来的东西。
         """
         if request is None:
             return ""
@@ -1091,9 +1097,32 @@ class DeepMind:
                     text = str(part.get("text", "") or "")
             elif str(getattr(part, "type", "") or "") == "text":
                 text = str(getattr(part, "text", "") or "")
-            if text.strip():
-                collected.append(text.strip())
+            attachment = self._attachment_text(text)
+            if attachment:
+                collected.append(attachment)
         return " ".join(collected)
+
+    @staticmethod
+    def _attachment_text(text: str) -> str:
+        """只认附件转出来的文字，别的内容块一律不算用户输入。
+
+        框架把图片描述写成 <image_caption>...</image_caption>；同一字段里还混着
+        [Related Knowledge Base Results]、<system_reminder>、<Quoted Message>、
+        <selected_excerpt>，那些都不是用户说的话，混进反思会认错人。
+        """
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        captions = [
+            item.strip()
+            for item in re.findall(r"<image_caption>(.*?)</image_caption>", raw, re.S)
+            if item.strip()
+        ]
+        if captions:
+            return " ".join(captions)
+        if raw == _IMAGE_CAPTION_FAILED:
+            return raw
+        return ""
 
     def _turns_to_chat_records(
         self, turns: List[Dict[str, Any]]

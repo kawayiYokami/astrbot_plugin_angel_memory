@@ -208,18 +208,20 @@ def test_user_text_prefers_prompt():
     assert deepmind._request_user_text(req) == "prompt 里的原话"
 
 
-def test_user_text_falls_back_to_extra_content_parts():
-    """prompt 为空时看 extra_user_content_parts（纯媒体轮的文字描述在那里）。"""
+def test_user_text_falls_back_to_attachment_caption():
+    """prompt 为空时取附件转出来的描述，同一字段里的系统提醒与知识库不算。"""
     deepmind = _deepmind()
     req = _Req(
         "",
         extra_user_content_parts=[
-            {"type": "text", "text": "图片里的文字描述"},
+            {"type": "text", "text": "<system_reminder>现在是下午三点</system_reminder>"},
+            {"type": "text", "text": "<image_caption>一只猫趴在键盘上</image_caption>"},
             {"type": "image_url", "image_url": {"url": "http://example.com/a.png"}},
+            {"type": "text", "text": "[Related Knowledge Base Results]:\n猫的百科条目"},
         ],
     )
 
-    assert deepmind._request_user_text(req) == "图片里的文字描述"
+    assert deepmind._request_user_text(req) == "一只猫趴在键盘上"
 
 
 def test_user_text_accepts_content_part_objects():
@@ -227,10 +229,55 @@ def test_user_text_accepts_content_part_objects():
     deepmind = _deepmind()
     req = _Req(
         "",
-        extra_user_content_parts=[SimpleNamespace(type="text", text="对象式描述")],
+        extra_user_content_parts=[
+            SimpleNamespace(type="text", text="<image_caption>对象式描述</image_caption>")
+        ],
     )
 
     assert deepmind._request_user_text(req) == "对象式描述"
+
+
+def test_user_text_joins_multiple_captions():
+    """一轮发多张图时，描述按顺序拼起来。"""
+    deepmind = _deepmind()
+    req = _Req(
+        "",
+        extra_user_content_parts=[
+            {"type": "text", "text": "<image_caption>第一张</image_caption>"},
+            {"type": "text", "text": "<image_caption>第二张</image_caption>"},
+        ],
+    )
+
+    assert deepmind._request_user_text(req) == "第一张 第二张"
+
+
+def test_user_text_keeps_caption_failure_marker():
+    """图片没识别出来也是有图的一轮，不能当成用户没发东西。"""
+    deepmind = _deepmind()
+    req = _Req(
+        "",
+        extra_user_content_parts=[
+            {"type": "text", "text": "[Image Captioning Failed]"},
+        ],
+    )
+
+    assert deepmind._request_user_text(req) == "[Image Captioning Failed]"
+
+
+def test_user_text_ignores_non_attachment_parts():
+    """只有系统提醒、知识库、引用块时，这一轮就没有用户文本。"""
+    deepmind = _deepmind()
+    req = _Req(
+        "",
+        extra_user_content_parts=[
+            {"type": "text", "text": "<system_reminder>现在是下午三点</system_reminder>"},
+            {"type": "text", "text": "[Related Knowledge Base Results]:\n某条目"},
+            {"type": "text", "text": "<Quoted Message>\n别人说过的话\n</Quoted Message>"},
+            {"type": "text", "text": "[Audio Attachment: path /tmp/a.wav]"},
+        ],
+    )
+
+    assert deepmind._request_user_text(req) == ""
 
 
 def test_user_text_ignores_contexts_history():
