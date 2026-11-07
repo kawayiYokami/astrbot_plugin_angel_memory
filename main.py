@@ -336,11 +336,14 @@ class AngelMemoryPlugin(Star):
             request = event.get_extra("angel_provider_request") or event.get_extra(
                 "provider_request"
             )
+            sender_id, sender_name = self._event_sender_identity(event)
             event.set_extra(
                 "angel_reflection_turn",
                 {
                     "req": request,
                     "resp": resp_text,
+                    "sender_id": sender_id,
+                    "sender_name": sender_name,
                     "timestamp": time.time(),
                 },
             )
@@ -350,6 +353,32 @@ class AngelMemoryPlugin(Star):
             )
         except Exception as e:
             self.logger.error(f"Agent 完成钩子异常: {e}", exc_info=True)
+
+    @staticmethod
+    def _event_sender_identity(event: AstrMessageEvent) -> tuple:
+        """取这条消息的发送者身份，供反思剧本署名用。"""
+        sender_id = ""
+        sender_name = ""
+
+        get_sender_id = getattr(event, "get_sender_id", None)
+        if callable(get_sender_id):
+            try:
+                sender_id = str(get_sender_id() or "").strip()
+            except Exception:
+                sender_id = ""
+        if not sender_id:
+            sender_id = str(getattr(event, "sender_id", "") or "").strip()
+
+        get_sender_name = getattr(event, "get_sender_name", None)
+        if callable(get_sender_name):
+            try:
+                sender_name = str(get_sender_name() or "").strip()
+            except Exception:
+                sender_name = ""
+        if not sender_name:
+            sender_name = str(getattr(event, "sender_name", "") or "").strip()
+
+        return sender_id, sender_name
 
     @classmethod
     def _resolve_agent_response_text(cls, run_context, response) -> str:

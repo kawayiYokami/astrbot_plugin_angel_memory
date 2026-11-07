@@ -1069,25 +1069,31 @@ class DeepMind:
         return merged
 
     def _request_user_text(self, request) -> str:
-        """取一轮的用户输入：优先 prompt，为空时从 contexts 里取最后一条 user。"""
+        """取一轮的用户输入：优先 prompt，其次 extra_user_content_parts。
+
+        contexts 不能当兜底：纯媒体轮 message_str 为空时，
+        contexts 里最后一条 user 是上一轮那个人的话，会张冠李戴。
+        """
         if request is None:
             return ""
         prompt = str(getattr(request, "prompt", "") or "").strip()
         if prompt:
             return prompt
 
-        contexts = getattr(request, "contexts", None)
-        if not isinstance(contexts, list):
+        parts = getattr(request, "extra_user_content_parts", None)
+        if not isinstance(parts, list):
             return ""
-        for item in reversed(contexts):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("role", "") or "").strip() != "user":
-                continue
-            text = self.prompt_builder.extract_text_from_content(item.get("content", ""))
-            if str(text).strip():
-                return str(text).strip()
-        return ""
+        collected: List[str] = []
+        for part in parts:
+            text = ""
+            if isinstance(part, dict):
+                if str(part.get("type", "") or "") == "text":
+                    text = str(part.get("text", "") or "")
+            elif str(getattr(part, "type", "") or "") == "text":
+                text = str(getattr(part, "text", "") or "")
+            if text.strip():
+                collected.append(text.strip())
+        return " ".join(collected)
 
     def _turns_to_chat_records(
         self, turns: List[Dict[str, Any]]
@@ -1109,11 +1115,16 @@ class DeepMind:
                     {
                         "role": "user",
                         "content": user_text,
-                        "sender_id": "",
-                        "sender_name": "",
+                        "sender_id": str(turn.get("sender_id") or "").strip(),
+                        "sender_name": str(turn.get("sender_name") or "").strip(),
                         "timestamp": timestamp,
                         "is_structured_toolcall": False,
                     }
+                )
+            else:
+                self.logger.debug(
+                    f"[反思调度] 本轮没有用户文本，跳过 user 条目 "
+                    f"session={turn.get('session_id', '')} timestamp={timestamp}"
                 )
             if resp_text:
                 records.append(
@@ -1165,6 +1176,8 @@ class DeepMind:
             "timestamp": float(turn.get("timestamp") or time.time()),
             "req": request,
             "resp": resp_text,
+            "sender_id": str(turn.get("sender_id") or "").strip(),
+            "sender_name": str(turn.get("sender_name") or "").strip(),
             "memories": self._turn_memories(reflection_input),
         }
         now = time.time()

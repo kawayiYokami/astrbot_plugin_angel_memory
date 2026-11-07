@@ -68,11 +68,12 @@ class _FakeQueue:
 
 
 class _Req:
-    """ProviderRequest 的最小替身：只带 prompt 与 contexts。"""
+    """ProviderRequest 的最小替身：只带 prompt、contexts 与额外内容块。"""
 
-    def __init__(self, prompt="", contexts=None):
+    def __init__(self, prompt="", contexts=None, extra_user_content_parts=None):
         self.prompt = prompt
         self.contexts = list(contexts or [])
+        self.extra_user_content_parts = list(extra_user_content_parts or [])
 
 
 def _deepmind(threshold=3):
@@ -89,12 +90,14 @@ def _deepmind(threshold=3):
     return deepmind
 
 
-def _turn_event(req=None, resp="", when=None, **kwargs):
+def _turn_event(req=None, resp="", when=None, sender_id="", sender_name="", **kwargs):
     return _StubEvent(
         extras={
             "angel_reflection_turn": {
                 "req": req,
                 "resp": resp,
+                "sender_id": sender_id,
+                "sender_name": sender_name,
                 "timestamp": time.time() if when is None else when,
             }
         },
@@ -102,8 +105,24 @@ def _turn_event(req=None, resp="", when=None, **kwargs):
     )
 
 
-def _record(deepmind, session_id, req=None, resp="", when=None, **kwargs):
-    event = _turn_event(req=req, resp=resp, when=when, **kwargs)
+def _record(
+    deepmind,
+    session_id,
+    req=None,
+    resp="",
+    when=None,
+    sender_id="",
+    sender_name="",
+    **kwargs,
+):
+    event = _turn_event(
+        req=req,
+        resp=resp,
+        when=when,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        **kwargs,
+    )
     asyncio.run(deepmind._record_reflection_turn(event, None, session_id))
     return event
 
@@ -189,25 +208,95 @@ def test_user_text_prefers_prompt():
     assert deepmind._request_user_text(req) == "prompt 里的原话"
 
 
-def test_user_text_falls_back_to_latest_user_context():
-    """prompt 为空时取 contexts 里最后一条 user。"""
+def test_user_text_falls_back_to_extra_content_parts():
+    """prompt 为空时看 extra_user_content_parts（纯媒体轮的文字描述在那里）。"""
+    deepmind = _deepmind()
+    req = _Req(
+        "",
+        extra_user_content_parts=[
+            {"type": "text", "text": "图片里的文字描述"},
+            {"type": "image_url", "image_url": {"url": "http://example.com/a.png"}},
+        ],
+    )
+
+    assert deepmind._request_user_text(req) == "图片里的文字描述"
+
+
+def test_user_text_accepts_content_part_objects():
+    """extra_user_content_parts 也可能是 ContentPart 对象而不是 dict。"""
+    deepmind = _deepmind()
+    req = _Req(
+        "",
+        extra_user_content_parts=[SimpleNamespace(type="text", text="对象式描述")],
+    )
+
+    assert deepmind._request_user_text(req) == "对象式描述"
+
+
+def test_user_text_ignores_contexts_history():
+    """纯媒体轮 prompt 为空时，不能把上一轮 user 的话当成本轮输入。"""
     deepmind = _deepmind()
     req = _Req(
         "",
         [
-            {"role": "user", "content": "更早的话"},
-            {"role": "assistant", "content": "更早的回复"},
-            {"role": "user", "content": "最后一句"},
+            {"role": "user", "content": "上一轮那个人说的话"},
+            {"role": "assistant", "content": "上一轮的回复"},
         ],
     )
 
-    assert deepmind._request_user_text(req) == "最后一句"
+    assert deepmind._request_user_text(req) == "", "contexts 是历史，不能当本轮输入"
 
 
 def test_user_text_is_empty_without_request():
     deepmind = _deepmind()
 
     assert deepmind._request_user_text(None) == ""
+
+
+# ---------- 三之二、摊平后保留发送者 ----------
+
+def test_different_senders_keep_their_own_headers():
+    """同一会话里两个不同发送者，摊平后各自署名，不能都变成「群友」。"""
+    deepmind = _deepmind(threshold=2)
+    _record(
+        deepmind, "s1", req=_Req("我先说"), resp="答一", when=1000.0,
+        sender_id="1", sender_name="甲",
+    )
+    _record(
+        deepmind, "s1", req=_Req("我后说"), resp="答二", when=1001.0,
+        sender_id="2", sender_name="乙",
+    )
+
+    records = deepmind._turns_to_chat_records(deepmind._reflection_states["s1"]["turns"])
+    users = [record for record in records if record["role"] == "user"]
+    assert len(users) == 2
+    assert (users[0]["sender_id"], users[0]["sender_name"]) == ("1", "甲")
+    assert (users[1]["sender_id"], users[1]["sender_name"]) == ("2", "乙")
+
+    text, _ = SmallModelPromptBuilder.format_chat_records(records)
+    assert "甲（1）" in text
+    assert "乙（2）" in text
+    assert "群友" not in text
+
+
+def test_turn_without_user_text_only_emits_assistant():
+    """取不到用户文本时只产出回复那条，不伪造一条空用户消息。"""
+    deepmind = _deepmind()
+    records = deepmind._turns_to_chat_records(
+        [
+            {
+                "session_id": "s1",
+                "timestamp": 1000.0,
+                "req": _Req(""),
+                "resp": "只有回复",
+                "sender_id": "1",
+                "sender_name": "甲",
+            }
+        ]
+    )
+
+    assert [record["role"] for record in records] == ["assistant"]
+    assert records[0]["content"] == "只有回复"
 
 
 # ---------- 四、回复文本取法 ----------
