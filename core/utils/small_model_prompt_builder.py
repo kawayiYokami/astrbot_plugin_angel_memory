@@ -49,6 +49,22 @@ class SmallModelPromptBuilder:
         return moment.strftime("%H:%M")
 
     @staticmethod
+    def _format_memory_created_at(value) -> str:
+        """把 created_at 转成 YYYY-MM-DD HH:MM（UTC+8），与聊天时间行同一时区。
+
+        取不到有效时间时返回空串：不输出 1970-01-01，
+        否则模型会误以为这条记忆比所有东西都旧。
+        """
+        try:
+            seconds = float(value or 0)
+        except (TypeError, ValueError):
+            return ""
+        if seconds <= 0:
+            return ""
+        moment = datetime.fromtimestamp(seconds, tz=SmallModelPromptBuilder.CHAT_TIMEZONE)
+        return moment.strftime("%Y-%m-%d %H:%M")
+
+    @staticmethod
     def _split_quote_fragments(text: str) -> Tuple[List[str], str]:
         """抽出 [引用消息(某人: 被引内容)] 片段，返回 (引用列表, 剩余正文)。
 
@@ -382,7 +398,11 @@ class SmallModelPromptBuilder:
                     if memory_id_mapping
                     else memory.id
                 )
-                data_context += f"id:{short_id} - {memory.judgment}\n"
+                created_at = SmallModelPromptBuilder._format_memory_created_at(
+                    getattr(memory, "created_at", None)
+                )
+                stamp = f" {created_at}" if created_at else ""
+                data_context += f"id:{short_id}{stamp} - {memory.judgment}\n"
         else:
             data_context += "\n无相关记忆\n"
 

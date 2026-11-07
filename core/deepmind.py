@@ -569,20 +569,6 @@ class DeepMind:
             return None
 
     @staticmethod
-    def _is_missing_user_identity(sender_id: str, sender_name: str) -> bool:
-        invalid_ids = {"", "0", "user", "unknown", "none", "null", "assistant"}
-        invalid_names = {"", "用户", "成员", "未知", "未知用户", "user", "unknown", "none", "null"}
-        sid = str(sender_id or "").strip()
-        name = str(sender_name or "").strip()
-        
-        # 核心逻辑改进: 只要有合法的 ID, 就认为身份有效。
-        if sid and sid.lower() not in invalid_ids:
-            return False
-            
-        # 只有当 ID 无效且名字也无效时, 才判定为缺失身份。
-        return sid.lower() in invalid_ids and name.lower() in invalid_names
-
-    @staticmethod
     def _event_message_id(event: AstrMessageEvent) -> str:
         """当前这条用户消息的 ID，用于注入幂等判定。"""
         message_obj = getattr(event, "message_obj", None)
@@ -750,20 +736,6 @@ class DeepMind:
             sender_name = str(getattr(event, "sender_name", "") or "").strip()
 
         return sender_id, sender_name
-
-    def _log_missing_user_identity(
-        self,
-        source: str,
-        sender_id: str,
-        sender_name: str,
-        content: Any = "",
-    ) -> None:
-        content_text = self.prompt_builder.extract_text_from_content(content)
-        self.logger.error(
-            f"[反思调度] 跳过 检测到异常消息，该消息不存在用户和ID "
-            f"来源={source} sender_id={sender_id or '(空)'} "
-            f"sender_name={sender_name or '(空)'} content_len={len(content_text)}"
-        )
 
     def _get_session_id(self, event: AstrMessageEvent) -> str:
         """获取会话ID，统一使用 event.unified_msg_origin"""
@@ -956,7 +928,7 @@ class DeepMind:
         # 获取会话ID
         session_id = self._get_session_id(event)
         await self._ensure_reflection_tick_task()
-        await self._buffer_reflection_turn(event, response, session_id)
+        await self._record_reflection_turn(event, response, session_id)
         await self._trigger_reflection_if_needed(session_id, reason="count")
 
     async def _ensure_reflection_tick_task(self) -> None:
@@ -995,81 +967,6 @@ class DeepMind:
             for sid in session_ids:
                 await self._trigger_reflection_if_needed(sid, reason="idle")
 
-    def _build_reflection_records_for_turn(self, event: AstrMessageEvent, response) -> List[Dict[str, Any]]:
-        """
-        生成“本轮新增”的反思聊天记录。
-        分支：
-        - AngelHeart：直接使用整份 chat_records（快照本身就是本轮上下文，不存在已处理分界）。
-        - 原生：仅当前轮 用户 -> 助理。
-        """
-        now_ts = time.time()
-        response_text = (
-            getattr(response, "completion_text", str(response))
-            if response is not None
-            else ""
-        )
-
-        # 分支1：AngelHeart 提供完整 chat_records
-        if hasattr(event, "angelheart_context") and getattr(event, "angelheart_context", None):
-            try:
-                angelheart_data = json.loads(event.angelheart_context)
-                chat_records = angelheart_data.get("chat_records", []) or []
-                if isinstance(chat_records, list) and chat_records:
-                    records = [
-                        msg for msg in chat_records if isinstance(msg, dict)
-                    ]
-                    normalized = self._dedupe_and_sort_chat_records(
-                        records,
-                        source="天使之心聊天记录",
-                    )
-                    # 快照里可能全是摘要、系统消息或身份缺失的消息，过滤后为空时
-                    # 必须继续走原生分支，否则本轮反思会被静默跳过。
-                    if normalized:
-                        self.logger.debug(
-                            f"[反思调度] 使用天使之心聊天记录: 整份快照 {len(records)} 条"
-                            f" 可用 {len(normalized)} 条"
-                        )
-                        return normalized
-                    self.logger.warning(
-                        f"[反思调度] 天使之心聊天记录过滤后为空，降级到原生分支 "
-                        f"原始条数={len(records)}"
-                    )
-                else:
-                    self.logger.debug(
-                        "[反思调度] 天使之心未提供聊天记录，降级到原生分支"
-                    )
-            except (json.JSONDecodeError, TypeError, KeyError) as e:
-                self.logger.warning(f"反思聊天记录解析失败，降级到原生分支: {e}")
-
-        # 分支2：原生消息（每轮仅用户输入）
-        user_text = self._extract_message_text(event) or ""
-        records: List[Dict[str, Any]] = []
-        if user_text.strip():
-            sender_id, sender_name = self._get_event_sender_identity(event)
-            records.append(
-                {
-                    "role": "user",
-                    "content": user_text,
-                    "sender_id": sender_id,
-                    "sender_name": sender_name,
-                    "timestamp": float(now_ts),
-                    "is_structured_toolcall": False,
-                }
-            )
-        if str(response_text).strip():
-            records.append(
-                {
-                    "role": "assistant",
-                    "content": str(response_text),
-                    "sender_id": "assistant",
-                    "sender_name": "助理",
-                    "timestamp": float(now_ts + 0.001),
-                    "is_structured_toolcall": False,
-                }
-            )
-        self.logger.debug(f"[反思调度] 使用原生分支构建本轮记录: count={len(records)}")
-        return self._dedupe_and_sort_chat_records(records, source="原生事件消息")
-
     async def _build_reflection_input(
         self,
         event: AstrMessageEvent,
@@ -1079,19 +976,11 @@ class DeepMind:
         """
         从主线程事件中提取反思所需最小数据结构，避免反思执行阶段依赖 AstrMessageEvent。
         """
-        records = self._build_reflection_records_for_turn(event, response)
-
-        latest_user_text = ""
-        latest_assistant_text = ""
-        for msg in reversed(records):
-            role = str(msg.get("role", "")).strip()
-            content = self.prompt_builder.extract_text_from_content(msg.get("content", ""))
-            if role == "assistant" and not latest_assistant_text and str(content).strip():
-                latest_assistant_text = str(content).strip()
-            if role == "user" and not latest_user_text and str(content).strip():
-                latest_user_text = str(content).strip()
-            if latest_user_text and latest_assistant_text:
-                break
+        turn = event.get_extra("angel_reflection_turn") or {}
+        if not isinstance(turn, dict):
+            turn = {}
+        latest_user_text = self._request_user_text(turn.get("req"))
+        latest_assistant_text = str(turn.get("resp") or "").strip()
 
         secretary_decision: Dict[str, Any] = {}
         if hasattr(event, "angelheart_context") and getattr(event, "angelheart_context", None):
@@ -1139,88 +1028,147 @@ class DeepMind:
             latest_user_text=latest_user_text,
             latest_assistant_text=latest_assistant_text,
             secretary_decision=secretary_decision,
-            chat_records=records,
             memory_context=memory_context,
         )
 
-    # 摘要与系统消息是压缩产物，不是对话原文，不能作为反思素材
-    NON_REFLECTION_KINDS = frozenset(
-        {"context_summary", "summary_context", "context_compaction"}
-    )
+    @staticmethod
+    def _turn_memories(reflection_input) -> List[Dict[str, Any]]:
+        """取这一轮真正注入给模型的记忆批次。"""
+        context_data = getattr(reflection_input, "memory_context", {}) or {}
+        if not isinstance(context_data, dict):
+            return []
+        candidate = context_data.get("raw_memories", [])
+        if not isinstance(candidate, list):
+            return []
+        return [memory for memory in candidate if isinstance(memory, dict)]
 
-    def _is_non_reflection_message(self, role: str, kind: str) -> bool:
-        """判断是否为不应进入反思的消息。"""
-        return role == "system" or kind in self.NON_REFLECTION_KINDS
+    @staticmethod
+    def _merge_turn_memories(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """把多轮检索到的记忆按 id 合并去重，保持首次出现的顺序。
 
-    def _dedupe_and_sort_chat_records(
-        self,
-        records: List[Dict[str, Any]],
-        source: str = "聊天记录",
-    ) -> List[Dict[str, Any]]:
-        normalized: List[Dict[str, Any]] = []
+        同一份记忆在多个轮次被召回只保留一条；没有 id 的条目用内容指纹兜底，
+        避免把它们全折叠成一条。
+        """
+        merged: List[Dict[str, Any]] = []
         seen = set()
-        skipped_non_reflection = 0
-        for msg in records or []:
-            if not isinstance(msg, dict):
+        for turn in turns or []:
+            if not isinstance(turn, dict):
                 continue
-            role = str(msg.get("role", "") or "").strip()
-            kind = str(msg.get("kind", "") or "").strip()
-            content = msg.get("content", "")
-            sender_id = str(msg.get("sender_id", "") or "").strip()
-            sender_name = str(msg.get("sender_name", "") or "").strip()
-            timestamp = float(msg.get("timestamp", 0.0) or 0.0)
-            if not role:
-                continue
-            if self._is_non_reflection_message(role, kind):
-                skipped_non_reflection += 1
-                continue
-            if role == "user" and self._is_missing_user_identity(sender_id, sender_name):
-                self._log_missing_user_identity(
-                    source,
-                    sender_id,
-                    sender_name,
-                    content,
-                )
-                continue
-            # 去重键优先用上游消息 ID：同一条消息在多份快照里内容与时间可能被改写，
-            # 只有 source_message_id 稳定；缺失时回退到角色+发送者+时间戳+内容。
-            source_message_id = str(msg.get("source_message_id", "") or "").strip()
-            if source_message_id:
-                dedupe_key = ("id", source_message_id)
-            else:
-                dedupe_key = ("fp", role, sender_id, round(timestamp, 6), str(content))
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            normalized.append(
-                {
-                    "role": role,
-                    "content": content,
-                    "sender_id": sender_id,
-                    "sender_name": sender_name,
-                    "timestamp": timestamp,
-                    "source_message_id": source_message_id,
-                    "is_structured_toolcall": bool(msg.get("is_structured_toolcall", False)),
-                    "tool_call_id": msg.get("tool_call_id"),
-                }
-            )
-        if skipped_non_reflection:
-            self.logger.debug(
-                f"[反思调度] 跳过摘要/系统消息 {skipped_non_reflection} 条 source={source}"
-            )
-        normalized.sort(key=lambda x: float(x.get("timestamp", 0.0) or 0.0))
-        return normalized
+            for memory in turn.get("memories", []) or []:
+                if not isinstance(memory, dict):
+                    continue
+                key = str(memory.get("id", "") or "").strip()
+                if not key:
+                    key = "fp:" + json.dumps(
+                        memory, sort_keys=True, ensure_ascii=False, default=str
+                    )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(memory)
+        return merged
 
-    async def _buffer_reflection_turn(self, event: AstrMessageEvent, response, session_id: str) -> None:
-        reflection_input = await self._build_reflection_input(event, response, session_id)
-        turn_records = list(reflection_input.chat_records)
-        if not turn_records:
+    def _request_user_text(self, request) -> str:
+        """取一轮的用户输入：优先 prompt，为空时从 contexts 里取最后一条 user。"""
+        if request is None:
+            return ""
+        prompt = str(getattr(request, "prompt", "") or "").strip()
+        if prompt:
+            return prompt
+
+        contexts = getattr(request, "contexts", None)
+        if not isinstance(contexts, list):
+            return ""
+        for item in reversed(contexts):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("role", "") or "").strip() != "user":
+                continue
+            text = self.prompt_builder.extract_text_from_content(item.get("content", ""))
+            if str(text).strip():
+                return str(text).strip()
+        return ""
+
+    def _turns_to_chat_records(
+        self, turns: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """把成对记录摊成 format_chat_records 认得的 chat_records。
+
+        一份记录产出「用户 → 我」两条；助理那条加 1 毫秒，
+        保证同一轮内先用户后回复，且不影响跨轮排序。
+        """
+        records: List[Dict[str, Any]] = []
+        for turn in turns or []:
+            if not isinstance(turn, dict):
+                continue
+            timestamp = float(turn.get("timestamp", 0.0) or 0.0)
+            user_text = self._request_user_text(turn.get("req"))
+            resp_text = str(turn.get("resp") or "").strip()
+            if user_text:
+                records.append(
+                    {
+                        "role": "user",
+                        "content": user_text,
+                        "sender_id": "",
+                        "sender_name": "",
+                        "timestamp": timestamp,
+                        "is_structured_toolcall": False,
+                    }
+                )
+            if resp_text:
+                records.append(
+                    {
+                        "role": "assistant",
+                        "content": resp_text,
+                        "sender_id": "assistant",
+                        "sender_name": "助理",
+                        "timestamp": timestamp + 0.001,
+                        "is_structured_toolcall": False,
+                    }
+                )
+        return records
+
+    def _reflection_window_limit(self) -> int:
+        """反思窗口保留上限：至少 2 倍阈值且不少于 20 份。
+
+        留 2 倍是为了空闲触发时窗口不短于阈值；下限 20 防止阈值很小时
+        窗口过窄，长会话也不会让窗口无限增长。
+        """
+        return max(int(self._reflection_turn_threshold) * 2, 20)
+
+    async def _record_reflection_turn(
+        self, event: AstrMessageEvent, response, session_id: str
+    ) -> None:
+        """把本轮 (req, resp) 成对记进该会话的滑动窗口。
+
+        一次请求 = 一份记录。不做合并、不去重、不排序：
+        turns 按写入顺序追加，反思时直接取最近 N 份。
+        """
+        reflection_input = await self._build_reflection_input(
+            event, response, session_id
+        )
+        turn = event.get_extra("angel_reflection_turn") or {}
+        if not isinstance(turn, dict):
+            turn = {}
+        request = turn.get("req")
+        resp_text = str(turn.get("resp") or "").strip()
+
+        if request is None and not resp_text:
             self.logger.warning(
-                f"[反思调度] 本轮无消息入池 会话={session_id} "
-                f"原因=天使之心与原生分支均未产出可用记录"
+                f"[反思调度] 本轮请求与回复均缺失，不记录 会话={session_id} "
+                f"原因=既没有 provider_request 也没有回复文本"
             )
             return
+
+        record = {
+            "session_id": session_id,
+            "timestamp": float(turn.get("timestamp") or time.time()),
+            "req": request,
+            "resp": resp_text,
+            "memories": self._turn_memories(reflection_input),
+        }
         now = time.time()
+        limit = self._reflection_window_limit()
 
         async with self._reflection_state_lock:
             state = self._reflection_states.setdefault(
@@ -1228,22 +1176,22 @@ class DeepMind:
                 {
                     "pending_turns": 0,
                     "last_activity_at": 0.0,
-                    "records": [],
+                    "turns": [],
                     "latest_input": None,
                     "processing": False,
                 },
             )
-            merged = list(state.get("records", [])) + list(turn_records)
-            state["records"] = self._dedupe_and_sort_chat_records(
-                merged,
-                source="反思缓冲记录",
-            )
+            turns = list(state.get("turns", []))
+            turns.append(record)
+            if len(turns) > limit:
+                turns = turns[-limit:]
+            state["turns"] = turns
             state["pending_turns"] = int(state.get("pending_turns", 0)) + 1
             state["last_activity_at"] = now
             state["latest_input"] = reflection_input
             self.logger.debug(
-                f"[反思调度] 入缓冲 session={session_id} "
-                f"pending_turns={state['pending_turns']} records={len(state['records'])}"
+                f"[反思调度] 记录本轮 session={session_id} "
+                f"pending_turns={state['pending_turns']} turns={len(turns)}/{limit}"
             )
 
     async def _trigger_reflection_if_needed(self, session_id: str, reason: str) -> bool:
@@ -1276,27 +1224,29 @@ class DeepMind:
             if latest_input is None:
                 state["processing"] = False
                 return False
+            window = int(self._reflection_turn_threshold)
+            recent_turns = list(state.get("turns", []))[-window:]
             payload = {
                 "reflection_input": latest_input,
-                "historical_chat_records": list(state.get("records", [])),
+                "recent_turns": recent_turns,
+                "merged_memories": self._merge_turn_memories(recent_turns),
                 "consumed_turns": pending_turns,
             }
             state["pending_turns"] = 0
-            state["records"] = []
 
         historical_chat_text = ""
         try:
-            historical_chat_text, _ = self.prompt_builder.format_chat_records(
-                payload.get("historical_chat_records", [])
-            )
+            records = self._turns_to_chat_records(payload.get("recent_turns", []))
+            historical_chat_text, _ = self.prompt_builder.format_chat_records(records)
         except Exception as e:
             self.logger.warning(f"格式化反思聊天记录失败，降级为空: {e}")
             historical_chat_text = ""
 
         self.logger.debug(
             f"[反思调度] 触发 reason={reason} session={session_id} "
-            f"turns={payload.get('consumed_turns', 0)} "
-            f"records={len(payload.get('historical_chat_records', []))}"
+            f"pending={payload.get('consumed_turns', 0)} "
+            f"取用轮次={len(payload.get('recent_turns', []))} "
+            f"合并记忆={len(payload.get('merged_memories', []))}"
         )
         success = await get_feedback_queue().submit(
             {
@@ -1305,6 +1255,7 @@ class DeepMind:
                 "payload": {
                     "reflection_input": payload.get("reflection_input"),
                     "historical_chat_text_override": historical_chat_text,
+                    "raw_memories_override": payload.get("merged_memories", []),
                 },
             }
         )
@@ -1314,18 +1265,15 @@ class DeepMind:
             if not state:
                 return bool(success)
             state["processing"] = False
-            # 若执行失败，恢复已消费的轮次与记录，避免丢失待反思上下文。
+            # 执行失败只回滚待反思计数：turns 是滑动窗口，取用时并不消费它。
             if not bool(success):
                 state["pending_turns"] = int(state.get("pending_turns", 0)) + int(
                     payload.get("consumed_turns", 0) or 0
                 )
-                restored = list(state.get("records", [])) + list(
-                    payload.get("historical_chat_records", [])
-                )
-                state["records"] = self._dedupe_and_sort_chat_records(restored)
                 self.logger.warning(
                     f"[反思调度] 执行失败后回滚 session={session_id} "
-                    f"pending_turns={state['pending_turns']} records={len(state['records'])}"
+                    f"pending_turns={state['pending_turns']} "
+                    f"turns={len(state.get('turns', []))}"
                 )
             else:
                 self.logger.debug(f"[反思调度] 完成 session={session_id}")
@@ -1335,6 +1283,7 @@ class DeepMind:
         self,
         reflection_input: ReflectionInput,
         historical_chat_text_override: str = "",
+        raw_memories_override: List[Dict[str, Any]] = None,
     ):
         """
         异步执行的记忆分析任务
@@ -1358,14 +1307,7 @@ class DeepMind:
                 context_data = {}
 
             query = str(context_data.get("query", "") or "")
-            raw_chat_records = context_data.get("raw_chat_records", [])
-            historical_chat_text = ""
-            if str(historical_chat_text_override or "").strip():
-                historical_chat_text = str(historical_chat_text_override).strip()
-            elif isinstance(raw_chat_records, list) and raw_chat_records:
-                historical_chat_text, _ = self.prompt_builder.format_chat_records(
-                    raw_chat_records
-                )
+            historical_chat_text = str(historical_chat_text_override or "").strip()
             if not historical_chat_text.strip():
                 historical_chat_text = query
             if not historical_chat_text.strip():
@@ -1373,8 +1315,12 @@ class DeepMind:
                     getattr(reflection_input, "latest_user_text", "") or ""
                 ).strip()
 
-            # 获取原始记忆数据
-            raw_memories_data = context_data.get("raw_memories", [])
+            # 获取原始记忆数据：优先用多轮合并去重后的那批，
+            # 否则 N 轮反思只能看到最后一轮检索出来的记忆，前几轮的拿不到反馈。
+            if raw_memories_override is not None:
+                raw_memories_data = list(raw_memories_override)
+            else:
+                raw_memories_data = context_data.get("raw_memories", [])
             core_topic = context_data.get("core_topic", "")
 
             # 将原始数据转换为记忆对象

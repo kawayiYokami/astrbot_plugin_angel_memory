@@ -118,7 +118,7 @@ def _prime_reflection_state(deepmind, session_id, pending_turns):
     deepmind._reflection_states = {
         session_id: {
             "pending_turns": pending_turns,
-            "records": [],
+            "turns": [],
             "last_activity_at": time.time(),
             "latest_input": {"message": "在吗"},
             "processing": False,

@@ -228,7 +228,7 @@ def test_model_dependent_steps_skipped_without_provider():
     async def _fake_trigger(*args, **kwargs):
         buffered.append("trigger")
 
-    deepmind._buffer_reflection_turn = _fake_buffer
+    deepmind._record_reflection_turn = _fake_buffer
     deepmind._trigger_reflection_if_needed = _fake_trigger
 
     asyncio.run(
@@ -266,7 +266,7 @@ def test_behaviour_unchanged_with_provider():
     async def _fake_tick_task(*args, **kwargs):
         return None
 
-    deepmind._buffer_reflection_turn = _fake_buffer
+    deepmind._record_reflection_turn = _fake_buffer
     deepmind._trigger_reflection_if_needed = _fake_trigger
     deepmind._ensure_reflection_tick_task = _fake_tick_task
 
