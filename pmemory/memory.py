@@ -56,7 +56,10 @@ def to_seconds(microseconds: object) -> float:
 class MemoryStore:
     """记忆读写。所有方法都是同步的，调用方自行决定是否放到线程里跑。"""
 
-    # 重排分口径：只保留不低于最高分一半的命中，最多返回这么多条
+    # 自动召回口径：先按融合分捞 CANDIDATE_LIMIT 条候选，重排后只留不低于最高分
+    # RERANK_SCORE_RATIO 的命中，最后取前 MAX_RESULTS 条给模型。
+    # 主动回忆走另一条路：不重排、不设门槛，按融合分取前 limit 条。
+    CANDIDATE_LIMIT = 50
     RERANK_SCORE_RATIO = 0.5
     MAX_RESULTS = 10
 
@@ -254,10 +257,12 @@ class MemoryStore:
         candicate_multiplier: int = 3,
         score_ratio: Optional[float] = None,
         max_results: Optional[int] = None,
+        rerank: bool = True,
     ) -> List[dict]:
         """检索记忆。
 
         类型过滤、分数过滤、条数截断都在拿到结果之后做，所以候选窗口按倍数放大。
+        `rerank` 关掉时按库的融合分排序，不调用重排回调。
         `score_ratio` 给出时只保留不低于本批最高分该比例的命中：整批都有重排分就按
         重排分比较，只要有命中缺重排分就统一退回库的融合分，两种尺子不混比。
         `max_results` 是独立于 `limit` 的最终条数上限，不给就按 `limit` 截断。
@@ -277,7 +282,7 @@ class MemoryStore:
                 embed_space=space,
                 text=True,
                 vector=bool(space),
-                rerank=True,
+                rerank=bool(rerank),
             )
         except PMemoryError:
             logger.exception("[PMEMORY] 记忆检索失败 scope=%s", scope)

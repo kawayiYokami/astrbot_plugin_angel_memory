@@ -68,10 +68,6 @@ class DeepMind:
     4. 像人的潜识一样，默默工作，不打扰主意识思考
     """
 
-    # 潜意识回忆的规则
-    CHAINED_RECALL_PER_TYPE_LIMIT = 7  # 每种记忆最多想7条，防止信息过载
-    CHAINED_RECALL_FINAL_LIMIT = 7  # 最终给主意识最多7条记忆
-
     def __init__(
         self,
         config,

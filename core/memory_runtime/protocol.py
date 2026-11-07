@@ -43,8 +43,6 @@ class MemoryRuntime(Protocol):
         self,
         query: str,
         entities: List[str],
-        per_type_limit: int = 7,
-        final_limit: Optional[int] = None,
         vector: Optional[List[float]] = None,
         event: Any = None,
         memory_scope: str = "public",

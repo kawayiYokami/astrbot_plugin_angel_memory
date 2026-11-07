@@ -118,12 +118,13 @@ class PMemoryMemoryRuntime(MemoryRuntime):
         memory_scope: str = "public",
     ) -> List[BaseMemory]:
         del event, vector  # 向量由库内部完成，宿主不再传向量
+        # 主动回忆不重排、不设分数门槛：按库的融合分取前面这些条就够了
         records = await asyncio.to_thread(
             self._store.search,
             query,
             memory_scope,
-            limit=int(limit or 10),
-            score_ratio=MemoryStore.RERANK_SCORE_RATIO,
+            limit=int(limit or 50),
+            rerank=False,
         )
         return [to_base_memory(record) for record in records]
 
@@ -131,8 +132,6 @@ class PMemoryMemoryRuntime(MemoryRuntime):
         self,
         query: str,
         entities: List[str],
-        per_type_limit: int = 7,
-        final_limit: Optional[int] = None,
         vector: Optional[List[float]] = None,
         event: Any = None,
         memory_scope: str = "public",
@@ -142,11 +141,12 @@ class PMemoryMemoryRuntime(MemoryRuntime):
             [str(query or "").strip()]
             + [str(entity).strip() for entity in (entities or []) if str(entity).strip()]
         ).strip()
+        # 不设调用方可调的条数：候选、门槛、最终条数都是固定口径
         records = await asyncio.to_thread(
             self._store.search,
             merged,
             memory_scope,
-            limit=int(final_limit or per_type_limit or 7),
+            limit=MemoryStore.CANDIDATE_LIMIT,
             score_ratio=MemoryStore.RERANK_SCORE_RATIO,
             max_results=MemoryStore.MAX_RESULTS,
         )

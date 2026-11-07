@@ -56,13 +56,9 @@ class DeepMindRetrievalService:
                 rag_fields = deepmind.query_processor.extract_rag_fields(event)
                 entities = rag_fields.get("entities", [])
 
-                dynamic_limit = deepmind.CHAINED_RECALL_PER_TYPE_LIMIT
-
                 long_term_memories = await deepmind.memory_system.chained_recall(
                     query=memory_query,
                     entities=entities,
-                    per_type_limit=int(dynamic_limit),
-                    final_limit=int(dynamic_limit * 1.5),
                     event=event,
                     vector=None,
                     memory_scope=memory_scope,

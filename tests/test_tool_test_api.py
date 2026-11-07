@@ -210,7 +210,6 @@ class _FakeDeepmind:
         self.note_recall_enabled = True
         self.note_inject_top_k = 3
         self.note_candidate_top_k = 21
-        self.CHAINED_RECALL_PER_TYPE_LIMIT = 7
         self.session_memory_manager = _FakeSessionMemory()
         self.memory_injector = _FakeInjector()
         self.retrieval_service = DeepMindRetrievalService(self)
