@@ -25,14 +25,14 @@ class _FakeStore:
         self.kb = _FakeKB(hits)
 
 
-def _hit(memory_id, rerank_score, fused_score=0.0, memory_type="知识"):
+def _hit(memory_id, rerank_score, fused_score=0.0):
     return {
         "rerank_score": rerank_score,
         "score": fused_score,
         "record": {
             "id": memory_id,
             "judgment": f"记忆{memory_id}",
-            "memory_type": memory_type,
+            "memory_type": "知识",
         },
     }
 
@@ -74,18 +74,6 @@ def test_max_results_caps_below_limit():
 
     got = store.search("查询", "public", limit=50, score_ratio=0.5, max_results=10)
     assert len(got) == 10
-
-
-def test_type_filter_applies_before_score_threshold():
-    hits = [
-        _hit(1, 1.0, memory_type="知识"),
-        _hit(2, 0.9, memory_type="技能"),
-        _hit(3, 0.5, memory_type="技能"),
-    ]
-    store = MemoryStore(_FakeStore(hits))
-
-    got = store.search("查询", "public", memory_type="技能", score_ratio=0.5)
-    assert [item["id"] for item in got] == [2, 3]
 
 
 def test_auto_recall_filters_below_half_of_top_score():

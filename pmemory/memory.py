@@ -253,15 +253,13 @@ class MemoryStore:
         scope: Optional[str] = None,
         *,
         limit: int = 10,
-        memory_type: Optional[str] = None,
-        candicate_multiplier: int = 3,
         score_ratio: Optional[float] = None,
         max_results: Optional[int] = None,
         rerank: bool = True,
     ) -> List[dict]:
         """检索记忆。
 
-        类型过滤、分数过滤、条数截断都在拿到结果之后做，所以候选窗口按倍数放大。
+        分数过滤与条数截断都在拿到结果之后做。
         `rerank` 关掉时按库的融合分排序，不调用重排回调。
         `score_ratio` 给出时只保留不低于本批最高分该比例的命中：整批都有重排分就按
         重排分比较，只要有命中缺重排分就统一退回库的融合分，两种尺子不混比。
@@ -272,13 +270,12 @@ class MemoryStore:
             return []
         space = self.space
         want = max(1, int(limit))
-        fetch = want if not memory_type else max(want * max(1, candicate_multiplier), want)
         try:
             result = self._store.kb.search(
                 text,
                 filter=self._filter(scope),
                 kinds=["memory"],
-                limit=fetch,
+                limit=want,
                 embed_space=space,
                 text=True,
                 vector=bool(space),
@@ -294,8 +291,6 @@ class MemoryStore:
         for hit in result.get("hits") or []:
             record = hit.get("record") or {}
             if not record:
-                continue
-            if memory_type and _text(record.get("memory_type")) != _text(memory_type):
                 continue
             rerank = hit.get("rerank_score")
             records.append(record)
