@@ -93,22 +93,6 @@ class PMemoryMemoryRuntime(MemoryRuntime):
 
     # === 读 ===
 
-    async def recall(
-        self,
-        memory_type: str,
-        query: str,
-        limit: int = 10,
-        memory_scope: Optional[str] = None,
-    ) -> List[BaseMemory]:
-        records = await asyncio.to_thread(
-            self._store.search,
-            query,
-            memory_scope or "public",
-            limit=limit,
-            memory_type=_cn_type(memory_type),
-        )
-        return [to_base_memory(record) for record in records]
-
     async def comprehensive_recall(
         self,
         query: str,

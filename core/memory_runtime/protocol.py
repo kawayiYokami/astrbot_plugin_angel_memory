@@ -20,15 +20,6 @@ class MemoryRuntime(Protocol):
     ) -> str:
         ...
 
-    async def recall(
-        self,
-        memory_type: str,
-        query: str,
-        limit: int = 10,
-        memory_scope: Optional[str] = None,
-    ) -> List[BaseMemory]:
-        ...
-
     async def comprehensive_recall(
         self,
         query: str,
