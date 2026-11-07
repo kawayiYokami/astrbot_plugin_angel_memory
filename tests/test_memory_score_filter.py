@@ -68,6 +68,32 @@ def test_ratio_uses_fused_score_when_any_hit_lacks_rerank_score():
     assert [item["id"] for item in got] == [1, 2]
 
 
+def test_negative_rerank_scores_are_dropped():
+    """重排分必须为正：整批都是负分时一条都不留，不做归一化。"""
+    hits = [_hit(1, -1.0), _hit(2, -2.0), _hit(3, -3.0)]
+    store = MemoryStore(_FakeStore(hits))
+
+    assert store.search("查询", "public", score_ratio=0.5) == []
+
+
+def test_negative_scores_do_not_lift_the_threshold():
+    """混着负分时，负分既不进结果，也不参与最高分的计算。"""
+    hits = [_hit(1, 10.0), _hit(2, 9.0), _hit(3, -1.0), _hit(4, -2.0)]
+    store = MemoryStore(_FakeStore(hits))
+
+    got = store.search("查询", "public", score_ratio=0.5)
+
+    assert [item["id"] for item in got] == [1, 2]
+
+
+def test_zero_score_is_not_positive():
+    """零分不是正分，按门槛口径同样丢弃。"""
+    hits = [_hit(1, 0.0), _hit(2, 0.0)]
+    store = MemoryStore(_FakeStore(hits))
+
+    assert store.search("查询", "public", score_ratio=0.5) == []
+
+
 def test_max_results_caps_below_limit():
     hits = [_hit(index, 10.0) for index in range(1, 16)]
     store = MemoryStore(_FakeStore(hits))

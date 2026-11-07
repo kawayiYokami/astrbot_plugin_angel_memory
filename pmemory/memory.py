@@ -307,8 +307,15 @@ class MemoryStore:
                 scores = [float(score) for score in rerank_scores]
             else:
                 scores = fused_scores
-            threshold = max(scores) * float(score_ratio)
-            kept = [record for record, score in zip(records, scores) if score >= threshold]
+            # 重排分必须为正：负分是供应商吐出来的原始 logit，不做归一化，直接丢掉。
+            # 剩下的按最高分的比例留人，负分不参与最高分的计算。
+            scored = [
+                (record, score) for record, score in zip(records, scores) if score > 0
+            ]
+            if not scored:
+                return []
+            threshold = max(score for _, score in scored) * float(score_ratio)
+            kept = [record for record, score in scored if score >= threshold]
 
         cap = want if max_results is None else min(want, int(max_results))
         return kept[:cap]
