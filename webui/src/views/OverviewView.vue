@@ -341,26 +341,55 @@ function renderMarkdown(text: any) {
   return html.join('')
 }
 
-/** 递归渲染 JSON 对象为键值树。 */
+/** 递归渲染 JSON 为纵向键值树：父字段独占一行，子字段缩进在下一行。 */
 function renderJson(value: any): string {
-  if (value === null || value === undefined) return '<span class="json-null">null</span>'
-  if (typeof value === 'string') return `<span class="json-str">${escapeHtml(value)}</span>`
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return `<span class="json-num">${escapeHtml(String(value))}</span>`
+  const scalar = (item: any): string => {
+    if (item === null || item === undefined) return '<span class="json-null">null</span>'
+    if (typeof item === 'string') return `<span class="json-str">${escapeHtml(item)}</span>`
+    if (typeof item === 'number' || typeof item === 'boolean') {
+      return `<span class="json-num">${escapeHtml(String(item))}</span>`
+    }
+    return `<span class="json-str">${escapeHtml(String(item))}</span>`
   }
-  if (Array.isArray(value)) {
-    if (!value.length) return '<span class="json-null">[]</span>'
-    return `<ul class="json-list">${value.map((item) => `<li>${renderJson(item)}</li>`).join('')}</ul>`
+
+  const isNested = (item: any): boolean => {
+    if (item === null || typeof item !== 'object') return false
+    return Array.isArray(item) ? item.length > 0 : Object.keys(item).length > 0
   }
-  const entries = Object.entries(value)
-  if (!entries.length) return '<span class="json-null">{}</span>'
-  return `<div class="json-obj">${entries
-    .map(
-      ([key, item]) =>
-        `<div class="json-row"><span class="json-key">${escapeHtml(key)}</span>` +
-        `<div class="json-val">${renderJson(item)}</div></div>`,
-    )
-    .join('')}</div>`
+
+  // 层级越深越淡，到第四层封底，再深也不继续变淡
+  const DEPTH_OPACITY = [1, 0.88, 0.78, 0.7, 0.64]
+
+  const render = (item: any, depth: number): string => {
+    const opacity = DEPTH_OPACITY[Math.min(depth, DEPTH_OPACITY.length - 1)]
+    const indent = `padding-left:${depth * 16}px;opacity:${opacity}`
+    if (Array.isArray(item)) {
+      if (!item.length) return `<div class="json-line" style="${indent}"><span class="json-null">[]</span></div>`
+      return item
+        .map((child) => {
+          const head = `<div class="json-line" style="${indent}"><span class="json-punc">-</span>`
+          if (isNested(child)) return `${head}</div>${render(child, depth + 1)}`
+          return `${head} ${scalar(child)}</div>`
+        })
+        .join('')
+    }
+    if (item !== null && typeof item === 'object') {
+      const entries = Object.entries(item)
+      if (!entries.length) return `<div class="json-line" style="${indent}"><span class="json-null">{}</span></div>`
+      return entries
+        .map(([key, child]) => {
+          const head =
+            `<div class="json-line" style="${indent}">` +
+            `<span class="json-key">${escapeHtml(key)}</span><span class="json-punc">:</span>`
+          if (isNested(child)) return `${head}</div>${render(child, depth + 1)}`
+          return `${head} ${scalar(child)}</div>`
+        })
+        .join('')
+    }
+    return `<div class="json-line" style="${indent}">${scalar(item)}</div>`
+  }
+
+  return `<div class="json-obj">${render(value, 0)}</div>`
 }
 
 function rawResultText(r: any) {
@@ -594,32 +623,23 @@ onMounted(async () => {
 }
 
 .md-body :deep(.json-obj) {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: block;
 }
 
-.md-body :deep(.json-row) {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
+.md-body :deep(.json-line) {
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .md-body :deep(.json-key) {
-  flex: 0 0 auto;
-  min-width: 120px;
   font-weight: 600;
   color: #d03050;
 }
 
-.md-body :deep(.json-val) {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.md-body :deep(.json-list) {
-  margin: 0;
-  padding-left: 18px;
+.md-body :deep(.json-punc) {
+  opacity: 0.5;
+  margin-right: 4px;
 }
 
 .md-body :deep(.json-null) {
