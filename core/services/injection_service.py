@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Optional
 
 from astrbot.api.provider import ProviderRequest
-from astrbot.core.agent.message import TextPart
 
 
 class DeepMindInjectionService:
@@ -34,6 +33,8 @@ class DeepMindInjectionService:
     @classmethod
     def _already_injected(cls, request: ProviderRequest) -> bool:
         """本次请求已经挂过提醒块，就不再挂第二块。"""
+        if getattr(request, "_angel_memory_injected", False):
+            return True
         for part in request.extra_user_content_parts or []:
             if isinstance(part, dict):
                 text = part.get("text")
@@ -66,13 +67,19 @@ class DeepMindInjectionService:
         return cls.REMINDER_OPEN + "\n" + "\n\n".join(parts) + "\n</system_reminder>"
 
     def _attach_current_block(self, request: ProviderRequest, parts: list) -> bool:
-        """当前消息的块挂在附加内容里，位置在本轮用户消息之后。"""
+        """本轮注入内容合成一条消息，追加到上下文末尾，位置在本轮用户发言之前。"""
         if not parts:
             return False
         if self._already_injected(request):
             return False
-        block = TextPart(text=self._render_block(parts)).mark_as_temp()
-        request.extra_user_content_parts.append(block)
+        contexts = request.contexts
+        if not isinstance(contexts, list):
+            contexts = []
+            request.contexts = contexts
+        contexts.append(
+            {"role": "user", "content": self._render_block(parts), "_no_save": True}
+        )
+        request._angel_memory_injected = True
         return True
 
     def attach_history_blocks(

@@ -73,9 +73,11 @@ def _session(memory_id, bound_message_id):
 
 
 def _text_of(request):
-    return "\n".join(
-        str(getattr(part, "text", "")) for part in request.extra_user_content_parts
-    )
+    for block in reversed(request.contexts or []):
+        content = block.get("content") if isinstance(block, dict) else ""
+        if isinstance(content, str) and "<system_reminder>" in content:
+            return content
+    return ""
 
 
 @pytest.mark.asyncio
@@ -97,7 +99,10 @@ async def test_current_block_carries_memories_bound_to_current_message():
     # 行为守则进系统提示词，不跟着对话消息走
     assert "<instruction>" not in text
     assert "【关于你记得的事】" in (request.system_prompt or "")
-    assert request.contexts == []
+    # 注入块追加在上下文末尾，带 _no_save 不落库
+    assert len(request.contexts) == 1
+    assert request.contexts[0]["_no_save"] is True
+    assert request.contexts[0]["role"] == "user"
 
 
 @pytest.mark.asyncio
@@ -110,6 +115,7 @@ async def test_nothing_to_inject_means_no_block():
         request, "sess", "", message_id="msg-1"
     )
 
+    assert request.contexts == []
     assert request.extra_user_content_parts == []
 
 
@@ -169,7 +175,7 @@ async def test_same_message_is_not_injected_twice():
             request, "sess", "", message_id="msg-1"
         )
 
-    assert len(request.extra_user_content_parts) == 1
+    assert len(request.contexts) == 1
 
 
 @pytest.mark.asyncio
@@ -183,8 +189,8 @@ async def test_injected_block_is_not_persisted_into_history():
         request, "sess", "", message_id="msg-1"
     )
 
-    block = request.extra_user_content_parts[0]
-    assert block.model_dump_for_context().get("_no_save") is True
+    block = request.contexts[-1]
+    assert block.get("_no_save") is True
 
 
 def test_history_blocks_follow_their_own_message_even_with_same_text():
