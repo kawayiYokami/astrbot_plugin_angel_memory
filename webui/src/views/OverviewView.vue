@@ -170,6 +170,7 @@
                   r.error
                 }}</n-alert>
                 <pre v-if="resultView(r.id) === 'raw'" class="code-block">{{ rawResultText(r) }}</pre>
+                <ReflectionResult v-else-if="reflectionView(r)" :view="reflectionView(r)!" />
                 <div v-else class="md-body" v-html="renderResult(r)"></div>
               </div>
 
@@ -206,6 +207,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
+import ReflectionResult from '@/components/ReflectionResult.vue'
 
 const { apiGet, apiPost } = useBridge()
 const message = useMessage()
@@ -390,6 +392,107 @@ function renderJson(value: any): string {
   }
 
   return `<div class="json-obj">${render(value, 0)}</div>`
+}
+
+type SoulAxis = { key: string; low: string; high: string; value: number; color: string }
+type MemoryItemView = {
+  type: string
+  judgment: string
+  reasoning: string
+  tags: string[]
+  sourceIds: string[]
+}
+type ReflectionGroup = { title: string; items: MemoryItemView[] }
+type ReflectionView = { soul: SoulAxis[]; usefulIds: string[]; groups: ReflectionGroup[] }
+
+const SOUL_AXES = [
+  { key: 'joy', low: '悲', high: '喜', color: '#f0a020' },
+  { key: 'anger', low: '恐', high: '怒', color: '#d03050' },
+  { key: 'surprise', low: '意料中', high: '意外', color: '#2080f0' },
+  { key: 'disgust', low: '认可', high: '厌恶', color: '#18a058' },
+]
+
+const ACTION_TITLES: Record<string, string> = {
+  create: '生成记忆',
+  merge: '合并记忆',
+  updata: '更新记忆',
+  update: '更新记忆',
+}
+
+const ACTION_ORDER = ['生成记忆', '合并记忆', '更新记忆']
+
+function toText(value: any): string {
+  if (typeof value === 'string') return value
+  if (value === null || value === undefined) return ''
+  return String(value)
+}
+
+function toTextList(value: any): string[] {
+  return Array.isArray(value) ? value.map((item) => toText(item)).filter(Boolean) : []
+}
+
+/** 把反思返回的 JSON 翻译成可读结构；结构不认识就返回 null，交给原文渲染。 */
+function parseReflection(r: any): ReflectionView | null {
+  const data = r && r.result
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+
+  const soulRaw = data.soul_state
+  const feedback = data.feedback_data && typeof data.feedback_data === 'object' ? data.feedback_data : null
+  if (!soulRaw && !feedback) return null
+
+  const soul: SoulAxis[] = []
+  if (soulRaw && typeof soulRaw === 'object') {
+    for (const axis of SOUL_AXES) {
+      const raw = Number(soulRaw[axis.key])
+      if (!Number.isFinite(raw)) continue
+      soul.push({
+        key: axis.key,
+        low: axis.low,
+        high: axis.high,
+        value: Math.min(1, Math.max(0, raw)),
+        color: axis.color,
+      })
+    }
+  }
+
+  const usefulIds = feedback ? toTextList(feedback.useful_memory_ids) : []
+
+  const buckets: Record<string, MemoryItemView[]> = {}
+  const actions = feedback ? feedback.memory_actions : null
+  if (Array.isArray(actions)) {
+    for (const action of actions) {
+      if (!action || typeof action !== 'object') continue
+      const title = ACTION_TITLES[toText(action.action).toLowerCase()]
+      const memory = action.memory
+      if (!title || !memory || typeof memory !== 'object') continue
+      if (!buckets[title]) buckets[title] = []
+      buckets[title].push({
+        type: toText(memory.type) || '未分类',
+        judgment: toText(memory.judgment),
+        reasoning: toText(memory.reasoning),
+        tags: toTextList(memory.tags),
+        sourceIds: toTextList(action.source_memory_ids),
+      })
+    }
+  }
+
+  const groups: ReflectionGroup[] = []
+  for (const title of ACTION_ORDER) {
+    if (buckets[title] && buckets[title].length) groups.push({ title, items: buckets[title] })
+  }
+
+  if (!soul.length && !usefulIds.length && !groups.length) return null
+  return { soul, usefulIds, groups }
+}
+
+const reflectionCache = new WeakMap<object, ReflectionView | null>()
+
+function reflectionView(r: any): ReflectionView | null {
+  if (!r || typeof r !== 'object') return null
+  if (reflectionCache.has(r)) return reflectionCache.get(r) ?? null
+  const view = parseReflection(r)
+  reflectionCache.set(r, view)
+  return view
 }
 
 function rawResultText(r: any) {
@@ -651,7 +754,8 @@ onMounted(async () => {
 }
 
 .md-body :deep(.json-str) {
-  color: #2080f0;
+  color: #18a058;
   white-space: pre-wrap;
 }
+
 </style>
