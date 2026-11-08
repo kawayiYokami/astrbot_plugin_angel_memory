@@ -609,7 +609,7 @@ onMounted(async () => {
   flex: 0 0 auto;
   min-width: 120px;
   font-weight: 600;
-  opacity: 0.7;
+  color: #d03050;
 }
 
 .md-body :deep(.json-val) {
@@ -627,10 +627,11 @@ onMounted(async () => {
 }
 
 .md-body :deep(.json-num) {
-  color: #d03050;
+  color: #18a058;
 }
 
 .md-body :deep(.json-str) {
+  color: #2080f0;
   white-space: pre-wrap;
 }
 </style>
