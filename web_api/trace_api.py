@@ -75,8 +75,9 @@ class TraceAPI:
                 pending.append(item)
 
         merged = list(persisted) + pending
-        merged.sort(key=self._sort_key)
-        return merged[-self.TRACE_LIMIT :]
+        # 最新排最前：页面从上往下就是新到旧，不用滚到底才看到刚跑完的那次
+        merged.sort(key=self._sort_key, reverse=True)
+        return merged[: self.TRACE_LIMIT]
 
     @staticmethod
     def _sort_key(record: Dict[str, Any]) -> float:
