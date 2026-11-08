@@ -101,6 +101,12 @@
         "description": "停聊多久补跑一次轮次反思",
         "default": 600,
         "hint": "轮数还没攒够，但已经停聊超过这个时长，就补跑一次，免得这段对话一直攒着。最小 1。"
+      },
+      "short_term_memory_capacity": {
+        "type": "int",
+        "description": "短期记忆槽的容量倍数",
+        "default": 1,
+        "hint": "每种记忆的槽位都乘上这个倍数。默认 1，设成 2 就是每种都翻倍。"
       }
     }
   },

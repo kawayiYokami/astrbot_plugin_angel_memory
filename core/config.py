@@ -62,10 +62,22 @@ class ConfigValidator:
             )
 
 
+@dataclass
+class MemoryCapacityConfig:
+    """短期记忆槽的按类型容量配额。"""
+
+    knowledge: int = 14
+    emotional: int = 1
+    skill: int = 7
+    task: int = 1
+    event: int = 3
+
+
 class MemoryConstants:
     """记忆系统常量定义"""
 
     MIN_MESSAGE_LENGTH = 5
+    SHORT_TERM_MEMORY_CAPACITY = 1.0
     DEFAULT_DATA_DIR = None  # 数据目录必须由外部传入，不设默认值
     NOTE_TOP_K = 3  # 默认注入笔记数量（候选固定为 7 倍）
 
@@ -132,6 +144,14 @@ class MemoryConfig:
             memory_behavior.get("min_message_length") or config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH),
             "min_message_length",
             max_value=500,
+        )
+
+        self._short_term_memory_capacity = ConfigValidator.validate_positive_number(
+            memory_behavior.get("short_term_memory_capacity") or config_get(
+                "short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY
+            ),
+            "short_term_memory_capacity",
+            max_value=10.0,
         )
 
         self._data_directory = config_get("data_directory", self.data_dir)
@@ -220,6 +240,11 @@ class MemoryConfig:
         return self._min_message_length
 
     @property
+    def short_term_memory_capacity(self) -> float:
+        """获取短期记忆槽的容量倍数"""
+        return self._short_term_memory_capacity
+
+    @property
     def data_directory(self) -> str:
         """获取数据目录路径"""
         return self._data_directory
@@ -277,6 +302,10 @@ class MemoryConfig:
         """是否启用灵魂系统"""
         return self._enable_soul_system
 
+    def get_capacity_config(self) -> MemoryCapacityConfig:
+        """获取短期记忆槽的按类型容量配额"""
+        return MemoryCapacityConfig()
+
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """
         获取配置值
@@ -294,6 +323,7 @@ class MemoryConfig:
         """转换为字典"""
         return {
             "min_message_length": self.min_message_length,
+            "short_term_memory_capacity": self.short_term_memory_capacity,
             "conversation_scope_map": self.conversation_scope_map,
             "enable_soul_system": self.enable_soul_system,
             "data_directory": self.data_directory,

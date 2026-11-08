@@ -106,8 +106,10 @@ class DeepMind:
 
         # 记忆行为与笔记参数不在此处快照，全部按次现读（见下方同名属性）
 
-        # 初始化短期记忆
-        self.session_memory_manager = SessionMemoryManager()
+        # 初始化短期记忆，容量倍数每次淘汰前现读，改配置立刻生效
+        self.session_memory_manager = SessionMemoryManager(
+            capacity_provider=lambda: self.short_term_memory_capacity
+        )
 
         # 睡眠调度状态：每天 04:00 一次，按运行环境本地时间，不做启动补偿
         self._sleep_tick_task: Optional[asyncio.Task] = None
@@ -192,6 +194,18 @@ class DeepMind:
         except (TypeError, ValueError):
             value = 5
         return max(0, value)
+
+    @property
+    def short_term_memory_capacity(self) -> float:
+        """短期记忆槽的容量倍数，每种记忆类型的槽位都乘上它。"""
+        raw = self._read_group_value("memory_behavior", "short_term_memory_capacity", 1.0)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = 1.0
+        if value <= 0:
+            value = 1.0
+        return min(10.0, value)
 
     @property
     def note_inject_top_k(self) -> int:
@@ -1541,6 +1555,15 @@ class DeepMind:
             useful_long_term_memories = [
                 mem for mem in long_term_memories if mem.id in useful_ids
             ]
+
+            # 先按这一轮的有用判定结算生命值，被判定有用的加分，其余减分，归零的当场淘汰
+            died_items = self.session_memory_manager.evaluate_feedback_in_session(
+                session_id, useful_ids
+            )
+            if died_items:
+                self.logger.debug(
+                    f"[短期记忆] 生命值耗尽淘汰 session={session_id} count={len(died_items)}"
+                )
 
             # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆，绑定触发这次回复的消息
             memories_for_session = useful_long_term_memories + newly_created_memories
