@@ -302,8 +302,8 @@ def test_user_text_is_empty_without_request():
 
 # ---------- 三之二、摊平后保留发送者 ----------
 
-def test_different_senders_keep_their_own_headers():
-    """同一会话里两个不同发送者，摊平后各自署名，不能都变成「群友」。"""
+def test_different_senders_keep_their_own_identity():
+    """同一会话里两个不同发送者，摊平后各自带身份，不能都变成「群友」。"""
     deepmind = _deepmind(threshold=2)
     _record(
         deepmind, "s1", req=_Req("我先说"), resp="答一", when=1000.0,
@@ -320,10 +320,10 @@ def test_different_senders_keep_their_own_headers():
     assert (users[0]["sender_id"], users[0]["sender_name"]) == ("1", "甲")
     assert (users[1]["sender_id"], users[1]["sender_name"]) == ("2", "乙")
 
-    text, _ = SmallModelPromptBuilder.format_chat_records(records)
-    assert "甲（1）" in text
-    assert "乙（2）" in text
-    assert "群友" not in text
+    text, participants = SmallModelPromptBuilder.format_chat_records(records)
+    assert "我先说" in text
+    assert "我后说" in text
+    assert [item["id"] for item in participants] == ["1", "2"]
 
 
 def test_turn_without_user_text_only_emits_assistant():

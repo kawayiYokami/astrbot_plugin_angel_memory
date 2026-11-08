@@ -13,6 +13,9 @@ from .memory_formatter import MemoryFormatter
 class SmallModelPromptBuilder:
     """小模型提示词构建器"""
 
+    # 记忆创建时间统一按 UTC+8 显示，与用户所在时区一致
+    MEMORY_TIMEZONE = timezone(timedelta(hours=8))
+
     @staticmethod
     def extract_text_from_content(content) -> str:
         """
@@ -32,139 +35,21 @@ class SmallModelPromptBuilder:
                     return item.get("text", "")
         return ""
 
-    # 剧本式排版的断档阈值：相邻两条消息间隔达到这个秒数就补一行时间
-    CHAT_TIME_GAP_SECONDS = 600
-    CHAT_TIMEZONE = timezone(timedelta(hours=8))
-
-    @staticmethod
-    def _format_chat_clock(timestamp) -> str:
-        """把发送时间转成 UTC+8 的 HH:MM；取不到有效时间时返回空串。"""
-        try:
-            value = float(timestamp or 0)
-        except (TypeError, ValueError):
-            return ""
-        if value <= 0:
-            return ""
-        moment = datetime.fromtimestamp(value, tz=SmallModelPromptBuilder.CHAT_TIMEZONE)
-        return moment.strftime("%H:%M")
-
-    @staticmethod
-    def _format_memory_created_at(value) -> str:
-        """把 created_at 转成 YYYY-MM-DD HH:MM（UTC+8），与聊天时间行同一时区。
-
-        取不到有效时间时返回空串：不输出 1970-01-01，
-        否则模型会误以为这条记忆比所有东西都旧。
-        """
-        try:
-            seconds = float(value or 0)
-        except (TypeError, ValueError):
-            return ""
-        if seconds <= 0:
-            return ""
-        moment = datetime.fromtimestamp(seconds, tz=SmallModelPromptBuilder.CHAT_TIMEZONE)
-        return moment.strftime("%Y-%m-%d %H:%M")
-
-    @staticmethod
-    def _split_quote_fragments(text: str) -> Tuple[List[str], str]:
-        """抽出 [引用消息(某人: 被引内容)] 片段，返回 (引用列表, 剩余正文)。
-
-        收尾以 ")]" 为准：被引内容里常出现半角 ")"（"笑)"、"1)"、":)" 这类），
-        纯括号深度配对会在第一个 ')' 处截断。找不到 ")]" 时才退回深度配对，
-        仍不闭合就整段留在正文里。
-        """
-        marker = "[引用消息("
-        quotes: List[str] = []
-        rest: List[str] = []
-        cursor = 0
-        while True:
-            start = text.find(marker, cursor)
-            if start < 0:
-                rest.append(text[cursor:])
-                break
-            rest.append(text[cursor:start])
-
-            inner_start = start + len(marker)
-            end = text.find(")]", inner_start)
-            if end >= 0:
-                inner = text[inner_start:end]
-                cursor = end + 2
-            else:
-                # 没有 ")]" 收尾：退回括号深度配对，仍不闭合就整段留在正文
-                depth = 1
-                index = inner_start
-                while index < len(text) and depth > 0:
-                    if text[index] == "(":
-                        depth += 1
-                    elif text[index] == ")":
-                        depth -= 1
-                    index += 1
-                if depth > 0:
-                    rest.append(text[start:])
-                    break
-                inner = text[inner_start : index - 1]
-                cursor = index + 1 if index < len(text) and text[index] == "]" else index
-
-            if inner.strip():
-                quotes.append(inner.strip())
-
-        return quotes, "".join(rest)
-
-    @staticmethod
-    def _render_quote(inner: str) -> List[str]:
-        """把「某人: 被引内容」渲染成带前缀的引用行列表。
-
-        被引内容可能自带换行，每一行都必须带 "  > " 前缀：顶格出现的续行
-        会被读成发言人署名行，正是这套排版要避免的误判。
-        """
-        text = (inner or "").strip()
-        head = ""
-        body = text
-        for separator in (": ", "：", ":"):
-            if separator in text:
-                name, _, content = text.partition(separator)
-                name = name.strip()
-                if name:
-                    head = f"{name}："
-                    body = content.strip()
-                break
-
-        rendered: List[str] = []
-        for line in body.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if not rendered:
-                rendered.append(f"  > {head}{stripped}")
-            else:
-                rendered.append(f"  > {stripped}")
-        if not rendered:
-            rendered.append(f"  > {head}".rstrip())
-        return rendered
-
-    @staticmethod
-    def _render_chat_body(text: str) -> List[str]:
-        """正文逐行缩进两空格；空行不产出，避免留下只有空白的行。"""
-        return [f"  {line}" for line in text.splitlines() if line.strip()]
-
     @staticmethod
     def format_chat_records(chat_records: List[Dict]) -> Tuple[str, List[Dict]]:
         """
-        格式化对话历史为剧本式纯文本，并生成对话参与者清单。
+        把对话记录按时间顺序拼成纯文本，并生成对话参与者清单。
 
-        排版规则：
-        - 严格按发送时间升序，时间戳相同保持传入顺序
-        - 相邻两条间隔达到 600 秒就插一行 HH:MM（UTC+8），第一条之前也插
-        - 换人起新段；插过时间行也一律重新署名，段首写「名字（号）」不缩进，该人后续消息逐行缩进两空格
-        - 引用片段单列成「  > 名字：内容」，被引内容有换行时每行都带「  > 」前缀
-        - [At:...]、[图片] 这类占位符留在正文原位，不使用加粗、标题、代码块等修饰
-        - 「  > 」是引用排版符号，不属于被禁的 markdown 修饰
+        天使之心模式下 prompt 已带「[名字 (ID: 号)] (时间): 」前缀，
+        原生模式下 prompt 就是原文；两种都原样照搬，不再补署名行、缩进、
+        时间行，也不渲染引用。这里只做过滤、排序与参与者收集。
 
         Args:
             chat_records: 对话记录列表
 
         Returns:
             一个元组，包含：
-            - 格式化后的对话文本字符串
+            - 拼接后的对话文本字符串
             - 对话参与者清单（去重后）
         """
         usable: List[Dict] = []
@@ -189,76 +74,45 @@ class SmallModelPromptBuilder:
 
         lines: List[str] = []
         participants: Dict[str, Dict] = {}
-        last_timestamp: Optional[float] = None
-        last_speaker_key: Optional[Tuple] = None
-
         for msg in usable:
-            role = str(msg.get("role", "") or "").strip()
-            raw_text = SmallModelPromptBuilder.extract_text_from_content(
+            text = SmallModelPromptBuilder.extract_text_from_content(
                 msg.get("content", "")
             )
-            quotes, leftover = SmallModelPromptBuilder._split_quote_fragments(
-                raw_text or ""
-            )
-            body = leftover.strip()
-
-            # 内容（含引用）全空的记录直接跳过，不产出空段
-            if not body and not quotes:
+            if not text.strip():
                 continue
+            lines.append(text)
 
-            try:
-                timestamp = float(msg.get("timestamp", 0) or 0)
-            except (TypeError, ValueError):
-                timestamp = 0.0
-
-            clock = SmallModelPromptBuilder._format_chat_clock(timestamp)
-            # 插了时间行就等于断开连续段：下一条必须重新署名，否则读不出是谁说的
-            clock_inserted = bool(clock) and (
-                last_timestamp is None
-                or timestamp - last_timestamp >= SmallModelPromptBuilder.CHAT_TIME_GAP_SECONDS
-            )
-            if clock_inserted:
-                lines.append(clock)
-
-            if role == "assistant":
-                speaker_key: Tuple = ("assistant",)
-                speaker_label = "我"
-            else:
-                sender_id = str(msg.get("sender_id", "") or "").strip()
-                sender_name = str(msg.get("sender_name", "") or "").strip()
-                speaker_key = ("user", sender_id or sender_name or "群友")
-
-                if sender_name:
-                    speaker_label = (
-                        f"{sender_name}（{sender_id}）" if sender_id else sender_name
-                    )
-                elif sender_id:
-                    speaker_label = f"群友（{sender_id}）"
-                else:
-                    speaker_label = "群友"
-
-                if (
-                    sender_id
-                    and sender_id.lower() != "unknown"
-                    and sender_id not in participants
-                ):
-                    participants[sender_id] = {
-                        "id": sender_id,
-                        "name": sender_name or "群友",
-                    }
-
-            # 换人起新段；插过时间行也一律重新署名；同一个人紧接着说才不重复署名
-            if clock_inserted or speaker_key != last_speaker_key:
-                lines.append(speaker_label)
-                last_speaker_key = speaker_key
-
-            for quote in quotes:
-                lines.extend(SmallModelPromptBuilder._render_quote(quote))
-            lines.extend(SmallModelPromptBuilder._render_chat_body(body))
-
-            last_timestamp = timestamp
+            if str(msg.get("role", "") or "").strip() == "assistant":
+                continue
+            sender_id = str(msg.get("sender_id", "") or "").strip()
+            sender_name = str(msg.get("sender_name", "") or "").strip()
+            if (
+                sender_id
+                and sender_id.lower() != "unknown"
+                and sender_id not in participants
+            ):
+                participants[sender_id] = {
+                    "id": sender_id,
+                    "name": sender_name or "群友",
+                }
 
         return "\n".join(lines), list(participants.values())
+
+    @staticmethod
+    def _format_memory_created_at(value) -> str:
+        """把 created_at 转成 YYYY-MM-DD HH:MM（UTC+8）。
+
+        取不到有效时间时返回空串：不输出 1970-01-01，
+        否则模型会误以为这条记忆比所有东西都旧。
+        """
+        try:
+            seconds = float(value or 0)
+        except (TypeError, ValueError):
+            return ""
+        if seconds <= 0:
+            return ""
+        moment = datetime.fromtimestamp(seconds, tz=SmallModelPromptBuilder.MEMORY_TIMEZONE)
+        return moment.strftime("%Y-%m-%d %H:%M")
 
     @staticmethod
     def build_memory_prompt(
