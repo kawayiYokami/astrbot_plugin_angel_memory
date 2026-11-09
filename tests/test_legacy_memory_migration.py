@@ -31,9 +31,151 @@ def _make_source():
     return MemorySqlManager(path), LegacyDb(path)
 
 
-def _migrate(sql_manager, state_dir: Path, backup_dir: Path | None = None) -> dict:
+class _BrokenSql:
+    """模拟旧 SQL 读取失败（如 SQLite 被占锁、数据目录未挂载）。"""
+
+    async def export_backup_snapshot(self):
+        raise RuntimeError("database is locked")
+
+
+class _UnwritableStore(MemoryStore):
+    """模拟库暂时不可写（磁盘满、IO 错误、句柄失效）。"""
+
+    def remember(self, *args, **kwargs):
+        raise OSError("disk is full")
+
+
+def test_unwritable_store_does_not_finish_migration():
+    """库调用失败时不收尾，下次重试；避免库暂时不可写时整批永久丢。"""
+    root, _store = _setup_env()
+    sql, _db = _make_source()
+    backup_dir = Path(tempfile.mkdtemp(prefix="pmem-bak-"))
+    base = {
+        "memory_type": "知识记忆",
+        "reasoning": "",
+        "is_active": 0,
+        "useful_count": 0,
+        "useful_score": 0.0,
+        "memory_scope": "public",
+        "created_at": 1780029185.0,
+        "updated_at": 1780029185.0,
+    }
+    _write_backup(
+        backup_dir,
+        [{"id": "good", "judgment": "正常记忆", "strength": 3, **base}],
+    )
+
+    first = _migrate(sql, root, backup_dir, store=_UnwritableStore())
+    assert (first["status"], first["written"]) == ("failed", 0)
+    assert first["failed_env"] == 1
+    assert not (root / "legacy_migration_state.json").exists()
+
+    # 没写标记，所以第二次还会尝试（这里同样失败，但确认没被「已完成」拦住）。
+    second = _migrate(sql, root, backup_dir, store=_UnwritableStore())
+    assert second["status"] == "failed"
+    pmemory.close()
+
+
+def test_data_errors_with_skipped_rows_finish_migration():
+    """零写入只是因为没有新东西可写时仍要收尾，别把「没得写」当「写不进」。"""
+    root, store = _setup_env()
+    sql, _db = _make_source()
+    backup_dir = Path(tempfile.mkdtemp(prefix="pmem-bak-"))
+    base = {
+        "memory_type": "知识记忆",
+        "reasoning": "",
+        "is_active": 0,
+        "useful_count": 0,
+        "useful_score": 0.0,
+        "memory_scope": "public",
+        "created_at": 1780029185.0,
+        "updated_at": 1780029185.0,
+    }
+    # 备份是新库自己导出的形态：一条已存在（判重命中）、一条字段坏。
+    store.remember("已经记过的内容", "反思写的", ["标签"], "知识记忆", "public")
+    _write_backup(
+        backup_dir,
+        [
+            {"id": "dup", "judgment": "已经记过的内容", "strength": 3, **base},
+            {"id": "bad", "judgment": "字段坏了", "strength": "N/A", **base},
+        ],
+    )
+
+    first = _migrate(sql, root, backup_dir)
+    assert (first["status"], first["written"]) == ("partial", 0)
+    assert first["skipped"] == 1
+    assert first["failed_data"] == 1
+    assert first["failed_env"] == 0
+    assert (root / "legacy_migration_state.json").exists()
+
+    # 收过尾就不再试，否则每次都白读一遍备份。
+    second = _migrate(sql, root, backup_dir)
+    assert (second["status"], second["written"]) == ("skipped", 0)
+    pmemory.close()
+
+
+def test_failed_rows_still_finish_migration():
+    """写入失败的单条跳过并照常收尾，不拖着整批反复重跑。"""
+    root, store = _setup_env()
+    sql, _db = _make_source()
+    backup_dir = Path(tempfile.mkdtemp(prefix="pmem-bak-"))
+    base = {
+        "memory_type": "知识记忆",
+        "reasoning": "",
+        "is_active": 0,
+        "useful_count": 0,
+        "useful_score": 0.0,
+        "memory_scope": "public",
+        "created_at": 1780029185.0,
+        "updated_at": 1780029185.0,
+    }
+    _write_backup(
+        backup_dir,
+        [
+            {"id": "good1", "judgment": "正常记忆一", "strength": 3, **base},
+            {"id": "bad", "judgment": "这条字段坏了", "strength": "N/A", **base},
+            {"id": "good2", "judgment": "正常记忆二", "strength": 3, **base},
+        ],
+    )
+
+    first = _migrate(sql, root, backup_dir)
+    # 坏记录在中间，前后两条都该迁进来：单条失败不影响同批。
+    assert first["written"] == 2
+    assert (first["failed"], first["failed_data"], first["failed_env"]) == (1, 1, 0)
+    assert (root / "legacy_migration_state.json").exists()
+
+    # 再跑一次不该重试：已经收尾过，坏的那条就跳过了。
+    second = _migrate(sql, root, backup_dir)
+    assert (second["status"], second["written"]) == ("skipped", 0)
+    assert len(store.list_records(all_scopes=True)) == 2
+    pmemory.close()
+
+
+def test_sql_read_failure_does_not_mark_done():
+    """SQL 读取失败不等于没数据：不能写完成标记，否则旧记忆永久迁不进来。"""
+    root, store = _setup_env()
+    first = _migrate(_BrokenSql(), root)
+    assert first["status"] == "failed"
+    assert first["written"] == 0
+    assert not store.list_records(all_scopes=True)
+
+    # SQL 恢复后仍应能迁移：上次失败不该留下完成标记。
+    sql, db = _make_source()
+    db.add_memory("恢复后该被迁入")
+    second = _migrate(sql, root)
+    assert (second["status"], second["written"]) == ("success", 1)
+    assert [r["judgment"] for r in store.list_records(all_scopes=True)] == ["恢复后该被迁入"]
+    pmemory.close()
+
+
+def _migrate(
+    sql_manager,
+    state_dir: Path,
+    backup_dir: Path | None = None,
+    store: MemoryStore | None = None,
+) -> dict:
     migration = LegacyMemoryMigration(
-        memory_store=MemoryStore(),
+        memory_store=store or MemoryStore(),
         memory_sql_manager=sql_manager,
         state_dir=state_dir,
         backup_dir=backup_dir,
@@ -106,7 +248,8 @@ def test_second_run_is_idempotent():
     pmemory.close()
 
 
-def test_increment_only_writes_new_rows():
+def test_migration_runs_once_and_never_rereads():
+    """迁完写完成标记，之后旧库再有新数据也不再读。"""
     root, store = _setup_env()
     sql, db = _make_source()
     db.add_memory("第一条")
@@ -116,11 +259,8 @@ def test_increment_only_writes_new_rows():
 
     db.add_memory("第二条")
     second = _migrate(sql, root)
-    assert (second["status"], second["written"]) == ("success", 1)
-    assert sorted(r["judgment"] for r in store.list_records(all_scopes=True)) == [
-        "第一条",
-        "第二条",
-    ]
+    assert (second["status"], second["written"]) == ("skipped", 0)
+    assert [r["judgment"] for r in store.list_records(all_scopes=True)] == ["第一条"]
     pmemory.close()
 
 
@@ -184,27 +324,15 @@ def test_backup_is_used_when_sql_is_empty():
     pmemory.close()
 
 
-def test_backup_only_fills_rows_missing_from_sql():
+def test_sql_present_means_backup_is_ignored():
+    """旧 SQL 有数据时完全不读备份，备份里多出来的条目不会被补进来。"""
     root, store = _setup_env()
     sql, db = _make_source()
-    from_sql = db.add_memory("SQL里的记忆")
+    db.add_memory("SQL里的记忆")
     backup_dir = Path(tempfile.mkdtemp(prefix="pmem-bak-"))
     _write_backup(
         backup_dir,
         records=[
-            {
-                "id": from_sql,
-                "judgment": "SQL里的记忆（备份副本）",
-                "memory_type": "知识记忆",
-                "reasoning": "",
-                "strength": 1,
-                "is_active": 0,
-                "useful_count": 0,
-                "useful_score": 0.0,
-                "memory_scope": "public",
-                "created_at": 1780029185.0,
-                "updated_at": 1780029185.0,
-            },
             {
                 "id": "backup-only",
                 "memory_type": "知识记忆",
@@ -217,14 +345,14 @@ def test_backup_only_fills_rows_missing_from_sql():
                 "memory_scope": "public",
                 "created_at": 1780029185.0,
                 "updated_at": 1780029185.0,
-            },
+            }
         ],
     )
 
     result = _migrate(sql, root, backup_dir)
-    assert result["written"] == 2
-    judgments = sorted(r["judgment"] for r in store.list_records(all_scopes=True))
-    assert judgments == ["SQL里的记忆", "只在备份里的记忆"]
+    assert result["written"] == 1
+    assert result["source"] == "旧SQL"
+    assert [r["judgment"] for r in store.list_records(all_scopes=True)] == ["SQL里的记忆"]
     pmemory.close()
 
 
@@ -272,4 +400,37 @@ def test_self_backup_round_trips_inline_tags():
     assert restored["judgment"] == "能回去的记忆"
     assert restored["scope"] == "恋爱"
     assert sorted(restored["tags"]) == ["标签乙", "标签甲"]
+    pmemory.close()
+
+
+def test_backup_with_existing_content_is_not_duplicated():
+    """备份里出现新库已有的同正文记忆时，不再写第二份。
+
+    每日备份导出的就是新库自己，迁移若照单全收，每条新记忆都会被复制一遍。
+    """
+    root, store = _setup_env()
+    store.remember("已经记过的内容", "反思写的", ["标签"], "知识记忆", "public")
+    sql, _db = _make_source()
+
+    backup_dir = Path(tempfile.mkdtemp(prefix="pmem-bak-"))
+    base = {
+        "memory_type": "知识记忆",
+        "reasoning": "反思写的",
+        "strength": 1,
+        "is_active": 0,
+        "useful_count": 0,
+        "useful_score": 0.0,
+        "memory_scope": "public",
+        "created_at": 1780029185.0,
+        "updated_at": 1780029185.0,
+    }
+    _write_backup(
+        backup_dir,
+        [{"id": "old-1", "judgment": "已经记过的内容", **base}],
+        name="memory_backup_20260101.json",
+    )
+
+    result = _migrate(sql, root, backup_dir)
+    assert result["written"] == 0
+    assert len(store.list_records(all_scopes=True)) == 1
     pmemory.close()

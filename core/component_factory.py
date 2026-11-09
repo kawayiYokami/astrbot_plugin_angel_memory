@@ -20,6 +20,7 @@ from .deepmind import DeepMind
 from .memory_runtime import PMemoryMemoryRuntime
 from .services.legacy_memory_migration import LegacyMemoryMigration
 from .services.note_index_service import NoteIndexService
+from .version import PLUGIN_VERSION
 
 # 重排回调的总 token 预算，与 story 侧一致
 RERANK_MAX_TOKENS_TOTAL = 8192
@@ -94,13 +95,14 @@ class ComponentFactory:
             deepmind = await self._create_deepmind(note_index, memory_runtime)
             self._components["deepmind"] = deepmind
 
-            # 6. 旧记忆自动迁移（后台补齐，用户无需操作）
+            # 6. 旧记忆自动迁移（一次性，迁完写完成标记，之后不再读旧库）
             memory_center = Path(self.plugin_context.get_memory_center_dir())
             migration = LegacyMemoryMigration(
                 memory_store=memory_store,
                 memory_sql_manager=memory_sql_manager,
                 state_dir=memory_center,
                 backup_dir=memory_center / "backups",
+                version=PLUGIN_VERSION,
                 logger=self.logger,
             )
             self._components["legacy_migration"] = migration
