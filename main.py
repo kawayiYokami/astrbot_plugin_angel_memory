@@ -30,7 +30,7 @@ from .tools.angel_note_create import NoteCreateTool
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "2.0.25",
+    "2.0.26",
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):

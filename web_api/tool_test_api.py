@@ -6,7 +6,7 @@
 - 主动搜索：`angel_recall` 工具 `run()` 的返回值原文
 
 真实 `AstrMessageEvent` 在面板里拿不到，这里构造一个只带必要字段的替身。
-注入过程写到独立预览会话，不碰任何真实会话的工作缓存。
+注入过程写到独立预览会话，不碰任何真实会话的短期记忆。
 """
 
 from __future__ import annotations
@@ -139,12 +139,12 @@ class ToolTestAPI:
             except Exception as e:
                 logger.warning(f"[工具测试] 取灵魂状态失败: {e}")
 
-        # 注入读的是会话工作缓存，真实链路也是先把召回结果填进去再注入
+        # 注入读的是短期记忆，真实链路也是先把召回结果填进去再注入
         deepmind.session_memory_manager.add_memories_to_session(
             PREVIEW_SESSION_ID,
             memories,
-            bound_message_id=self._message_id(event),
-            bound_message_text=str(query or ""),
+            recalled_message_id=self._message_id(event),
+            recalled_message_text=str(query or ""),
         )
         try:
             provider_request = ProviderRequest()

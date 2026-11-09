@@ -104,7 +104,7 @@ class DeepMindInjectionService:
         """实验性路径：按消息顺序给历史消息挂记忆块，插在各自那条消息之后。
 
         `message_order` 是 (消息ID, 消息纯文本) 的顺序表，`memories_by_message` 是
-        绑定消息 ID 到记忆列表的映射。账本与上下文从尾部对齐后一对一配对，账本多
+        召回来源消息 ID 到记忆列表的映射。账本与上下文从尾部对齐后一对一配对，账本多
         出来的那几条视为已被截断，直接丢弃；配对后内容对不上的也丢弃，不猜位置。
         返回真正挂上去的那批记忆。
 
@@ -178,14 +178,14 @@ class DeepMindInjectionService:
         return attached
 
     def group_session_memories_by_message(self, session_id: str) -> List[tuple]:
-        """按绑定消息分组短期记忆里的记忆条目，直接取短期记忆里那份内容，不再回查长期库。"""
+        """按召回来源消息分组短期记忆里的记忆条目，直接取短期记忆里那份内容，不再回查长期库。"""
         items = self.deepmind.session_memory_manager.get_session_memories(session_id)
         groups: dict = {}
         for item in items:
             memory = getattr(item, "memory", None)
             if memory is None:
                 continue
-            groups.setdefault(item.bound_message_id, []).append(memory)
+            groups.setdefault(item.recalled_message_id, []).append(memory)
         return list(groups.items())
 
     def session_memories(self, session_id: str) -> List:

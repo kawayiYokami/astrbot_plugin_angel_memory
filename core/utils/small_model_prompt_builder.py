@@ -232,11 +232,12 @@ class SmallModelPromptBuilder:
         sections = ["# 本次对话数据"]
         ai_name = str(persona_name or "").strip()
         if ai_name:
-            sections += [
-                "",
-                "## 你自己",
-                f"你叫 {ai_name}。下面「历史对话内容」里没有「[群友: …]」前缀的段落，就是你自己说过的话。",
-            ]
+            sections += ["", "## 你自己", f"你叫 {ai_name}。"]
+            # 只有天使之心会在正文前套发言人前缀，原生模式下每段都没有前缀，这句会误导
+            if "[群友" in str(historical_query or ""):
+                sections.append(
+                    "下面「历史对话内容」里没有「[群友: …]」前缀的段落，就是你自己说过的话。"
+                )
         sections += ["", "## 历史对话内容", historical_query]
         reply_text = str(main_llm_response or "").strip()
         if reply_text:

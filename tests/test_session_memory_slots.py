@@ -36,18 +36,18 @@ def test_slot_capacity_drops_the_oldest_first():
 
 def test_recall_refreshes_time_and_source_message():
     session = _session()
-    session.add_memories([_memory("a")], bound_message_id="m1", bound_message_text="第一句")
+    session.add_memories([_memory("a")], recalled_message_id="m1", recalled_message_text="第一句")
     first = session.get_memories()[0]
     added_at = first.added_at
 
-    session.add_memories([_memory("a")], bound_message_id="m9", bound_message_text="第九句")
+    session.add_memories([_memory("a")], recalled_message_id="m9", recalled_message_text="第九句")
 
     items = session.get_memories()
     assert len(items) == 1
     assert items[0].added_at == added_at
     assert items[0].recalled_at >= added_at
-    assert items[0].bound_message_id == "m9"
-    assert items[0].bound_message_text == "第九句"
+    assert items[0].recalled_message_id == "m9"
+    assert items[0].recalled_message_text == "第九句"
 
 
 def test_recently_recalled_memory_survives_eviction():
@@ -56,7 +56,7 @@ def test_recently_recalled_memory_survives_eviction():
     for index in range(1, 4):
         session.add_memories([_memory(f"e{index}", created_at=float(index))])
 
-    session.add_memories([_memory("e1")], bound_message_id="m2", bound_message_text="又提到它")
+    session.add_memories([_memory("e1")], recalled_message_id="m2", recalled_message_text="又提到它")
     session.add_memories([_memory("e4", created_at=4.0)])
 
     assert sorted(item.id for item in session.get_memories()) == ["e1", "e3", "e4"]
@@ -73,8 +73,8 @@ def test_capacity_multiplier_widens_every_slot():
 
 def test_departed_message_takes_the_memory_with_it():
     session = _session()
-    session.add_memories([_memory("a")], bound_message_id="m1", bound_message_text="第一句")
-    session.add_memories([_memory("b")], bound_message_id="m2", bound_message_text="第二句")
+    session.add_memories([_memory("a")], recalled_message_id="m1", recalled_message_text="第一句")
+    session.add_memories([_memory("b")], recalled_message_id="m2", recalled_message_text="第二句")
 
     departed = session.prune_departed(["第二句"])
 
@@ -85,7 +85,7 @@ def test_departed_message_takes_the_memory_with_it():
 def test_duplicate_text_keeps_the_memory_instead_of_killing_it():
     """两条消息正文一样时都会判「还在」，结果是多留一条，不会误杀。"""
     session = _session()
-    session.add_memories([_memory("a")], bound_message_id="m1", bound_message_text="好")
+    session.add_memories([_memory("a")], recalled_message_id="m1", recalled_message_text="好")
 
     assert session.prune_departed(["好", "别的话"]) == []
     assert [item.id for item in session.get_memories()] == ["a"]
@@ -94,7 +94,7 @@ def test_duplicate_text_keeps_the_memory_instead_of_killing_it():
 def test_short_bound_text_is_not_matched_by_substring():
     """「好」这类短正文只做相等判定，否则任何一条消息都把它判成活。"""
     session = _session()
-    session.add_memories([_memory("a")], bound_message_text="好")
+    session.add_memories([_memory("a")], recalled_message_text="好")
 
     departed = session.prune_departed(["好的我看看", "今天别的话"])
 
@@ -103,14 +103,14 @@ def test_short_bound_text_is_not_matched_by_substring():
 
 def test_short_bound_text_still_matches_an_exact_hit():
     session = _session()
-    session.add_memories([_memory("a")], bound_message_text="好")
+    session.add_memories([_memory("a")], recalled_message_text="好")
 
     assert session.prune_departed(["好"]) == []
 
 
 def test_memory_without_source_text_only_leaves_by_capacity():
     session = _session()
-    session.add_memories([_memory("a")], bound_message_id="m1", bound_message_text="")
+    session.add_memories([_memory("a")], recalled_message_id="m1", recalled_message_text="")
 
     assert session.prune_departed([]) == []
     assert [item.id for item in session.get_memories()] == ["a"]

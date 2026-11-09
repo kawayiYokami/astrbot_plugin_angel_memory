@@ -34,7 +34,7 @@ class _FakeSessionMemoryManager:
         departed = [
             item
             for item in self.items
-            if item.bound_message_text and item.bound_message_text not in alive
+            if item.recalled_message_text and item.recalled_message_text not in alive
         ]
         departed_ids = {item.id for item in departed}
         self.items = [item for item in self.items if item.id not in departed_ids]
@@ -63,11 +63,11 @@ def _memory(memory_id):
     return SimpleNamespace(id=memory_id)
 
 
-def _session(memory_id, bound_message_text="", bound_message_id=""):
+def _session(memory_id, recalled_message_text="", recalled_message_id=""):
     return SimpleNamespace(
         id=memory_id,
-        bound_message_id=bound_message_id,
-        bound_message_text=bound_message_text,
+        recalled_message_id=recalled_message_id,
+        recalled_message_text=recalled_message_text,
         memory=_memory(memory_id),
     )
 
@@ -220,15 +220,15 @@ def test_departed_message_takes_the_memory_with_it():
         _plain_text=DeepMindInjectionService._plain_text
     )
     session = SessionMemory("sess")
-    session.add_memories([_base_memory("a")], bound_message_text="第一句")
-    session.add_memories([_base_memory("b")], bound_message_text="第二句")
+    session.add_memories([_base_memory("a")], recalled_message_text="第一句")
+    session.add_memories([_base_memory("b")], recalled_message_text="第二句")
 
     departed = session.prune_departed(deepmind._context_user_texts(
         ProviderRequest(contexts=[{"role": "user", "content": "第二句"}])
     ))
 
     assert [item.id for item in departed] == ["a"]
-    assert [item.bound_message_text for item in departed] == ["第一句"]
+    assert [item.recalled_message_text for item in departed] == ["第一句"]
     assert [item.id for item in session.get_memories()] == ["b"]
 
 
@@ -322,8 +322,8 @@ async def test_history_path_splits_current_and_history_memories(monkeypatch):
     monkeypatch.setattr(DeepMindInjectionService, "INJECT_HISTORY_BLOCKS", True)
     deepmind = _FakeDeepMind()
     deepmind.session_memory_manager.items = [
-        _session("a", "第一句", bound_message_id="m1"),
-        _session("c", "当前", bound_message_id="m9"),
+        _session("a", "第一句", recalled_message_id="m1"),
+        _session("c", "当前", recalled_message_id="m9"),
     ]
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest(contexts=[{"role": "user", "content": "第一句"}])
@@ -348,8 +348,8 @@ async def test_history_path_is_off_by_default():
     """默认只注入末尾一条，历史消息不带记忆块。"""
     deepmind = _FakeDeepMind()
     deepmind.session_memory_manager.items = [
-        _session("a", "第一句", bound_message_id="m1"),
-        _session("c", "当前", bound_message_id="m9"),
+        _session("a", "第一句", recalled_message_id="m1"),
+        _session("c", "当前", recalled_message_id="m9"),
     ]
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest(contexts=[{"role": "user", "content": "第一句"}])
@@ -382,7 +382,7 @@ def test_bound_text_comes_from_request_prompt():
 
 def test_bound_text_leaves_when_context_no_longer_contains_it():
     session = SessionMemory("sess")
-    session.add_memories([_base_memory("a")], bound_message_text="在吗")
+    session.add_memories([_base_memory("a")], recalled_message_text="在吗")
 
     departed = session.prune_departed(["别的话"])
 
@@ -393,7 +393,7 @@ def test_bound_text_matches_the_same_request_text():
     """写入和比对都是请求体里那份文本时，全等就能认出来。"""
     text = "[群友: 红豆 (ID: 289104862)] (2026-11-09 09:03): 在吗"
     session = SessionMemory("sess")
-    session.add_memories([_base_memory("a")], bound_message_text=text)
+    session.add_memories([_base_memory("a")], recalled_message_text=text)
 
     assert session.prune_departed([text]) == []
 

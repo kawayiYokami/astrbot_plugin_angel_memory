@@ -122,7 +122,7 @@ class _FakeSessionMemory:
         self.store = {}
         self.cleared = []
 
-    def add_memories_to_session(self, session_id, memories, bound_message_id="", bound_message_text=""):
+    def add_memories_to_session(self, session_id, memories, recalled_message_id="", recalled_message_text=""):
         items = self.store.setdefault(session_id, [])
         existing = {item.id for item in items}
         for memory in memories:
@@ -133,8 +133,8 @@ class _FakeSessionMemory:
             items.append(
                 SimpleNamespace(
                     id=memory_id,
-                    bound_message_id=str(bound_message_id or ""),
-                    bound_message_text=str(bound_message_text or ""),
+                    recalled_message_id=str(recalled_message_id or ""),
+                    recalled_message_text=str(recalled_message_text or ""),
                     memory=memory,
                 )
             )
@@ -148,7 +148,7 @@ class _FakeSessionMemory:
         departed = [
             item
             for item in items
-            if item.bound_message_text and item.bound_message_text not in alive
+            if item.recalled_message_text and item.recalled_message_text not in alive
         ]
         departed_ids = {id(item) for item in departed}
         self.store[session_id] = [item for item in items if id(item) not in departed_ids]

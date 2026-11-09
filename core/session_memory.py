@@ -39,22 +39,22 @@ class MemoryItem:
     """短期记忆里的一条记忆条目。
 
     记忆内容跟着条目一起存，注入和反思都直接用这里的这份，不再回查长期库。
-    bound_message_* 记的是最后一次召回它的原消息，用来判断这条记忆的来源还在不在。
+    recalled_message_* 记的是最后一次召回它的原消息，用来判断这条记忆的来源还在不在。
     """
 
     id: str
     memory_type: str
-    added_at: float = 0.0  # 第一次进入短期记忆的时间，之后不再变
+    added_at: float = 0.0  # 第一次写进短期记忆的时间，之后不再变
     recalled_at: float = 0.0  # 最后一次被召回的时间，每次召回都覆盖
-    bound_message_id: str = ""  # 最后一次召回它的那条消息 ID
-    bound_message_text: str = ""  # 那条消息的正文，用来跟本轮上下文比对
+    recalled_message_id: str = ""  # 最后一次召回它的那条消息 ID
+    recalled_message_text: str = ""  # 那条消息的正文，用来跟本轮上下文比对
     memory: Any = None  # 记忆本体
 
     def recall_again(self, message_id: str, message_text: str, at: float) -> None:
-        """同一轮或后续轮次再次召回：刷新召回时间和来源消息，进入时间保持不变。"""
+        """同一轮或后续轮次再次召回：刷新召回时间与来源消息，写入时间保持不变。"""
         self.recalled_at = at
-        self.bound_message_id = message_id
-        self.bound_message_text = message_text
+        self.recalled_message_id = message_id
+        self.recalled_message_text = message_text
 
 
 class SessionMemory:
@@ -99,8 +99,8 @@ class SessionMemory:
     def add_memories(
         self,
         memories: List[BaseMemory],
-        bound_message_id: str = "",
-        bound_message_text: str = "",
+        recalled_message_id: str = "",
+        recalled_message_text: str = "",
     ) -> None:
         """
         把这一轮召回的记忆放进短期记忆
@@ -109,15 +109,15 @@ class SessionMemory:
 
         Args:
             memories: 本轮召回的记忆列表
-            bound_message_id: 本轮触发召回的消息 ID
-            bound_message_text: 那条消息的正文
+            recalled_message_id: 本轮触发召回的消息 ID
+            recalled_message_text: 那条消息的正文
         """
         if not memories:
             return
         multiplier = self._current_multiplier()
         now = time.time()
-        message_id = str(bound_message_id or "").strip()
-        message_text = str(bound_message_text or "").strip()
+        message_id = str(recalled_message_id or "").strip()
+        message_text = str(recalled_message_text or "").strip()
         with self.lock:
             for memory in memories:
                 existing = self.memory_map.get(str(getattr(memory, "id", "") or "").strip())
@@ -133,8 +133,8 @@ class SessionMemory:
     def _create_memory_item(
         self,
         memory: BaseMemory,
-        bound_message_id: str = "",
-        bound_message_text: str = "",
+        recalled_message_id: str = "",
+        recalled_message_text: str = "",
         at: float = 0.0,
     ) -> MemoryItem:
         """创建记忆条目。"""
@@ -152,8 +152,8 @@ class SessionMemory:
             ),
             added_at=moment,
             recalled_at=moment,
-            bound_message_id=bound_message_id,
-            bound_message_text=bound_message_text,
+            recalled_message_id=recalled_message_id,
+            recalled_message_text=recalled_message_text,
             memory=memory,
         )
 
@@ -174,7 +174,7 @@ class SessionMemory:
     def _cleanup_by_capacity(
         self, memory_type: str, multiplier: float
     ) -> List[MemoryItem]:
-        """按类型槽位清理：最久没被召回的先走，同分时更早进入的先走。"""
+        """按类型槽位清理：最久没被召回的先走，同分时更早写入的先走。"""
         capacity = self._capacity_of(memory_type, multiplier)
         if capacity <= 0:
             return []
@@ -203,10 +203,9 @@ class SessionMemory:
     def prune_departed(self, alive_texts) -> List[MemoryItem]:
         """移除来源消息已经不在本轮上下文里的记忆条目，返回被移除的条目本身。
 
-        `alive_texts` 是本轮上下文里所有用户消息的纯文本。条目存的是纯正文，
-        上下文里那条消息可能还带着发言人前缀和时间标签，所以按包含判定：只要
-        正文出现在某条存活消息里，就算这条消息还在。短句重复只会多留一条，
-        不会误杀。没有来源文本的条目不参与判定，只受槽位淘汰。
+        `alive_texts` 是本轮上下文里所有用户消息的纯文本。条目存的是它当初作为
+        `request.prompt` 的那份文本，与上下文同一口径，所以按全等比较，不做剥离
+        也不做包含。没有来源文本的条目不参与判定，只受槽位淘汰。
         """
         alive = [str(text or "").strip() for text in (alive_texts or [])]
         alive = [text for text in alive if text]
@@ -214,8 +213,8 @@ class SessionMemory:
             departed = [
                 memory
                 for memory in self.memories
-                if memory.bound_message_text
-                and not is_source_alive(memory.bound_message_text, alive)
+                if memory.recalled_message_text
+                and not is_source_alive(memory.recalled_message_text, alive)
             ]
             if not departed:
                 return []
@@ -304,8 +303,8 @@ class SessionMemoryManager:
         self,
         session_id: str,
         memories: List[BaseMemory],
-        bound_message_id: str = "",
-        bound_message_text: str = "",
+        recalled_message_id: str = "",
+        recalled_message_text: str = "",
     ) -> None:
         """
         向指定会话的短期记忆添加记忆条目
@@ -313,11 +312,11 @@ class SessionMemoryManager:
         Args:
             session_id: 会话ID
             memories: 记忆列表
-            bound_message_id: 本轮触发召回的消息 ID
-            bound_message_text: 那条消息的正文
+            recalled_message_id: 本轮触发召回的消息 ID
+            recalled_message_text: 那条消息的正文
         """
         session = self.get_or_create_session(session_id)
-        session.add_memories(memories, bound_message_id, bound_message_text)
+        session.add_memories(memories, recalled_message_id, recalled_message_text)
 
     def prune_departed_from_session(
         self, session_id: str, alive_texts

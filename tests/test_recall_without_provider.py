@@ -82,6 +82,8 @@ class _StubRetrievalService:
 class _StubInjectionService:
     """注入链的替身：记下真正传给注入的内容。"""
 
+    INJECT_HISTORY_BLOCKS = False
+
     def __init__(self):
         self.calls = []
 

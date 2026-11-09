@@ -424,15 +424,15 @@ class DeepMind:
         candidate_notes = retrieval_data["candidate_notes"]
         core_topic = retrieval_data["core_topic"]
 
-        # 4. 将检索到的长期记忆填入会话工作缓存，连同带入它的消息一起绑定
+        # 4. 将检索到的长期记忆写入短期记忆，连同召回来源一起记下
         current_message_id = self._event_message_id(event)
         current_message_text = self._request_prompt_text(request)
         if long_term_memories and self.memory_system:
             self.session_memory_manager.add_memories_to_session(
                 session_id,
                 long_term_memories,
-                bound_message_id=current_message_id,
-                bound_message_text=current_message_text,
+                recalled_message_id=current_message_id,
+                recalled_message_text=current_message_text,
             )
 
         # 5. 构建笔记上下文（复用NoteContextBuilder）
@@ -555,7 +555,7 @@ class DeepMind:
             message_id=current_message_id,
             message_order=(
                 self._message_order(context_chat_records)
-                if getattr(self.injection_service, "INJECT_HISTORY_BLOCKS", False)
+                if self.injection_service.INJECT_HISTORY_BLOCKS
                 else None
             ),
         )
@@ -656,7 +656,7 @@ class DeepMind:
         current_message_id: str,
         departed_items: List[Any],
     ) -> None:
-        """绑定的消息离场时，把那条消息和它带回的记忆一起送去反思。"""
+        """召回来源离场时，把那条消息和它带回的记忆一起送去反思。"""
         if not departed_items or not self.memory_system:
             return
 
@@ -676,7 +676,7 @@ class DeepMind:
 
         texts: List[str] = []
         for item in departed_items:
-            text = str(getattr(item, "bound_message_text", "") or "").strip()
+            text = str(getattr(item, "recalled_message_text", "") or "").strip()
             if text and text not in texts:
                 texts.append(text)
         message_text = "\n".join(texts)
@@ -1559,25 +1559,25 @@ class DeepMind:
                     memory_scope=memory_scope,
                 )
 
-            # 2. 更新会话工作缓存
+            # 2. 更新短期记忆
             # 获取有用的旧记忆
             useful_ids = feedback_data.get("useful_memory_ids", [])
             useful_long_term_memories = [
                 mem for mem in long_term_memories if mem.id in useful_ids
             ]
 
-            # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆，绑定触发这次回复的消息。
+            # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆，召回来源记为这次回复的那条消息。
             # 表里已有的条目不会新建，只刷新召回时间和来源消息。
             memories_for_session = useful_long_term_memories + newly_created_memories
             if memories_for_session:
-                bound_message_id, bound_message_text = self._latest_user_message(
+                recalled_message_id, recalled_message_text = self._latest_user_message(
                     context_data
                 )
                 self.session_memory_manager.add_memories_to_session(
                     session_id,
                     memories_for_session,
-                    bound_message_id=bound_message_id,
-                    bound_message_text=bound_message_text,
+                    recalled_message_id=recalled_message_id,
+                    recalled_message_text=recalled_message_text,
                 )
             self.logger.info(
                 f"[反思执行] 完成 session={session_id} "
