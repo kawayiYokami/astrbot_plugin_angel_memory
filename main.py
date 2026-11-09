@@ -19,6 +19,7 @@ from astrbot.api import logger
 # 导入核心模块
 from .core.plugin_manager import PluginManager
 from .core.plugin_context import PluginContextFactory
+from .core.version import PLUGIN_VERSION
 from .pmemory import pmemory
 from .tools.angel_remember import CoreMemoryRememberTool
 from .tools.angel_recall import CoreMemoryRecallTool
@@ -30,7 +31,7 @@ from .tools.angel_note_create import NoteCreateTool
     "astrbot_plugin_angel_memory",
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
-    "2.0.26",
+    PLUGIN_VERSION,
     "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
 )
 class AngelMemoryPlugin(Star):
