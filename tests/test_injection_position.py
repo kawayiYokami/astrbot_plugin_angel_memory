@@ -1,4 +1,4 @@
-"""记忆注入：短期记忆按消息绑定、进入侧去重、消息离场即离开、按绑定挂位置。"""
+"""记忆注入：短期记忆全量注入到上下文末尾一条，不往历史消息里挂。"""
 
 from types import SimpleNamespace
 
@@ -29,12 +29,12 @@ class _FakeSessionMemoryManager:
     def get_session_memories(self, session_id):
         return list(self.items)
 
-    def prune_absent_messages_from_session(self, session_id, alive_message_ids):
-        alive = {str(mid) for mid in (alive_message_ids or [])}
+    def prune_departed_from_session(self, session_id, alive_texts):
+        alive = {str(text).strip() for text in (alive_texts or [])}
         departed = [
             item
             for item in self.items
-            if not item.bound_message_id or item.bound_message_id not in alive
+            if item.bound_message_text and item.bound_message_text not in alive
         ]
         departed_ids = {item.id for item in departed}
         self.items = [item for item in self.items if item.id not in departed_ids]
@@ -63,11 +63,11 @@ def _memory(memory_id):
     return SimpleNamespace(id=memory_id)
 
 
-def _session(memory_id, bound_message_id):
+def _session(memory_id, bound_message_text="", bound_message_id=""):
     return SimpleNamespace(
         id=memory_id,
         bound_message_id=bound_message_id,
-        bound_message_text="",
+        bound_message_text=bound_message_text,
         memory=_memory(memory_id),
     )
 
@@ -81,19 +81,17 @@ def _text_of(request):
 
 
 @pytest.mark.asyncio
-async def test_current_block_carries_memories_bound_to_current_message():
-    deepmind = _FakeDeepMind([_memory("a"), _memory("z")])
-    deepmind.session_memory_manager.items = [_session("a", "msg-1"), _session("z", "msg-0")]
+async def test_block_carries_every_memory_in_the_session():
+    deepmind = _FakeDeepMind([_memory("a"), _memory("b")])
+    deepmind.session_memory_manager.items = [_session("a", "第一句"), _session("b", "第二句")]
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest()
 
-    await service.inject_memories_to_request(
-        request, "sess", "", message_id="msg-1"
-    )
+    await service.inject_memories_to_request(request, "sess", "")
 
     text = _text_of(request)
     assert "记忆a" in text
-    assert "记忆z" not in text
+    assert "记忆b" in text
     assert text.startswith("<system_reminder>")
     assert 'id="' not in text
     # 行为守则进系统提示词，不跟着对话消息走
@@ -111,9 +109,7 @@ async def test_nothing_to_inject_means_no_block():
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest()
 
-    await service.inject_memories_to_request(
-        request, "sess", "", message_id="msg-1"
-    )
+    await service.inject_memories_to_request(request, "sess", "")
 
     assert request.contexts == []
     assert request.extra_user_content_parts == []
@@ -131,7 +127,6 @@ async def test_soul_state_keeps_block_alive_without_memories():
         "sess",
         "",
         soul_state_values={"joy": 0.6, "surprise": 0.5, "anger": 0.4, "disgust": 0.7},
-        message_id="msg-1",
     )
 
     text = _text_of(request)
@@ -142,7 +137,7 @@ async def test_soul_state_keeps_block_alive_without_memories():
 @pytest.mark.asyncio
 async def test_memories_come_before_soul_state():
     deepmind = _FakeDeepMind([_memory("a")])
-    deepmind.session_memory_manager.items = [_session("a", "msg-1")]
+    deepmind.session_memory_manager.items = [_session("a", "第一句")]
     deepmind.config = SimpleNamespace(enable_soul_system=True)
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest()
@@ -152,7 +147,6 @@ async def test_memories_come_before_soul_state():
         "sess",
         "",
         soul_state_values={"joy": 0.6, "surprise": 0.5, "anger": 0.4, "disgust": 0.7},
-        message_id="msg-1",
     )
 
     text = _text_of(request)
@@ -164,16 +158,14 @@ async def test_memories_come_before_soul_state():
 
 
 @pytest.mark.asyncio
-async def test_same_message_is_not_injected_twice():
+async def test_same_request_is_not_injected_twice():
     deepmind = _FakeDeepMind([_memory("a")])
-    deepmind.session_memory_manager.items = [_session("a", "msg-1")]
+    deepmind.session_memory_manager.items = [_session("a", "第一句")]
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest()
 
     for _ in range(3):
-        await service.inject_memories_to_request(
-            request, "sess", "", message_id="msg-1"
-        )
+        await service.inject_memories_to_request(request, "sess", "")
 
     assert len(request.contexts) == 1
 
@@ -181,136 +173,63 @@ async def test_same_message_is_not_injected_twice():
 @pytest.mark.asyncio
 async def test_injected_block_is_not_persisted_into_history():
     deepmind = _FakeDeepMind([_memory("a")])
-    deepmind.session_memory_manager.items = [_session("a", "msg-1")]
+    deepmind.session_memory_manager.items = [_session("a", "第一句")]
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest()
 
-    await service.inject_memories_to_request(
-        request, "sess", "", message_id="msg-1"
-    )
+    await service.inject_memories_to_request(request, "sess", "")
 
-    block = request.contexts[-1]
-    assert block.get("_no_save") is True
-
-
-def test_history_blocks_follow_their_own_message_even_with_same_text():
-    service = DeepMindInjectionService(_FakeDeepMind())
-    request = ProviderRequest(
-        contexts=[
-            {"role": "user", "content": "好的"},
-            {"role": "assistant", "content": "回应"},
-            {"role": "user", "content": "好的"},
-        ]
-    )
-
-    attached = service.attach_history_blocks(
-        request,
-        [("m1", "好的"), ("m2", "好的"), ("m3", "当前")],
-        {"m1": [_memory("a")], "m2": [_memory("b")]},
-        current_message_id="m3",
-    )
-
-    assert len(attached) == 2
-    assert "记忆a" in request.contexts[1]["content"]
-    assert "记忆b" in request.contexts[4]["content"]
-    assert request.contexts[1]["content"].startswith("<system_reminder>")
-    assert 'id="' not in request.contexts[1]["content"]
-
-
-def test_truncated_old_message_does_not_steal_the_surviving_one():
-    service = DeepMindInjectionService(_FakeDeepMind())
-    request = ProviderRequest(contexts=[{"role": "user", "content": "好的"}])
-
-    attached = service.attach_history_blocks(
-        request,
-        [("m1", "好的"), ("m2", "好的"), ("m3", "当前")],
-        {"m1": [_memory("a")], "m2": [_memory("b")]},
-        current_message_id="m3",
-    )
-
-    assert [memory.id for memory in attached] == ["b"]
-    assert len(request.contexts) == 2
-    assert "记忆b" in request.contexts[1]["content"]
-    assert "记忆a" not in request.contexts[1]["content"]
-
-
-def test_history_block_matches_context_whose_content_is_part_objects():
-    service = DeepMindInjectionService(_FakeDeepMind())
-    request = ProviderRequest(
-        contexts=[{"role": "user", "content": [TextPart(text="好的")]}]
-    )
-
-    attached = service.attach_history_blocks(
-        request,
-        [("m1", [TextPart(text="好的")])],
-        {"m1": [_memory("a")]},
-        current_message_id="m9",
-    )
-
-    assert [memory.id for memory in attached] == ["a"]
-    assert len(request.contexts) == 2
-    assert "记忆a" in request.contexts[1]["content"]
-
-
-def test_history_blocks_are_not_attached_twice():
-    service = DeepMindInjectionService(_FakeDeepMind())
-    request = ProviderRequest(contexts=[{"role": "user", "content": "第一句"}])
-    order = [("m1", "第一句")]
-    blocks = {"m1": [_memory("a")]}
-
-    service.attach_history_blocks(request, order, blocks, current_message_id="m9")
-    service.attach_history_blocks(request, order, blocks, current_message_id="m9")
-
-    assert len(request.contexts) == 2
+    assert request.contexts[-1].get("_no_save") is True
 
 
 @pytest.mark.asyncio
-async def test_inject_returns_only_the_memories_actually_attached():
+async def test_inject_returns_every_memory_it_rendered():
     deepmind = _FakeDeepMind()
     deepmind.session_memory_manager.items = [
-        _session("a", "m1"),
-        _session("b", "m2"),
-        _session("c", "m9"),
+        _session("a", "第一句"),
+        _session("b", "第二句"),
     ]
     service = DeepMindInjectionService(deepmind)
     request = ProviderRequest(contexts=[{"role": "user", "content": "第一句"}])
 
-    attached = await service.inject_memories_to_request(
-        request,
-        "sess",
-        "",
-        message_id="m9",
-        message_order=[("m1", "第一句"), ("m9", "当前")],
+    attached = await service.inject_memories_to_request(request, "sess", "")
+
+    assert [memory.id for memory in attached] == ["a", "b"]
+
+
+def test_context_user_texts_reads_user_blocks_only():
+    deepmind = object.__new__(DeepMind)
+    deepmind.injection_service = SimpleNamespace(
+        _plain_text=DeepMindInjectionService._plain_text
+    )
+    request = ProviderRequest(
+        contexts=[
+            {"role": "user", "content": "第一句"},
+            {"role": "assistant", "content": "回应"},
+            {"role": "user", "content": [TextPart(text="第二句")]},
+            {"role": "user", "content": "   "},
+        ]
     )
 
-    assert [memory.id for memory in attached] == ["a", "c"]
+    assert deepmind._context_user_texts(request) == ["第一句", "第二句"]
 
 
-def test_history_block_is_dropped_when_bound_message_is_gone():
-    service = DeepMindInjectionService(_FakeDeepMind())
-    request = ProviderRequest(contexts=[{"role": "user", "content": "还在的消息"}])
-
-    attached = service.attach_history_blocks(
-        request,
-        [("m-old", "已经丢失的消息")],
-        {"m-old": [_memory("a")]},
-        current_message_id="m-new",
+def test_departed_message_takes_the_memory_with_it():
+    deepmind = object.__new__(DeepMind)
+    deepmind.injection_service = SimpleNamespace(
+        _plain_text=DeepMindInjectionService._plain_text
     )
-
-    assert attached == []
-    assert len(request.contexts) == 1
-
-
-def test_entering_again_does_not_rebind_the_memory():
     session = SessionMemory("sess")
+    session.add_memories([_base_memory("a")], bound_message_text="第一句")
+    session.add_memories([_base_memory("b")], bound_message_text="第二句")
 
-    session.add_memories([_base_memory("a")], bound_message_id="m1", bound_message_text="第一句")
-    session.add_memories([_base_memory("a")], bound_message_id="m2", bound_message_text="第二句")
+    departed = session.prune_departed(deepmind._context_user_texts(
+        ProviderRequest(contexts=[{"role": "user", "content": "第二句"}])
+    ))
 
-    items = session.get_memories()
-    assert [item.id for item in items] == ["a"]
-    assert items[0].bound_message_id == "m1"
-    assert items[0].bound_message_text == "第一句"
+    assert [item.id for item in departed] == ["a"]
+    assert [item.bound_message_text for item in departed] == ["第一句"]
+    assert [item.id for item in session.get_memories()] == ["b"]
 
 
 def test_reflection_entry_binds_the_message_text_too():
@@ -343,17 +262,140 @@ def test_reflection_entry_falls_back_when_no_user_message():
     assert deepmind._latest_user_message({"raw_chat_records": []}) == ("", "")
 
 
-def test_prune_removes_memories_whose_message_is_gone():
-    session = SessionMemory("sess")
-    session.add_memories([_base_memory("a")], bound_message_id="m1", bound_message_text="第一句")
-    session.add_memories([_base_memory("b")], bound_message_id="m2", bound_message_text="第二句")
+def test_history_blocks_follow_their_own_message_even_with_same_text():
+    """挂回历史消息的备用路径：重复短句也按位置各挂各的。"""
+    service = DeepMindInjectionService(_FakeDeepMind())
+    request = ProviderRequest(
+        contexts=[
+            {"role": "user", "content": "好的"},
+            {"role": "assistant", "content": "回应"},
+            {"role": "user", "content": "好的"},
+        ]
+    )
 
-    departed = session.prune_absent_messages({"m2"})
+    attached = service.attach_history_blocks(
+        request,
+        [("m1", "好的"), ("m2", "好的"), ("m3", "当前")],
+        {"m1": [_memory("a")], "m2": [_memory("b")]},
+        current_message_id="m3",
+    )
+
+    assert [memory.id for memory in attached] == ["a", "b"]
+    assert "记忆a" in request.contexts[1]["content"]
+    assert "记忆b" in request.contexts[4]["content"]
+    assert request.contexts[1]["content"].startswith("<system_reminder>")
+    assert 'id="' not in request.contexts[1]["content"]
+
+
+def test_truncated_old_message_does_not_steal_the_surviving_one():
+    service = DeepMindInjectionService(_FakeDeepMind())
+    request = ProviderRequest(contexts=[{"role": "user", "content": "好的"}])
+
+    attached = service.attach_history_blocks(
+        request,
+        [("m1", "好的"), ("m2", "好的"), ("m3", "当前")],
+        {"m1": [_memory("a")], "m2": [_memory("b")]},
+        current_message_id="m3",
+    )
+
+    assert [memory.id for memory in attached] == ["b"]
+    assert len(request.contexts) == 2
+    assert "记忆b" in request.contexts[1]["content"]
+    assert "记忆a" not in request.contexts[1]["content"]
+
+
+def test_history_blocks_are_not_attached_twice():
+    service = DeepMindInjectionService(_FakeDeepMind())
+    request = ProviderRequest(contexts=[{"role": "user", "content": "第一句"}])
+    order = [("m1", "第一句")]
+    blocks = {"m1": [_memory("a")]}
+
+    service.attach_history_blocks(request, order, blocks, current_message_id="m9")
+    service.attach_history_blocks(request, order, blocks, current_message_id="m9")
+
+    assert len(request.contexts) == 2
+
+
+@pytest.mark.asyncio
+async def test_history_path_splits_current_and_history_memories(monkeypatch):
+    """开关打开时，历史消息各挂自己的记忆，当前消息的记忆进末尾块。"""
+    monkeypatch.setattr(DeepMindInjectionService, "INJECT_HISTORY_BLOCKS", True)
+    deepmind = _FakeDeepMind()
+    deepmind.session_memory_manager.items = [
+        _session("a", "第一句", bound_message_id="m1"),
+        _session("c", "当前", bound_message_id="m9"),
+    ]
+    service = DeepMindInjectionService(deepmind)
+    request = ProviderRequest(contexts=[{"role": "user", "content": "第一句"}])
+
+    attached = await service.inject_memories_to_request(
+        request,
+        "sess",
+        "",
+        message_id="m9",
+        message_order=[("m1", "第一句"), ("m9", "当前")],
+    )
+
+    assert [memory.id for memory in attached] == ["a", "c"]
+    assert "记忆a" in request.contexts[1]["content"]
+    tail = _text_of(request)
+    assert "记忆c" in tail
+    assert "记忆a" not in tail
+
+
+@pytest.mark.asyncio
+async def test_history_path_is_off_by_default():
+    """默认只注入末尾一条，历史消息不带记忆块。"""
+    deepmind = _FakeDeepMind()
+    deepmind.session_memory_manager.items = [
+        _session("a", "第一句", bound_message_id="m1"),
+        _session("c", "当前", bound_message_id="m9"),
+    ]
+    service = DeepMindInjectionService(deepmind)
+    request = ProviderRequest(contexts=[{"role": "user", "content": "第一句"}])
+
+    attached = await service.inject_memories_to_request(
+        request,
+        "sess",
+        "",
+        message_id="m9",
+        message_order=[("m1", "第一句"), ("m9", "当前")],
+    )
+
+    assert [memory.id for memory in attached] == ["a", "c"]
+    assert len(request.contexts) == 2
+    assert "记忆a" in request.contexts[1]["content"]
+
+
+def test_bound_text_comes_from_request_prompt():
+    """当前发言取请求体里那份，跟上下文同一个口径。"""
+    deepmind = object.__new__(DeepMind)
+    deepmind.injection_service = SimpleNamespace(
+        _plain_text=DeepMindInjectionService._plain_text
+    )
+    request = ProviderRequest(prompt="[群友: 红豆 (ID: 289104862)] (2026-11-09 09:03): 在吗")
+
+    assert deepmind._request_prompt_text(request) == (
+        "[群友: 红豆 (ID: 289104862)] (2026-11-09 09:03): 在吗"
+    )
+
+
+def test_bound_text_leaves_when_context_no_longer_contains_it():
+    session = SessionMemory("sess")
+    session.add_memories([_base_memory("a")], bound_message_text="在吗")
+
+    departed = session.prune_departed(["别的话"])
 
     assert [item.id for item in departed] == ["a"]
-    assert [item.bound_message_text for item in departed] == ["第一句"]
-    assert [item.memory.id for item in departed] == ["a"]
-    assert [item.id for item in session.get_memories()] == ["b"]
+
+
+def test_bound_text_matches_the_same_request_text():
+    """写入和比对都是请求体里那份文本时，全等就能认出来。"""
+    text = "[群友: 红豆 (ID: 289104862)] (2026-11-09 09:03): 在吗"
+    session = SessionMemory("sess")
+    session.add_memories([_base_memory("a")], bound_message_text=text)
+
+    assert session.prune_departed([text]) == []
 
 
 def _base_memory(memory_id):

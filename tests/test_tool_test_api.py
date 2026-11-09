@@ -142,20 +142,16 @@ class _FakeSessionMemory:
     def get_session_memories(self, session_id):
         return list(self.store.get(session_id, []))
 
-    def prune_absent_messages_from_session(self, session_id, alive_message_ids):
-        alive = {str(mid) for mid in (alive_message_ids or [])}
+    def prune_departed_from_session(self, session_id, alive_texts):
+        alive = {str(text).strip() for text in (alive_texts or [])}
         items = self.store.get(session_id, [])
-        kept = [
-            item
-            for item in items
-            if item.bound_message_id and item.bound_message_id in alive
-        ]
         departed = [
             item
             for item in items
-            if not item.bound_message_id or item.bound_message_id not in alive
+            if item.bound_message_text and item.bound_message_text not in alive
         ]
-        self.store[session_id] = kept
+        departed_ids = {id(item) for item in departed}
+        self.store[session_id] = [item for item in items if id(item) not in departed_ids]
         return departed
 
     def clear_session(self, session_id):
@@ -182,9 +178,8 @@ class _FakeInjectionService:
         session_id,
         note_context,
         soul_state_values=None,
-        message_id="",
     ):
-        del soul_state_values, message_id
+        del soul_state_values
         if self.boom:
             raise RuntimeError("注入炸了")
         parts = ["<instruction>固定说明</instruction>"]
@@ -197,7 +192,13 @@ class _FakeInjectionService:
             parts.append(f"<memories>\n{memory_text}\n</memories>")
         if note_context:
             parts.append(f"<notes>\n{note_context}\n</notes>")
-        request.extra_user_content_parts.append({"type": "text", "text": "\n\n".join(parts)})
+        contexts = getattr(request, "contexts", None)
+        if not isinstance(contexts, list):
+            contexts = []
+            request.contexts = contexts
+        contexts.append(
+            {"role": "user", "content": "\n\n".join(parts), "_no_save": True}
+        )
 
 
 class _FakeDeepmind:

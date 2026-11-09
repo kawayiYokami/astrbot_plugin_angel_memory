@@ -104,6 +104,7 @@ class _StubInjectionService:
                 "note_context": note_context,
                 "soul_state_values": soul_state_values,
                 "message_id": message_id,
+                "message_order": message_order,
             }
         )
         return []
@@ -119,8 +120,8 @@ class _StubSessionMemoryManager:
     def add_memories_to_session(self, session_id, memories, **kwargs):
         self.added.append((session_id, list(memories)))
 
-    def prune_absent_messages_from_session(self, session_id, alive_ids):
-        self.pruned.append((session_id, alive_ids))
+    def prune_departed_from_session(self, session_id, alive_texts):
+        self.pruned.append((session_id, list(alive_texts or [])))
         return list(self.departed)
 
     def get_session_memories(self, session_id):
@@ -181,12 +182,21 @@ def test_recall_and_injection_run_without_provider():
     """没配 provider_id 时，检索、记忆注入、笔记注入、灵魂注入、会话缓存全部照常执行。"""
     deepmind = _deepmind(provider_id="")
     event = _event()
+    request = SimpleNamespace(
+        prompt="今天聊了什么",
+        contexts=[{"role": "user", "content": "早先的一句话"}],
+    )
 
-    asyncio.run(deepmind.organize_and_inject_memories(event, SimpleNamespace()))
+    asyncio.run(deepmind.organize_and_inject_memories(event, request))
 
     assert deepmind.retrieval_service.calls, "检索没被执行"
     assert deepmind.injection_service.calls, "注入没被执行"
     assert deepmind.session_memory_manager.added, "记忆没进会话缓存"
+
+    # 当前这条发言不在 contexts 里，必须单独补进存活集合，否则刚绑上的记忆会被自己清掉
+    alive = deepmind.session_memory_manager.pruned[0][1]
+    assert "今天聊了什么" in alive, "当前发言没进存活集合"
+    assert "早先的一句话" in alive, "上下文里的用户消息没进存活集合"
 
     injected = deepmind.injection_service.calls[0]
     assert "笔记切片" in injected["note_context"], "笔记上下文没进注入"
@@ -196,8 +206,6 @@ def test_recall_and_injection_run_without_provider():
         "surprise": 0.5,
         "disgust": 0.5,
     }, "灵魂状态没进注入"
-    assert injected["message_id"] == "msg-1"
-
     context = json.loads(event.angelmemory_context)
     assert context["recall_query"], "召回查询没写进上下文"
     assert context["core_topic"] == "话题"

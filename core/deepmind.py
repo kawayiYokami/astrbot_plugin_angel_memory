@@ -304,7 +304,10 @@ class DeepMind:
         message_order=None,
     ) -> list:
         """
-        将记忆、笔记和灵魂状态统一注入到LLM请求中（使用 extra_user_content_parts）
+        将记忆、笔记和灵魂状态统一注入到LLM请求中（只写 contexts 末尾一条）
+
+        message_id / message_order 只服务「挂回历史消息」那条备用路径，
+        开关关着时不会被用到。
 
         返回真正挂进请求的那批记忆。
         """
@@ -316,6 +319,20 @@ class DeepMind:
             message_id=message_id,
             message_order=message_order,
         )
+
+    def _context_user_texts(self, request: ProviderRequest) -> List[str]:
+        """本轮上下文里所有用户消息的纯文本，用来判断记忆的来源消息还在不在。"""
+        texts: List[str] = []
+        contexts = getattr(request, "contexts", None) or []
+        for block in contexts:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("role") or "") != "user":
+                continue
+            text = self.injection_service._plain_text(block.get("content"))
+            if text:
+                texts.append(text)
+        return texts
 
     def _clean_note_content(self, content: str) -> str:
         """
@@ -409,7 +426,7 @@ class DeepMind:
 
         # 4. 将检索到的长期记忆填入会话工作缓存，连同带入它的消息一起绑定
         current_message_id = self._event_message_id(event)
-        current_message_text = str(self._extract_message_text(event) or "").strip()
+        current_message_text = self._request_prompt_text(request)
         if long_term_memories and self.memory_system:
             self.session_memory_manager.add_memories_to_session(
                 session_id,
@@ -504,38 +521,43 @@ class DeepMind:
             )
 
         # 8. 注入记忆、笔记和灵魂状态到请求（注入源是短期记忆，不重新检索）
-        alive_ids = self._alive_message_ids(context_chat_records, current_message_id)
-        if alive_ids is not None:
-            departed_items = (
-                self.session_memory_manager.prune_absent_messages_from_session(
-                    session_id, alive_ids
-                )
+        # 本轮这条用户发言不在 contexts 里（注入块也插在它之前），得单独算存活，
+        # 否则第 4 步刚绑上当前消息的记忆会在这一步被当成离场清掉。
+        alive_texts = self._context_user_texts(request)
+        if current_message_text:
+            alive_texts.append(current_message_text)
+        departed_items = self.session_memory_manager.prune_departed_from_session(
+            session_id, alive_texts
+        )
+        if departed_items:
+            self.logger.debug(
+                f"[短期记忆] 清理离场记忆条目 session={session_id} count={len(departed_items)}"
             )
-            if departed_items:
-                self.logger.debug(
-                    f"[短期记忆] 清理离场记忆条目 session={session_id} count={len(departed_items)}"
+            # 离场反思要把记忆送去模型做强化/合并，没配核心模型就跳过，
+            # 否则只会提交一个注定失败的后台任务。
+            if self.provider_id:
+                await self._reflect_departed_memories(
+                    session_id,
+                    memory_scope,
+                    current_message_id,
+                    departed_items,
                 )
-                # 离场反思要把记忆送去模型做强化/合并，没配核心模型就跳过，
-                # 否则只会提交一个注定失败的后台任务。
-                if self.provider_id:
-                    await self._reflect_departed_memories(
-                        session_id,
-                        memory_scope,
-                        current_message_id,
-                        departed_items,
-                    )
-                else:
-                    self.logger.debug(
-                        f"[反思调度] 未配置核心模型，跳过离场记忆送审 "
-                        f"session={session_id} 记忆数={len(departed_items)}"
-                    )
+            else:
+                self.logger.debug(
+                    f"[反思调度] 未配置核心模型，跳过离场记忆送审 "
+                    f"session={session_id} 记忆数={len(departed_items)}"
+                )
         injected_memories = await self._inject_memories_to_request(
             request,
             session_id,
             note_context,
             soul_state_values,
             message_id=current_message_id,
-            message_order=self._message_order(context_chat_records),
+            message_order=(
+                self._message_order(context_chat_records)
+                if getattr(self.injection_service, "INJECT_HISTORY_BLOCKS", False)
+                else None
+            ),
         )
 
         # 9. (异步任务所需) 将原始上下文数据存入event.angelmemory_context
@@ -582,6 +604,14 @@ class DeepMind:
             self.logger.error(f"潜意识: 调用 event.get_message_outline() 失败: {e}")
             return None
 
+    def _request_prompt_text(self, request: ProviderRequest) -> str:
+        """当前这条用户发言的纯文本，取请求体里那份。
+
+        与上下文同一口径：装了天使之心时 `request.prompt` 是它重建后的当前消息，
+        跟它写进 `request.contexts` 的历史消息同源，直接全等比对即可。
+        """
+        return self.injection_service._plain_text(getattr(request, "prompt", ""))
+
     @staticmethod
     def _event_message_id(event: AstrMessageEvent) -> str:
         """当前这条用户消息的 ID，用于注入幂等判定。"""
@@ -606,29 +636,8 @@ class DeepMind:
                 )
         return "", ""
 
-    def _alive_message_ids(
-        self, chat_records: List[Dict[str, Any]], current_message_id: str
-    ) -> Optional[set]:
-        """本次请求里真实存在的用户消息 ID 集合。
-
-        有天使之心账本时是账本里的用户消息，没有账本时只剩当前这一条——老记忆因此
-        找不到绑定消息，随下一次清理离开短期记忆。判定不了当前消息 ID 时返回 None，
-        表示不做清理。
-        """
-        current = str(current_message_id or "").strip()
-        if not current:
-            return None
-        alive = {current}
-        for record in chat_records or []:
-            if str(record.get("role") or "") != "user":
-                continue
-            message_id = self._chat_record_message_id(record)
-            if message_id:
-                alive.add(message_id)
-        return alive
-
     def _message_order(self, chat_records: List[Dict[str, Any]]) -> List[tuple]:
-        """账本里用户消息的顺序表，元素为 (消息 ID, 消息纯文本)。"""
+        """账本里用户消息的顺序表，元素为 (消息 ID, 消息纯文本)。供挂回历史消息那条路径使用。"""
         plain = self.injection_service._plain_text
         order = []
         for record in chat_records or []:
@@ -1405,6 +1414,7 @@ class DeepMind:
                 core_topic=core_topic,
                 memory_id_mapping=memory_id_mapping,
                 config=self.config,
+                persona_name=str(getattr(reflection_input, "persona_name", "") or ""),
             )
 
             self.logger.debug(
@@ -1556,16 +1566,8 @@ class DeepMind:
                 mem for mem in long_term_memories if mem.id in useful_ids
             ]
 
-            # 先按这一轮的有用判定结算生命值，被判定有用的加分，其余减分，归零的当场淘汰
-            died_items = self.session_memory_manager.evaluate_feedback_in_session(
-                session_id, useful_ids
-            )
-            if died_items:
-                self.logger.debug(
-                    f"[短期记忆] 生命值耗尽淘汰 session={session_id} count={len(died_items)}"
-                )
-
-            # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆，绑定触发这次回复的消息
+            # 将有用的旧记忆和全新的记忆合并，一起放入短期记忆，绑定触发这次回复的消息。
+            # 表里已有的条目不会新建，只刷新召回时间和来源消息。
             memories_for_session = useful_long_term_memories + newly_created_memories
             if memories_for_session:
                 bound_message_id, bound_message_text = self._latest_user_message(

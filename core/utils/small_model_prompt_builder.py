@@ -205,6 +205,7 @@ class SmallModelPromptBuilder:
         core_topic: str = "",
         memory_id_mapping: Dict[str, str] = None,
         config=None,
+        persona_name: str = "",
     ) -> Tuple[str, str]:
         """
         构建用于事后反思的提示词，返回 (system_prompt, user_prompt)
@@ -228,7 +229,15 @@ class SmallModelPromptBuilder:
         system_prompt = PromptAssembler.build_memory_system_guide()
 
         # 构建数据上下文（仅包含实际数据，不包含指令）
-        sections = ["# 本次对话数据", "", "## 历史对话内容", historical_query]
+        sections = ["# 本次对话数据"]
+        ai_name = str(persona_name or "").strip()
+        if ai_name:
+            sections += [
+                "",
+                "## 你自己",
+                f"你叫 {ai_name}。下面「历史对话内容」里没有「[群友: …]」前缀的段落，就是你自己说过的话。",
+            ]
+        sections += ["", "## 历史对话内容", historical_query]
         reply_text = str(main_llm_response or "").strip()
         if reply_text:
             sections += ["", "## 你的最新回复", reply_text]

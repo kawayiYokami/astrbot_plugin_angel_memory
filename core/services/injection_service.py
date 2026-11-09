@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Optional
 
 from astrbot.api.provider import ProviderRequest
 
+from ..session_memory import is_source_alive
+
 
 class DeepMindInjectionService:
     """DeepMind 的请求注入职责。"""
@@ -14,6 +16,16 @@ class DeepMindInjectionService:
         "- 状态只影响你说话的语气，不必向对方解释。\n"
         "- 当前对话永远优先，记忆是底气，不是话题。"
     )
+
+    # 实验性注入路径，暂不对外开放，保持 False。
+    # False（正式路径）：短期记忆合成一块，只追加到 request.contexts 末尾一条。
+    # True（实验路径）：调 attach_history_blocks，把每条记忆挂回它当初召回时那条
+    #       历史消息后面，末尾块只放当前这条消息带来的记忆。
+    # 实验路径的定位方式：拿 _message_order 给的账本原文，跟 contexts 里的用户消息
+    # 从尾部逐条一对一配对，配不上就丢掉。账本存正文、上下文带发言人前缀与时间标签，
+    # 两者不同源时一条都配不上；群聊重复短句也会配错位置。开启前必须先确认能对上。
+    # 未经真机验证，不要接进配置项，也不要对外说明。
+    INJECT_HISTORY_BLOCKS = False
 
     def __init__(self, deepmind):
         self.deepmind = deepmind
@@ -89,12 +101,16 @@ class DeepMindInjectionService:
         memories_by_message,
         current_message_id: str = "",
     ) -> List:
-        """按消息顺序给历史消息挂记忆块，插在各自那条消息之后。
+        """实验性路径：按消息顺序给历史消息挂记忆块，插在各自那条消息之后。
 
         `message_order` 是 (消息ID, 消息纯文本) 的顺序表，`memories_by_message` 是
         绑定消息 ID 到记忆列表的映射。账本与上下文从尾部对齐后一对一配对，账本多
         出来的那几条视为已被截断，直接丢弃；配对后内容对不上的也丢弃，不猜位置。
         返回真正挂上去的那批记忆。
+
+        前提是 `message_order` 里的文本与 `request.contexts` 里的用户消息同源，
+        否则一条都配不上，等于记忆全部不注入。暂不对外开放，只由
+        INJECT_HISTORY_BLOCKS 控制，未经真机验证不要启用。
         """
         snapshot_messages = [
             (message_id, self._plain_text(text))
@@ -128,7 +144,7 @@ class DeepMindInjectionService:
         pending = []
         attached = []
         for (message_id, snapshot_plain), (anchor, context_plain) in pairs:
-            if not snapshot_plain or snapshot_plain != context_plain:
+            if not snapshot_plain or not is_source_alive(snapshot_plain, [context_plain]):
                 continue
             memories = memories_by_message.get(message_id) or []
             if not memories:
@@ -172,6 +188,13 @@ class DeepMindInjectionService:
             groups.setdefault(item.bound_message_id, []).append(memory)
         return list(groups.items())
 
+    def session_memories(self, session_id: str) -> List:
+        """本轮要注入的记忆：短期记忆表里的全部条目，直接取表里那份内容，不回查长期库。"""
+        items = self.deepmind.session_memory_manager.get_session_memories(session_id)
+        return [
+            item.memory for item in items if getattr(item, "memory", None) is not None
+        ]
+
     async def inject_memories_to_request(
         self,
         request: ProviderRequest,
@@ -180,7 +203,7 @@ class DeepMindInjectionService:
         soul_state_values: Optional[Dict[str, Any]] = None,
         message_id: str = "",
         message_order=None,
-    ) -> None:
+    ) -> list:
         deepmind = self.deepmind
         body_parts = []
         soul_block = ""
@@ -205,24 +228,30 @@ class DeepMindInjectionService:
                 f"</soul_state>"
             )
 
-        groups = self.group_session_memories_by_message(session_id)
-        memories_by_message = {bound: memories for bound, memories in groups}
-        attached = []
-        if message_order:
-            attached.extend(
-                self.attach_history_blocks(
-                    request,
-                    message_order,
-                    memories_by_message,
-                    current_message_id=message_id,
+        if self.INJECT_HISTORY_BLOCKS:
+            groups = self.group_session_memories_by_message(session_id)
+            memories_by_message = {bound: memories for bound, memories in groups}
+            attached = []
+            if message_order:
+                attached.extend(
+                    self.attach_history_blocks(
+                        request,
+                        message_order,
+                        memories_by_message,
+                        current_message_id=message_id,
+                    )
                 )
-            )
-        if message_id:
-            current_memories = list(memories_by_message.get(message_id) or [])
+            if message_id:
+                current_memories = list(memories_by_message.get(message_id) or [])
+            else:
+                current_memories = [
+                    memory
+                    for memories in memories_by_message.values()
+                    for memory in memories
+                ]
         else:
-            current_memories = [
-                memory for memories in memories_by_message.values() for memory in memories
-            ]
+            current_memories = self.session_memories(session_id)
+            attached = []
 
         user_profile_context = ""
         if hasattr(deepmind, "user_profile_service") and deepmind.user_profile_service:

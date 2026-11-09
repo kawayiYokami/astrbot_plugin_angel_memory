@@ -154,15 +154,12 @@ class ToolTestAPI:
                 PREVIEW_SESSION_ID,
                 note_context,
                 soul_values,
-                message_id=self._message_id(event),
             )
+            # 注入块就是 contexts 末尾那条 _no_save 用户消息，直接取它的正文
             parts = []
-            for block in provider_request.extra_user_content_parts or []:
-                if isinstance(block, dict):
-                    text = block.get("text")
-                else:
-                    text = getattr(block, "text", "")
-                parts.append(str(text or ""))
+            for block in provider_request.contexts or []:
+                if isinstance(block, dict) and block.get("_no_save"):
+                    parts.append(str(block.get("content") or ""))
             return "\n\n".join(part for part in parts if part)
         finally:
             deepmind.session_memory_manager.clear_session(PREVIEW_SESSION_ID)
