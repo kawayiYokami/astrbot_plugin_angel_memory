@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Dict, List, Optional
 
+from astrbot.api import logger
+
 from ...llm_memory.models.data_models import BaseMemory, MemoryType
 from ...pmemory import MemoryStore, to_seconds
 from .protocol import MemoryRuntime
@@ -31,6 +33,15 @@ def _cn_type(value: object) -> str:
     if not text:
         return "知识记忆"
     return TYPE_TO_CN.get(text.lower(), text)
+
+
+def _normalize_scope(value: object) -> str:
+    """判重键的柜子名，与落库口径一致：strip 后空值兜底 public。
+
+    两侧必须走同一套归一，否则传入空串或带空格的柜子名时，
+    判重会查不到已有记录，同一句话落成两条。
+    """
+    return str(value or "").strip() or "public"
 
 
 def to_base_memory(record: dict) -> BaseMemory:
@@ -79,6 +90,11 @@ class PMemoryMemoryRuntime(MemoryRuntime):
         strength: Optional[int] = None,
         memory_scope: str = "public",
     ) -> str:
+        """新增一条记忆；同柜子已有同正文时返回那条的 id，不重复写。"""
+        existing = await asyncio.to_thread(self._judgment_index, memory_scope)
+        hit = existing.get((str(judgment or "").strip(), _normalize_scope(memory_scope)))
+        if hit:
+            return str(hit.get("id") or "")
         record = await asyncio.to_thread(
             self._store.remember,
             judgment,
@@ -173,18 +189,41 @@ class PMemoryMemoryRuntime(MemoryRuntime):
                 self._decay_policy,
             )
 
+        existing = await asyncio.to_thread(self._judgment_index, memory_scope)
         for action in memory_actions or []:
-            record = await asyncio.to_thread(self._apply_action, action, memory_scope)
+            record = await asyncio.to_thread(
+                self._apply_action, action, memory_scope, existing
+            )
             if record:
                 refreshed.append(record)
         return [to_base_memory(record) for record in refreshed]
 
-    def _apply_action(self, action: dict, scope: str) -> Optional[dict]:
-        """update 原地更新；merge 新建后删除源记忆。
+    def _judgment_index(self, scope: str) -> Dict[tuple, dict]:
+        """当前可见范围内「(正文, 柜子) → 已有记录」，供写入前判重。
+
+        判重键用正文全等而不是相似度：同一句话在同一个柜子里只该有一条。
+        """
+        index: Dict[tuple, dict] = {}
+        for record in self._store.list_records(scope):
+            key = (
+                str(record.get("judgment") or "").strip(),
+                _normalize_scope(record.get("scope")),
+            )
+            index.setdefault(key, record)
+        return index
+
+    def _apply_action(
+        self, action: dict, scope: str, existing: Optional[Dict[tuple, dict]] = None
+    ) -> Optional[dict]:
+        """update 原地更新；merge 新建后删除源记忆；create 同正文同柜子只留一条。
 
         删除有意不看 scope：合并允许跨会话收拢记忆，删的是全局 id。
         但新建前必须确认源全部存在，否则就是假成功——缺任一源直接返回 None，
         由工具层报“源记忆不存在”。
+
+        create 判重是幂等的：已有同正文同柜子的记录就直接返回它，不再新建。
+        反思可能反复提取同一件事，迁移也可能把新库备份当成旧数据读回来，
+        这一层兜住两种重复。
         """
         name = str(action.get("action") or "").strip().lower()
         payload = action.get("memory") or {}
@@ -218,6 +257,18 @@ class PMemoryMemoryRuntime(MemoryRuntime):
                 if self._store.get(sid, all_scopes=True) is None:
                     return None
 
+        # 只有 create 判重：merge 必须新建结果再删源，不能因为撞上已有正文就跳过。
+        key = (judgment, _normalize_scope(scope))
+        if name != "merge" and existing is not None:
+            hit = existing.get(key)
+            if hit:
+                logger.debug(
+                    "[PMEMORY] 跳过重复记忆 id=%s judgment=「%s」",
+                    hit.get("id"),
+                    judgment[:20],
+                )
+                return hit
+
         created = self._store.remember(
             judgment,
             reasoning,
@@ -226,6 +277,8 @@ class PMemoryMemoryRuntime(MemoryRuntime):
             scope,
             metadata={**metadata, "source_ids": source_ids},
         )
+        if created and existing is not None:
+            existing.setdefault(key, created)
         if source_ids:
             self._store.delete(source_ids)
         return created or None

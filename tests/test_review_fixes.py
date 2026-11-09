@@ -157,6 +157,83 @@ def _make_source():
     return MemorySqlManager(path), LegacyDb(path)
 
 
+def test_create_same_judgment_twice_keeps_one(tmp_path):
+    """同一柜子里，同正文第二次 create 返回已有那条，不再新建。"""
+    from astrbot_plugin_angel_memory.core.memory_runtime.pmemory_runtime import (
+        PMemoryMemoryRuntime,
+    )
+
+    pmemory.configure(root=tmp_path / "pmemory", raw_dir=None)
+    try:
+        store = MemoryStore()
+        runtime = PMemoryMemoryRuntime(store)
+        first = asyncio.run(
+            runtime.remember(
+                memory_type="knowledge", judgment="红豆不吃香菜",
+                reasoning="点菜时说过", tags=["红豆"], memory_scope="public",
+            )
+        )
+        second = asyncio.run(
+            runtime.remember(
+                memory_type="knowledge", judgment="红豆不吃香菜",
+                reasoning="点菜时说过", tags=["红豆"], memory_scope="public",
+            )
+        )
+        assert first == second
+        records = store.list_records(all_scopes=True)
+        assert len(records) == 1
+    finally:
+        pmemory.close()
+
+
+def test_feedback_skips_duplicate_create(tmp_path):
+    """一次反馈里出现两条相同 create，只落一条。"""
+    from astrbot_plugin_angel_memory.core.memory_runtime.pmemory_runtime import (
+        PMemoryMemoryRuntime,
+    )
+
+    pmemory.configure(root=tmp_path / "pmemory", raw_dir=None)
+    try:
+        store = MemoryStore()
+        runtime = PMemoryMemoryRuntime(store)
+        action = {
+            "action": "create",
+            "memory": {"type": "knowledge", "judgment": "红豆养了一只猫", "tags": ["红豆"]},
+        }
+        asyncio.run(
+            runtime.feedback(memory_actions=[action, dict(action)], memory_scope="public")
+        )
+        assert [r["judgment"] for r in store.list_records(all_scopes=True)] == [
+            "红豆养了一只猫"
+        ]
+    finally:
+        pmemory.close()
+
+
+def test_same_judgment_different_scope_keeps_both(tmp_path):
+    """同正文、不同柜子各存一条。判重键必须带柜子，只按正文会跨柜子吞记忆。"""
+    from astrbot_plugin_angel_memory.core.memory_runtime.pmemory_runtime import (
+        PMemoryMemoryRuntime,
+    )
+
+    pmemory.configure(root=tmp_path / "pmemory", raw_dir=None)
+    try:
+        store = MemoryStore()
+        runtime = PMemoryMemoryRuntime(store)
+        for scope in ("public", "恋爱"):
+            asyncio.run(
+                runtime.remember(
+                    memory_type="knowledge", judgment="红豆不吃香菜",
+                    reasoning="", tags=["红豆"], memory_scope=scope,
+                )
+            )
+        records = store.list_records(all_scopes=True)
+        assert len(records) == 2
+        assert {r["scope"] for r in records} == {"public", "恋爱"}
+    finally:
+        pmemory.close()
+
+
 def test_migration_exports_json_then_imports(tmp_path):
     root = Path(tempfile.mkdtemp(prefix="pmem-mig-"))
     pmemory.configure(root=root, raw_dir=None)
