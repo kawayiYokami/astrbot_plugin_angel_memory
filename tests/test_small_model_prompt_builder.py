@@ -37,7 +37,6 @@ def test_reflection_prompts_split_guide_and_data():
     system_prompt, user_prompt = (
         SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
             historical_query="红豆：你今天好吗",
-            main_llm_response="我很好",
             raw_memories=[],
             memory_id_mapping={},
         )
@@ -49,14 +48,12 @@ def test_reflection_prompts_split_guide_and_data():
 
     assert user_prompt.startswith("# 本次对话数据")
     assert "红豆：你今天好吗" in user_prompt
-    assert "我很好" in user_prompt
     assert "现在请开始分析并输出JSON结果。" in user_prompt
 
 
 def test_reflection_prompt_tells_the_model_its_own_name():
     _, user_prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
         historical_query="[群友: 红豆 (ID: 289104862, 群友)] (2026-11-09 09:03): 在吗",
-        main_llm_response="在的",
         raw_memories=[],
         persona_name="fairy",
     )
@@ -69,7 +66,6 @@ def test_reflection_prompt_tells_the_model_its_own_name():
 def test_reflection_prompt_skips_identity_when_name_is_missing():
     _, user_prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
         historical_query="在吗",
-        main_llm_response="在的",
         raw_memories=[],
     )
 

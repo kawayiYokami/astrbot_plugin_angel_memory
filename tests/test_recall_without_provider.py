@@ -219,15 +219,7 @@ def test_model_dependent_steps_skipped_without_provider():
     deepmind = _deepmind(provider_id="", departed=departed)
     event = _event()
 
-    reflect_calls = []
-
-    async def _fake_reflect(*args, **kwargs):
-        reflect_calls.append(args)
-
-    deepmind._reflect_departed_memories = _fake_reflect
-
     asyncio.run(deepmind.organize_and_inject_memories(event, SimpleNamespace()))
-    assert not reflect_calls, "没配模型时不该提交离场反思"
     assert deepmind.session_memory_manager.pruned, "短期记忆清理不该被一起跳过"
 
     buffered = []
@@ -248,22 +240,16 @@ def test_model_dependent_steps_skipped_without_provider():
 
 
 def test_behaviour_unchanged_with_provider():
-    """配了 provider_id 时，行为与改动前一致：召回照跑，整理链也照走。"""
+    """配了 provider_id 时：召回照跑、注入照常、整理链照走，但离场不再触发反思。"""
     departed = [SimpleNamespace(memory=SimpleNamespace(id="mem-1"))]
     deepmind = _deepmind(provider_id="provider-a", departed=departed)
     event = _event()
 
-    reflect_calls = []
-
-    async def _fake_reflect(*args, **kwargs):
-        reflect_calls.append(args)
-
-    deepmind._reflect_departed_memories = _fake_reflect
-
     asyncio.run(deepmind.organize_and_inject_memories(event, SimpleNamespace()))
     assert deepmind.retrieval_service.calls, "配了模型时检索照常"
     assert deepmind.injection_service.calls, "配了模型时注入照常"
-    assert reflect_calls, "配了模型时离场反思照常提交"
+    # 短期记忆淘汰与反思无关：离场不送审，清理本身照常执行
+    assert deepmind.session_memory_manager.pruned, "短期记忆清理照常，不因不送审而跳过"
 
     buffered = []
 
@@ -284,3 +270,27 @@ def test_behaviour_unchanged_with_provider():
         deepmind.async_analyze_and_update_memory(event, SimpleNamespace(completion_text=""))
     )
     assert buffered == ["buffer", "trigger"], "配了模型时整理链照常执行"
+
+
+def test_departed_memories_do_not_trigger_reflection(monkeypatch):
+    """离场记忆只被清理、不触发任何反思：离场与反思正交，反馈队列不该被调用。"""
+    from astrbot_plugin_angel_memory.core import deepmind as deepmind_module
+
+    calls = []
+
+    class _SpyQueue:
+        async def submit(self, task):
+            calls.append(task)
+            return True
+
+    monkeypatch.setattr(deepmind_module, "get_feedback_queue", lambda: _SpyQueue())
+
+    departed = [SimpleNamespace(memory=SimpleNamespace(id="mem-1"))]
+    deepmind = _deepmind(provider_id="provider-a", departed=departed)
+
+    asyncio.run(deepmind.organize_and_inject_memories(_event(), SimpleNamespace()))
+
+    assert deepmind.session_memory_manager.pruned, "离场记忆该被清理"
+    assert calls == [], "离场记忆不该触发任何反思提交"
+    # 守方法复活：谁把离场送审加回来，这条先红
+    assert not hasattr(DeepMind, "_reflect_departed_memories")

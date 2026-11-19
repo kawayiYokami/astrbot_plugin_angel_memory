@@ -343,7 +343,9 @@ def test_turn_without_user_text_only_emits_assistant():
     )
 
     assert [record["role"] for record in records] == ["assistant"]
-    assert records[0]["content"] == "只有回复"
+    # 助理回复带显式身份前缀，不再是无标识纯文本
+    assert records[0]["content"].startswith("[助理: ")
+    assert records[0]["content"].endswith(": 只有回复")
 
 
 # ---------- 四、回复文本取法 ----------
@@ -456,33 +458,6 @@ def test_reflection_text_ignores_angelheart_snapshot():
         assert "天使之心快照里的话" not in text
     finally:
         deepmind_module.get_feedback_queue = origin
-
-
-# ---------- 八、提示词侧兜底措辞 ----------
-
-def test_missing_reply_marks_absence_in_prompt():
-    """两边都缺时，提示词里明确写出「本轮没有回复记录」。"""
-    _, user_prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
-        historical_query="用户：你好",
-        main_llm_response="",
-        raw_memories=[],
-    )
-
-    assert "## 你的最新回复" in user_prompt
-    assert "本轮没有回复记录" in user_prompt
-    assert "不代表你没有说话" in user_prompt
-
-
-def test_present_reply_does_not_claim_absence():
-    _, user_prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
-        historical_query="用户：你好",
-        main_llm_response="我很好",
-        raw_memories=[],
-    )
-
-    assert "## 你的最新回复" in user_prompt
-    assert "我很好" in user_prompt
-    assert "没有回复记录" not in user_prompt
 
 
 # ---------- 九、每份记录带上那一轮检索出的记忆 ----------
@@ -601,7 +576,6 @@ def test_memory_list_line_carries_created_at():
     stamp = datetime(2026, 11, 7, 14, 7, tzinfo=TZ).timestamp()
     _, user_prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
         historical_query="历史",
-        main_llm_response="回复",
         raw_memories=[
             SimpleNamespace(id="1265468", judgment="喜欢喝豆浆", created_at=stamp)
         ],
@@ -613,7 +587,6 @@ def test_memory_list_line_carries_created_at():
 def test_memory_list_line_omits_stamp_when_created_at_missing():
     _, user_prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
         historical_query="历史",
-        main_llm_response="回复",
         raw_memories=[SimpleNamespace(id="1265468", judgment="没有时间", created_at=0)],
     )
 

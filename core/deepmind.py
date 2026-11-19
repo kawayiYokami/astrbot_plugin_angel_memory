@@ -12,6 +12,7 @@ import asyncio
 import re
 import time
 import json
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from astrbot.api.event import AstrMessageEvent
@@ -530,23 +531,11 @@ class DeepMind:
             session_id, alive_texts
         )
         if departed_items:
+            # 短期记忆只负责淘汰：消息离场就杀，不对外产生任何反思。
+            # 反思按时间/条数独立调度，与短期记忆的生死无关，两者不能耦合。
             self.logger.debug(
                 f"[短期记忆] 清理离场记忆条目 session={session_id} count={len(departed_items)}"
             )
-            # 离场反思要把记忆送去模型做强化/合并，没配核心模型就跳过，
-            # 否则只会提交一个注定失败的后台任务。
-            if self.provider_id:
-                await self._reflect_departed_memories(
-                    session_id,
-                    memory_scope,
-                    current_message_id,
-                    departed_items,
-                )
-            else:
-                self.logger.debug(
-                    f"[反思调度] 未配置核心模型，跳过离场记忆送审 "
-                    f"session={session_id} 记忆数={len(departed_items)}"
-                )
         injected_memories = await self._inject_memories_to_request(
             request,
             session_id,
@@ -648,93 +637,6 @@ class DeepMind:
                 continue
             order.append((message_id, plain(record.get("content"))))
         return order
-
-    async def _reflect_departed_memories(
-        self,
-        session_id: str,
-        memory_scope: str,
-        current_message_id: str,
-        departed_items: List[Any],
-    ) -> None:
-        """召回来源离场时，把那条消息和它带回的记忆一起送去反思。"""
-        if not departed_items or not self.memory_system:
-            return
-
-        memories = []
-        for item in departed_items:
-            memory = getattr(item, "memory", None)
-            if memory is None:
-                continue
-            memory_id = str(getattr(memory, "id", "") or "").strip()
-            if memory_id and all(
-                str(getattr(existing, "id", "") or "") != memory_id
-                for existing in memories
-            ):
-                memories.append(memory)
-        if not memories:
-            return
-
-        texts: List[str] = []
-        for item in departed_items:
-            text = str(getattr(item, "recalled_message_text", "") or "").strip()
-            if text and text not in texts:
-                texts.append(text)
-        message_text = "\n".join(texts)
-        records = (
-            [
-                {
-                    "role": "user",
-                    "content": message_text,
-                    "source_message_id": current_message_id,
-                }
-            ]
-            if message_text
-            else []
-        )
-
-        memory_sql_manager = self.plugin_context.get_component("memory_sql_manager")
-        memory_id_mapping = (
-            memory_sql_manager.build_id_mapping([memory.id for memory in memories])
-            if memory_sql_manager
-            else MemoryIDResolver.generate_id_mapping(
-                [memory.to_dict() for memory in memories], "id"
-            )
-        )
-        reflection_input = ReflectionInput(
-            session_id=session_id,
-            memory_scope=memory_scope,
-            persona_name="",
-            latest_user_text=message_text,
-            latest_assistant_text="",
-            chat_records=list(records),
-            memory_context={
-                "session_id": session_id,
-                "query": message_text,
-                "user_list": [],
-                "raw_chat_records": list(records),
-                "raw_memories": [memory.to_dict() for memory in memories],
-                "raw_notes": [],
-                "core_topic": "",
-                "memory_id_mapping": memory_id_mapping,
-                "note_id_mapping": {},
-            },
-        )
-
-        submitted = await get_feedback_queue().submit(
-            {
-                "feedback_fn": self._execute_async_analysis_task,
-                "session_id": session_id,
-                "payload": {
-                    "reflection_input": reflection_input,
-                    "historical_chat_text_override": message_text,
-                },
-            }
-        )
-        self.logger.info(
-            f"[反思调度] 离场记忆送审 session={session_id} "
-            f"消息数={len(texts)} 记忆数={len(memories)} "
-            f"结果={'已提交' if submitted else '提交失败'}"
-        )
 
     def _get_event_sender_identity(self, event: AstrMessageEvent) -> tuple[str, str]:
         sender_id = ""
@@ -1144,14 +1046,19 @@ class DeepMind:
         return ""
 
     def _turns_to_chat_records(
-        self, turns: List[Dict[str, Any]]
+        self, turns: List[Dict[str, Any]], persona_name: str = ""
     ) -> List[Dict[str, Any]]:
         """把成对记录摊成 format_chat_records 认得的 chat_records。
 
         一份记录产出「用户 → 我」两条；助理那条加 1 毫秒，
         保证同一轮内先用户后回复，且不影响跨轮排序。
+
+        用户消息的 `[群友: …]` 前缀由上游 prompt 自带，这里原样透传；
+        助理回复没有上游前缀，这里补 `[助理: 名字] (时间):` 显式身份，
+        免得只能靠「没有群友前缀就是自己」反推。
         """
         records: List[Dict[str, Any]] = []
+        assistant_label = str(persona_name or "").strip() or "助理"
         for turn in turns or []:
             if not isinstance(turn, dict):
                 continue
@@ -1175,17 +1082,37 @@ class DeepMind:
                     f"session={turn.get('session_id', '')} timestamp={timestamp}"
                 )
             if resp_text:
+                stamp = self._format_turn_time(timestamp + 0.001)
+                prefix = f"[助理: {assistant_label}]"
+                if stamp:
+                    prefix += f" ({stamp})"
                 records.append(
                     {
                         "role": "assistant",
-                        "content": resp_text,
+                        "content": f"{prefix}: {resp_text}",
                         "sender_id": "assistant",
-                        "sender_name": "助理",
+                        "sender_name": assistant_label,
                         "timestamp": timestamp + 0.001,
                         "is_structured_toolcall": False,
                     }
                 )
         return records
+
+    @staticmethod
+    def _format_turn_time(timestamp: float) -> str:
+        """把秒级时间戳转成 UTC+8 的 YYYY-MM-DD HH:MM，取不到返回空串。"""
+        try:
+            value = float(timestamp or 0)
+        except (TypeError, ValueError):
+            return ""
+        if value <= 0:
+            return ""
+        try:
+            return datetime.fromtimestamp(
+                value, tz=timezone(timedelta(hours=8))
+            ).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, OSError, OverflowError):
+            return ""
 
     def _reflection_window_limit(self) -> int:
         """反思窗口保留上限：至少 2 倍阈值且不少于 20 份。
@@ -1297,7 +1224,11 @@ class DeepMind:
 
         historical_chat_text = ""
         try:
-            records = self._turns_to_chat_records(payload.get("recent_turns", []))
+            reflection_input = payload.get("reflection_input")
+            persona_name = str(getattr(reflection_input, "persona_name", "") or "")
+            records = self._turns_to_chat_records(
+                payload.get("recent_turns", []), persona_name
+            )
             historical_chat_text, _ = self.prompt_builder.format_chat_records(records)
         except Exception as e:
             self.logger.warning(f"格式化反思聊天记录失败，降级为空: {e}")
@@ -1396,12 +1327,6 @@ class DeepMind:
                 except Exception as e:
                     self.logger.error(f"转换记忆对象失败: {e}")
 
-            # 获取主LLM的最终回答
-            response_text = str(
-                getattr(reflection_input, "latest_assistant_text", "") or ""
-            )
-
-
             # 从上下文数据中获取ID映射表
             memory_id_mapping = context_data.get("memory_id_mapping", {})
 
@@ -1409,7 +1334,6 @@ class DeepMind:
             # system 放固定指南、user 放本次数据，便于命中提示词缓存
             system_prompt, prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
                 historical_query=historical_chat_text,
-                main_llm_response=response_text,
                 raw_memories=long_term_memories,
                 core_topic=core_topic,
                 memory_id_mapping=memory_id_mapping,

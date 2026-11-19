@@ -233,7 +233,7 @@ def test_departed_message_takes_the_memory_with_it():
 
 
 def test_reflection_entry_binds_the_message_text_too():
-    """反思入仓必须连正文一起绑定，否则条目离场时那次反思没有对话可看。"""
+    """反思入仓必须连正文一起绑定，反思时才有对话可看。"""
     deepmind = object.__new__(DeepMind)
     deepmind.injection_service = SimpleNamespace(
         _plain_text=DeepMindInjectionService._plain_text

@@ -200,7 +200,6 @@ class SmallModelPromptBuilder:
     @staticmethod
     def build_post_hoc_analysis_prompts(
         historical_query: str,
-        main_llm_response: str,
         raw_memories: List,
         core_topic: str = "",
         memory_id_mapping: Dict[str, str] = None,
@@ -215,7 +214,6 @@ class SmallModelPromptBuilder:
 
         Args:
             historical_query: 历史对话内容
-            main_llm_response: 主LLM的回答内容
             raw_memories: 原始记忆列表
             core_topic: 核心话题（可选）
             memory_id_mapping: 记忆ID映射表（可选）
@@ -233,24 +231,9 @@ class SmallModelPromptBuilder:
         ai_name = str(persona_name or "").strip()
         if ai_name:
             sections += ["", "## 你自己", f"你叫 {ai_name}。"]
-            # 只有天使之心会在正文前套发言人前缀，原生模式下每段都没有前缀，这句会误导
-            if "[群友" in str(historical_query or ""):
-                sections.append(
-                    "下面「历史对话内容」里没有「[群友: …]」前缀的段落，就是你自己说过的话。"
-                )
         sections += ["", "## 历史对话内容", historical_query]
-        reply_text = str(main_llm_response or "").strip()
-        if reply_text:
-            sections += ["", "## 你的最新回复", reply_text]
-        else:
-            sections += [
-                "",
-                "## 你的最新回复",
-                "本轮没有回复记录：发送现场和 LLM 响应钩子都没有取到文本。"
-                "这是记录缺失，不代表你没有说话，也不代表本轮没有回复；"
-                "不要据此推断自己没开口，也不要为补全这一点编造回复内容。",
-            ]
-
+        # 本轮回复已作为「[助理: 名字] (时间): …」写进历史对话内容，
+        # 不再单列「你的最新回复」一栏，否则同一句回复会重复出现两次。
         sections += ["", "## 召回的相关记忆"]
         data_context = "\n".join(sections) + "\n"
 
