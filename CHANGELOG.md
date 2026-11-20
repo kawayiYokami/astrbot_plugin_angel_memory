@@ -2,6 +2,19 @@
 
 All notable changes to this plugin will be documented in this file.
 
+## [3.0.0] - 2026-11-21
+
+记忆淘汰机制与输出格式的大版本。控制台的重做记在 2.0.27，本次修掉淘汰链路里三处会让机制空转的缺陷，并统一记忆的呈现格式。
+
+### Fixed
+- **判 keep 的记忆被反复送审**：衰减引擎不认 pinned，pin 过的记忆强度照样归零、照样进候选，keep 只是面板上的一个勾，下一晚又会被判 delete。改为对引擎返回的候选同样剔除 pinned。实测 11-21 那轮 384 条候选里，54 条是早已 pin 过的记忆；库里 pinned 且强度归零的共 926 条。`core/memory_runtime/pmemory_runtime.py`
+- **控制台字号失调**：输入框标签未浮动时 15.6px（比区块标题还大），一输入就缩到 9.6px（比说明文字还小），同一个标签两副面孔。改为控件值与标签同为 14px、浮动标签 12px，与说明文字同级。`webui/src/styles/settings.scss`
+
+### Changed
+- 淘汰裁决的候选来源收敛为「衰减引擎本轮给出的候选」，删掉引擎无候选时全库扫描的备用路径。那条路径与衰减周期脱钩，会把全部强度归零的记忆一次性抓出来，候选池只增不减。`core/memory_runtime/pmemory_runtime.py`
+- 记忆清单与展示统一为标准格式：`id:xxx 时间 - 结论`，理由另起一行 `理由：`，不再附带类型、标签、召回次数。`core/utils/memory_formatter.py`、`llm_memory/service/memory_retirement_reviewer.py`
+- 淘汰裁决提示词从 131 行叙事式改为 54 行准则式，用户画像的判断依据从 tags 改为内容。`llm_memory/prompts/memory_retirement_review.md`
+
 ## [2.0.27] - 2026-11-20
 
 这次更新是一次全面的体验与稳定性重构。不仅换上了全新的可视化记忆面板，大幅降低了反思时的 Token 消耗，还重塑了记忆召回过滤逻辑，并修复了卡目录锁、配置项与多版本兼容等问题。
