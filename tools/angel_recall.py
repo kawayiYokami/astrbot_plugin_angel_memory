@@ -76,8 +76,15 @@ class CoreMemoryRecallTool(FunctionTool):
             all_active = list(all_memories)
 
             if all_active:
+                # 与笔记段对齐：给每条记忆分配全局短 ID，便于后续引用
+                short_id_registry = plugin_context.get_component("memory_sql_manager")
+                if short_id_registry is not None:
+                    for mem in all_active:
+                        mem_id = str(getattr(mem, "id", "") or "").strip()
+                        if mem_id:
+                            short_id_registry.register_short_id(mem_id)
                 memory_text = MemoryFormatter.format_session_memories(
-                    all_active, short_id_registry=None
+                    all_active, short_id_registry=short_id_registry
                 )
                 parts.append(f"[记忆检索结果 ({len(all_active)}条)]\n{memory_text}")
             else:

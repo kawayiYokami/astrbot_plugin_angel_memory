@@ -39,24 +39,25 @@ class MemoryFormatter:
         if memory_reasoning and memory_reasoning.strip():
             reasoning = f" ——因为{memory_reasoning.strip()}"
 
-        # 格式化时间（相对时间）
-        time_suffix = ""
+        # 格式化时间（绝对时间，便于引用与回溯）
+        time_text = ""
         created_at = getattr(memory, "created_at", 0.0)
         if created_at and created_at > 0:
-            elapsed = time.time() - created_at
-            if elapsed < 60:
-                time_suffix = "（刚刚）"
-            elif elapsed < 3600:
-                time_suffix = f"（{int(elapsed // 60)}分钟前）"
-            elif elapsed < 86400:
-                time_suffix = f"（{int(elapsed // 3600)}小时前）"
-            elif elapsed < 2592000:
-                time_suffix = f"（{int(elapsed // 86400)}天前）"
-            else:
-                time_suffix = f"（{int(elapsed // 2592000)}个月前）"
+            try:
+                time_text = time.strftime(
+                    "%Y-%m-%d %H:%M", time.localtime(float(created_at))
+                )
+            except (ValueError, OSError, OverflowError):
+                time_text = ""
 
-        id_prefix = f"[{short_id}] " if short_id else ""
-        return f"{id_prefix}{judgment}{reasoning}{time_suffix}"
+        # 输出格式：id:1747680 2026-11-16 16:32 - 论点 ——因为理由
+        if short_id and time_text:
+            return f"id:{short_id} {time_text} - {judgment}{reasoning}"
+        if short_id:
+            return f"id:{short_id} - {judgment}{reasoning}"
+        if time_text:
+            return f"{time_text} - {judgment}{reasoning}"
+        return f"{judgment}{reasoning}"
 
     @staticmethod
     def format_memories_by_type(memories: List[MemoryItem]) -> Dict[str, List[str]]:

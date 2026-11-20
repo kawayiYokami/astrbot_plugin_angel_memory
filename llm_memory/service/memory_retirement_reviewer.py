@@ -153,52 +153,29 @@ class MemoryRetirementReviewer:
         candidates: Sequence[BaseMemory],
         short_ids: Sequence[str],
     ) -> str:
-        now = time.time()
         blocks: List[str] = []
         for index, mem in enumerate(candidates):
-            blocks.append(f"- id: `{short_ids[index]}`")
-            blocks.append(f"  type: `{self._type_label(mem)}`")
-            blocks.append(f"  judgment: `{getattr(mem, 'judgment', '') or ''}`")
-            blocks.append(f"  reasoning: `{getattr(mem, 'reasoning', '') or ''}`")
-            blocks.append(f"  tags: {self._tags_text(mem)}")
-            blocks.append(
-                f"  创建于: `{self._age_text(getattr(mem, 'created_at', 0.0), now)}`"
-                f"　最后召回: `{self._recalled_text(getattr(mem, 'last_recalled_at', 0.0), now)}`"
-                f"　被判定有用: `{int(getattr(mem, 'useful_count', 0) or 0)} 次`"
-            )
-            blocks.append("")
+            judgment = str(getattr(mem, "judgment", "") or "").strip()
+            reasoning = str(getattr(mem, "reasoning", "") or "").strip()
+            created_at = getattr(mem, "created_at", 0.0)
+            time_text = ""
+            if created_at and created_at > 0:
+                try:
+                    time_text = time.strftime(
+                        "%Y-%m-%d %H:%M", time.localtime(float(created_at))
+                    )
+                except (ValueError, OSError, OverflowError):
+                    time_text = ""
+
+            # 标准格式：id:1747680 2026-11-16 16:32 - 论点 ——因为理由
+            line = f"- id:{short_ids[index]}"
+            if time_text:
+                line += f" {time_text}"
+            line += f" - {judgment}"
+            if reasoning:
+                line += f" ——因为{reasoning}"
+            blocks.append(line)
         return "\n".join(blocks).rstrip()
-
-    @staticmethod
-    def _type_label(mem: BaseMemory) -> str:
-        memory_type = getattr(mem, "memory_type", "")
-        return str(getattr(memory_type, "value", memory_type) or "")
-
-    @staticmethod
-    def _tags_text(mem: BaseMemory) -> str:
-        tags = [str(tag) for tag in (getattr(mem, "tags", None) or []) if str(tag).strip()]
-        if not tags:
-            return "（无）"
-        return "、".join(f"`{tag}`" for tag in tags)
-
-    @staticmethod
-    def _age_text(created_at: float, now: float) -> str:
-        try:
-            days = int(max(0.0, now - float(created_at or 0.0)) // 86400)
-        except (TypeError, ValueError):
-            return "未知"
-        return "今天" if days == 0 else f"{days} 天前"
-
-    @staticmethod
-    def _recalled_text(last_recalled_at: float, now: float) -> str:
-        try:
-            value = float(last_recalled_at or 0.0)
-        except (TypeError, ValueError):
-            return "从未"
-        if value <= 0:
-            return "从未"
-        days = int(max(0.0, now - value) // 86400)
-        return "今天" if days == 0 else f"{days} 天前"
 
     def _parse_decisions(
         self,
