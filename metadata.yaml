@@ -15,3 +15,8 @@ tags:
   - RAG
   - 回忆
   - 用户画像
+
+views:
+  - name: memory-dashboard
+    title: 天使的记忆
+    description: 查看记忆、用户画像、标签与维护状态
