@@ -17,8 +17,11 @@
   $border-radius-root: 8px,
   // 上游 _VTextField.scss：输入文字 12.8px，v-field 全组件（text/textarea/select/combobox）统一走它
   $field-font-size: 0.8rem,
-  // 上游 _VInput.scss：label 15.6px
-  $label-font-size: 0.975rem,
+  // 标签未浮动时与区块标题同级（14px）。上游的 15.6px 是给大表单用的，
+  // 在我们的行式布局里它比标题还大，一输入又缩成 9.6px，比说明文字还小。
+  $label-font-size: 0.875rem,
+  // 浮动缩放：0.8rem × 0.94 ≈ 12px，与说明文字同级
+  $field-label-floating-scale: 0.94,
   $body-font-family: (
     'Outfit',
     'Noto Sans',
