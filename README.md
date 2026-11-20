@@ -48,7 +48,7 @@ pip install -r requirements.txt
 |--------|------|----------|
 | `provider_id` | 空 | 整理记忆用的模型，建议带思考能力。留空也能照常聊天、照常想起旧事，只是不再自动记新的。 |
 | `retrieval.embedding_provider_id` | 空 | 可选。配上后换个说法也找得到；不填就按文字匹配，多数情况够用。 |
-| `retrieval.rerank_provider_id` | 空 | 推荐。把捞出来的记忆再排一遍序，最贴话题的排前面，提升明显。留空会复用 `provider_id`。 |
+| `retrieval.rerank_provider_id` | 空 | 推荐。下拉已按模型能力自动筛选。把捞出来的记忆再排一遍序，最贴话题的排前面，提升明显。留空会复用 `provider_id`。 |
 | `conversation_scope_mode` | 按人格 | 记忆分柜方式：按人格，或按群聊。 |
 | `conversation_scope_map` | `{}` | 分柜对照表，见下。 |
 | `group_knowledge_map` | `{}` | 每个群对每个资料库的用法，建议在面板「群聊知识库」里改。 |
@@ -123,11 +123,11 @@ raw/原神/武器/法器.md
 
 ## 管理面板
 
-自带管理页，不用另起服务：打开 AstrBot WebUI（默认 `http://localhost:6185`），左侧「插件管理」→「天使之魂」→ `memory-dashboard`。
+自带管理页，不用另起服务：打开 AstrBot WebUI（默认 `http://localhost:6185`），左侧「插件管理」→「天使的记忆」。
 
 | 页面 | 能做什么 |
 |------|----------|
-| 总览 | 系统状态、提供商、记忆/标签/笔记数量、过程追踪记录 |
+| 总览 | 系统状态、提供商、记忆/标签/笔记数量、情绪波动与过程追踪记录 |
 | 记忆浏览 | 分页看、按分类和关键词筛、看详情、删除 |
 | 用户画像 | 已识别用户，按属性分组看画像记忆 |
 | 群聊知识库 | 每个群对五个知识库下拉选自动 / 手动 / 不可见 |
@@ -150,7 +150,7 @@ raw/原神/武器/法器.md
 | 依据 | 凭什么这么记 | 点菜那次他特意说了不要香菜 |
 | 线索 | 以后靠什么想起来 | 红豆、口味、香菜 |
 
-要回答问题时，它按线索把相关的记忆捞回来，一并翻知识库，然后才开口。这些动作模型都能主动做：记住新的（`angel_remember`）、想起来（`angel_recall`）、读笔记（`angel_note_read`）、写笔记（`angel_note_create`）。写下的笔记落在 `.angel/note/`，跟知识库一起参与检索。
+要回答问题时，它按线索把相关的记忆捞回来，一并翻知识库，然后才开口。自动回忆自带重排与质量门槛过滤，只保留关联度最高的前几条，宁缺毋滥。这些动作模型都能主动做：记住新的（`angel_remember`）、想起来（`angel_recall`）、读笔记（`angel_note_read`）、写笔记（`angel_note_create`）。写下的笔记落在 `.angel/note/`，跟知识库一起参与检索。
 
 ## 灵魂
 
@@ -180,7 +180,7 @@ raw/原神/武器/法器.md
 
 **启动失败**：看日志，依赖没装全就先 `pip install -r requirements.txt`。
 
-**检索不准**：优先配上 `retrieval.rerank_provider_id`。知识库条目别写太长，短卡片最灵。
+**检索不准**：优先配上 `retrieval.rerank_provider_id`。自动回忆自带质量过滤，只带出最契合的记忆；知识库条目别写太长，短卡片最灵。
 
 **完全不记**：确认 `provider_id` 有值；消息是不是短于 `min_message_length`。
 
