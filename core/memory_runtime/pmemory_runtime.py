@@ -291,26 +291,14 @@ class PMemoryMemoryRuntime(MemoryRuntime):
         return int(report.get("decayed") or 0)
 
     async def list_retirement_candidates(self) -> List[BaseMemory]:
-        raw = self._decay_candidates
-        if raw:
-            # 衰减引擎不认 pinned：判过 keep 的记忆强度照样归零、照样被返回。
-            # 这里必须再筛一遍，否则 keep 只是面板上的一个勾，下一轮又会被送审。
-            records = [
-                record
-                for record in raw
-                if not (record.get("state") or {}).get("pinned", False)
-            ]
-        else:
-            records = await asyncio.to_thread(self._list_by_strength_zero)
+        # 衰减引擎不认 pinned：判过 keep 的记忆强度照样归零、照样被返回。
+        # 这里必须再筛一遍，否则 keep 只是面板上的一个勾，下一轮又会被送审。
+        records = [
+            record
+            for record in self._decay_candidates
+            if not (record.get("state") or {}).get("pinned", False)
+        ]
         return [to_base_memory(record) for record in records]
-
-    def _list_by_strength_zero(self) -> List[dict]:
-        candidates: List[dict] = []
-        for record in self._store.list_records(all_scopes=True):
-            state = record.get("state") or {}
-            if int(state.get("strength", 1)) <= 0 and not state.get("pinned", False):
-                candidates.append(record)
-        return candidates
 
     async def apply_retirement_decisions(
         self,
