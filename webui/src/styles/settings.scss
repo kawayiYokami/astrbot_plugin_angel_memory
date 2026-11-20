@@ -15,13 +15,11 @@
   $color-pack: false,
   $font-size-root: 1rem,
   $border-radius-root: 8px,
-  // 上游 _VTextField.scss：输入文字 12.8px，v-field 全组件（text/textarea/select/combobox）统一走它
-  $field-font-size: 0.8rem,
-  // 标签未浮动时与区块标题同级（14px）。上游的 15.6px 是给大表单用的，
-  // 在我们的行式布局里它比标题还大，一输入又缩成 9.6px，比说明文字还小。
-  $label-font-size: 0.875rem,
-  // 浮动缩放：0.8rem × 0.94 ≈ 12px，与说明文字同级
-  $field-label-floating-scale: 0.94,
+  // 输入文字走 M3 的 Body large（16px）——Text field 的官方档位
+  $field-font-size: 1rem,
+  // 标签未浮动时同为 Body large（16px）；浮动后由 Vuetify 默认 scale 0.75
+  // 收到 12px（Body small）。16 → 12 正是 M3 里 Text field 的两档，比例原生就对。
+  $label-font-size: 1rem,
   $body-font-family: (
     'Outfit',
     'Noto Sans',
