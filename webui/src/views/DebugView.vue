@@ -1,182 +1,284 @@
 <template>
-  <n-space vertical :size="16">
-    <n-alert type="info" :bordered="false" style="white-space: pre-wrap"
-      >这是功能调试卡，方便测上限。仅对本次请求生效，不改全局配置。写入链路固定 60s 不受这里影响。</n-alert
-    >
+  <div class="d-flex flex-column ga-4">
+    <v-alert type="info" variant="tonal" density="compact">
+      这一页是给上限压力测试用的，所有参数只对本次请求生效，不会改掉插件里的设置。
+    </v-alert>
 
-    <!-- 嵌入探针 -->
-    <n-card title="嵌入探针（Embedding）" embedded>
-      <n-space vertical :size="12">
-        <n-space>
-          <n-input-number
-            v-model:value="embedBatchSize"
-            :min="1"
-            placeholder="批次"
-            style="width: 140px"
+    <!-- 语义向量探针 -->
+    <v-card rounded="md">
+      <v-card-text class="config-section pb-2">
+        <div class="config-title">语义向量试跑</div>
+        <div class="config-hint">把多段文字一次性转成向量，看批次大小和超时能不能撑住</div>
+      </v-card-text>
+      <v-card-text class="pt-0 d-flex flex-column ga-3">
+        <div class="d-flex flex-wrap align-center ga-3">
+          <v-text-field
+            v-model.number="embedBatchSize"
+            label="每批条数"
+            type="number"
+            min="1"
+            density="compact"
+            hide-details
+            variant="outlined"
+            style="max-width: 160px;"
+          />
+          <v-text-field
+            v-model.number="embedTimeout"
+            label="超时（秒）"
+            type="number"
+            min="5"
+            max="120"
+            density="compact"
+            hide-details
+            variant="outlined"
+            style="max-width: 160px;"
+          />
+          <v-btn variant="text" size="small" @click="embedTimeout = 5">5 秒</v-btn>
+          <v-btn variant="text" size="small" @click="embedTimeout = 60">60 秒</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="embedLoading"
+            :disabled="!embedText.trim()"
+            @click="doEmbedProbe"
           >
-            <template #prefix>批次</template>
-          </n-input-number>
-          <n-input-number
-            v-model:value="embedTimeout"
-            :min="5"
-            :max="120"
-            placeholder="超时(s)"
-            style="width: 150px"
-          >
-            <template #prefix>超时</template>
-          </n-input-number>
-          <n-button quaternary @click="embedTimeout = 5">5s</n-button>
-          <n-button quaternary @click="embedTimeout = 60">60s</n-button>
-          <n-button type="primary" :loading="embedLoading" :disabled="!embedText.trim()" @click="doEmbedProbe">测试嵌入</n-button>
-        </n-space>
-        <n-input
-          v-model:value="embedText"
-          type="textarea"
-          :rows="5"
-          placeholder="每行一条文本，例如：&#10;你好&#10;世界&#10;天使的记忆"
+            开始试跑
+          </v-btn>
+        </div>
+        <v-textarea
+          v-model="embedText"
+          label="每行一条文字"
+          rows="5"
+          auto-grow
+          density="compact"
+          hide-details
+          variant="outlined"
+          placeholder="你好&#10;世界&#10;天使的记忆"
         />
-        <n-space v-if="embedResult" vertical :size="8">
-          <n-alert v-if="embedResult.error" type="error" :bordered="false">{{ embedResult.error }}</n-alert>
+
+        <template v-if="embedResult">
+          <v-alert v-if="embedResult.error" type="error" variant="tonal">{{ embedResult.error }}</v-alert>
           <template v-else>
-            <n-space size="small" align="center">
-              <n-tag type="success" :bordered="false">总计 {{ embedResult.total }} 条 / {{ embedResult.batches }} 批</n-tag>
-              <n-tag :bordered="false">耗时 {{ embedResult.elapsed_ms }}ms</n-tag>
-              <n-tag :bordered="false">平均 {{ embedResult.avg_ms_per_text }}ms/条</n-tag>
-              <n-tag :bordered="false">维度 {{ embedResult.dimension }}</n-tag>
-              <n-tag v-if="embedResult.failed_batches" type="error" :bordered="false">失败 {{ embedResult.failed_batches }} 批</n-tag>
-              <n-tag v-if="embedResult.timed_out_batches" type="warning" :bordered="false">超时 {{ embedResult.timed_out_batches }} 批</n-tag>
-            </n-space>
-            <n-space v-if="embedResult.provider" size="small">
-              <span class="muted">provider: {{ embedResult.provider.provider_id || '—' }} / {{ embedResult.provider.model_name || '—' }} ({{ embedResult.provider.type || '—' }})</span>
-            </n-space>
-            <n-data-table
-              :columns="embedColumns"
-              :data="embedResult.batch_details || []"
-              :pagination="false"
-              :bordered="false"
-            />
-            <n-card v-if="embedResult.preview?.length" embedded title="预览（前 3 条向量片段）">
+            <div class="d-flex flex-wrap ga-2">
+              <v-chip size="small" color="success" variant="tonal">
+                共 {{ embedResult.total }} 条 / {{ embedResult.batches }} 批
+              </v-chip>
+              <v-chip size="small" variant="tonal">耗时 {{ embedResult.elapsed_ms }} 毫秒</v-chip>
+              <v-chip size="small" variant="tonal">平均 {{ embedResult.avg_ms_per_text }} 毫秒/条</v-chip>
+              <v-chip size="small" variant="tonal">维度 {{ embedResult.dimension }}</v-chip>
+              <v-chip v-if="embedResult.failed_batches" size="small" color="error" variant="tonal">
+                失败 {{ embedResult.failed_batches }} 批
+              </v-chip>
+              <v-chip v-if="embedResult.timed_out_batches" size="small" color="warning" variant="tonal">
+                超时 {{ embedResult.timed_out_batches }} 批
+              </v-chip>
+            </div>
+            <div v-if="embedResult.provider" class="text-caption text-medium-emphasis">
+              服务商 {{ embedResult.provider.provider_id || '—' }} / 模型
+              {{ embedResult.provider.model_name || '—' }}（{{ embedResult.provider.type || '—' }}）
+            </div>
+            <v-data-table
+              :headers="embedHeaders"
+              :items="embedBatchDetails"
+              :items-per-page="10"
+              density="comfortable"
+            >
+              <template #item.batch_index="{ item }">#{{ item.batch_index }}</template>
+              <template #item.dimension="{ item }">{{ item.dimension ?? '—' }}</template>
+              <template #item.success="{ item }">
+                <v-chip size="x-small" :color="item.success ? 'success' : item.timed_out ? 'warning' : 'error'" variant="tonal">
+                  {{ item.success ? '成功' : item.timed_out ? '超时' : '失败' }}
+                </v-chip>
+              </template>
+              <template #item.error="{ item }">
+                <span class="text-truncate d-inline-block" style="max-width: 320px;" :title="item.error || ''">
+                  {{ item.error || '—' }}
+                </span>
+              </template>
+            </v-data-table>
+            <template v-if="embedResult.preview?.length">
+              <div class="text-body-2 font-weight-medium">前 3 条向量片段</div>
               <pre class="code-block">{{ JSON.stringify(embedResult.preview, null, 2) }}</pre>
-            </n-card>
+            </template>
           </template>
-        </n-space>
-      </n-space>
-    </n-card>
+        </template>
+      </v-card-text>
+    </v-card>
 
-    <!-- 重排探针 -->
-    <n-card title="重排探针（Rerank）" embedded>
-      <n-space vertical :size="12">
-        <n-input v-model:value="rerankQuery" placeholder="query，例如：天使的记忆" />
-        <n-input
-          v-model:value="rerankDocsText"
-          type="textarea"
-          :rows="5"
-          placeholder="documents，每行一条，例如：&#10;记忆系统会记住你的偏好&#10;笔记系统会整理你的知识&#10;向量检索负责召回"
+    <!-- 排序模型探针 -->
+    <v-card rounded="md">
+      <v-card-text class="config-section pb-2">
+        <div class="config-title">排序模型试跑</div>
+        <div class="config-hint">给一句话和一批候选，看排序模型能不能按相关度排出来</div>
+      </v-card-text>
+      <v-card-text class="pt-0 d-flex flex-column ga-3">
+        <v-text-field
+          v-model="rerankQuery"
+          label="要查的内容"
+          density="compact"
+          hide-details
+          variant="outlined"
+          placeholder="例如：天使的记忆"
         />
-        <n-space align="center" :wrap="true">
-          <n-input-number v-model:value="rerankTimeout" :min="5" :max="120" style="width: 140px">
-            <template #prefix>超时</template>
-          </n-input-number>
-          <n-input-number v-model:value="rerankMaxDocs" :min="1" :max="200" style="width: 150px">
-            <template #prefix>候选上限</template>
-          </n-input-number>
-          <n-input-number v-model:value="rerankMaxTokens" :min="128" :max="8192" :step="128" style="width: 170px">
-            <template #prefix>单段Token</template>
-          </n-input-number>
-          <n-button type="primary" :loading="rerankLoading" :disabled="!rerankQuery.trim() || !rerankDocsText.trim()" @click="doRerankProbe">测试重排</n-button>
-          <span v-if="rerankHasProvider === false" class="muted">未配置重排提供商，将走 BM25 降级</span>
-        </n-space>
-        <n-alert v-if="rerankMaxDocs !== null && rerankMaxTokens !== null" type="default" :bordered="false" style="font-size: 12px; opacity: 0.7">
-          仅本次生效，不改全局配置。默认 64 / 1024，bge-reranker-v2-m3 单对硬上限 8192
-        </n-alert>
-        <n-space v-if="rerankResult" vertical :size="8">
-          <n-alert v-if="rerankResult.timed_out" type="warning" :bordered="false">重排超时（>{{ rerankResult.timeout }}s），已降级</n-alert>
-          <n-alert v-if="rerankResult.error && !rerankResult.timed_out" :type="rerankResult.has_rerank ? 'error' : 'warning'" :bordered="false">{{ rerankResult.error }}</n-alert>
+        <v-textarea
+          v-model="rerankDocsText"
+          label="候选文本（每行一条）"
+          rows="5"
+          auto-grow
+          density="compact"
+          hide-details
+          variant="outlined"
+          placeholder="记忆系统会记住你的偏好&#10;笔记系统会整理你的知识&#10;向量检索负责召回"
+        />
+        <div class="d-flex flex-wrap align-center ga-3">
+          <v-text-field
+            v-model.number="rerankTimeout"
+            label="超时（秒）"
+            type="number"
+            min="5"
+            max="120"
+            density="compact"
+            hide-details
+            variant="outlined"
+            style="max-width: 150px;"
+          />
+          <v-text-field
+            v-model.number="rerankMaxDocs"
+            label="候选上限"
+            type="number"
+            min="1"
+            max="200"
+            density="compact"
+            hide-details
+            variant="outlined"
+            style="max-width: 150px;"
+          />
+          <v-text-field
+            v-model.number="rerankMaxTokens"
+            label="单段上限（Token）"
+            type="number"
+            min="128"
+            max="8192"
+            step="128"
+            density="compact"
+            hide-details
+            variant="outlined"
+            style="max-width: 180px;"
+          />
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="rerankLoading"
+            :disabled="!rerankQuery.trim() || !rerankDocsText.trim()"
+            @click="doRerankProbe"
+          >
+            开始试跑
+          </v-btn>
+          <span v-if="rerankHasProvider === false" class="text-caption text-medium-emphasis">
+            没有配置排序服务商，会自动退回关键词排序
+          </span>
+        </div>
+        <div v-if="rerankMaxDocs !== null && rerankMaxTokens !== null" class="text-caption text-medium-emphasis">
+          只对本次生效。常用 64 / 1024，bge-reranker-v2-m3 单对硬上限 8192
+        </div>
+
+        <template v-if="rerankResult">
+          <v-alert v-if="rerankResult.timed_out" type="warning" variant="tonal">
+            排序超时（超过 {{ rerankResult.timeout }} 秒），已退回关键词排序
+          </v-alert>
+          <v-alert
+            v-if="rerankResult.error && !rerankResult.timed_out"
+            :type="rerankResult.has_rerank ? 'error' : 'warning'"
+            variant="tonal"
+          >
+            {{ rerankResult.error }}
+          </v-alert>
           <template v-if="rerankResult.scores?.length">
-            <n-space size="small" :wrap="true">
-              <n-tag :bordered="false">耗时 {{ rerankResult.elapsed_ms }}ms</n-tag>
-              <n-tag :bordered="false">返回 {{ rerankResult.scores.length }} 条</n-tag>
-              <n-tag v-if="rerankResult.provider_id" :bordered="false">{{ rerankResult.provider_id }}</n-tag>
-              <n-tag v-if="rerankResult.original_docs !== undefined" :bordered="false">候选 {{ rerankResult.original_docs }}→{{ rerankResult.kept_docs }}/{{ rerankResult.rerank_max_docs }}</n-tag>
-              <n-tag v-if="rerankResult.rerank_max_tokens_per_doc" :bordered="false">Token {{ rerankResult.rerank_max_tokens_per_doc }}</n-tag>
-              <n-tag v-if="rerankResult.doc_truncated" type="warning" :bordered="false">截断 {{ rerankResult.doc_truncated }} 段</n-tag>
-              <n-tag v-if="rerankResult.query_truncated" type="warning" :bordered="false">query已截断</n-tag>
-            </n-space>
-            <n-data-table
-              :columns="rerankColumns"
-              :data="rerankResult.scores"
-              :pagination="false"
-              :bordered="false"
-            />
+            <div class="d-flex flex-wrap ga-2">
+              <v-chip size="small" variant="tonal">耗时 {{ rerankResult.elapsed_ms }} 毫秒</v-chip>
+              <v-chip size="small" variant="tonal">返回 {{ rerankResult.scores.length }} 条</v-chip>
+              <v-chip v-if="rerankResult.provider_id" size="small" variant="tonal">{{ rerankResult.provider_id }}</v-chip>
+              <v-chip v-if="rerankResult.original_docs !== undefined" size="small" variant="tonal">
+                候选 {{ rerankResult.original_docs }} → {{ rerankResult.kept_docs }}/{{ rerankResult.rerank_max_docs }}
+              </v-chip>
+              <v-chip v-if="rerankResult.rerank_max_tokens_per_doc" size="small" variant="tonal">
+                单段 {{ rerankResult.rerank_max_tokens_per_doc }} Token
+              </v-chip>
+              <v-chip v-if="rerankResult.doc_truncated" size="small" color="warning" variant="tonal">
+                截断 {{ rerankResult.doc_truncated }} 段
+              </v-chip>
+              <v-chip v-if="rerankResult.query_truncated" size="small" color="warning" variant="tonal">
+                查询已截断
+              </v-chip>
+            </div>
+            <v-data-table
+              :headers="rerankHeaders"
+              :items="rerankScores"
+              :items-per-page="20"
+              density="comfortable"
+            >
+              <template #item.score="{ item }">
+                {{ typeof item.score === 'number' ? item.score.toFixed(4) : (item.score ?? '—') }}
+              </template>
+              <template #item.document="{ item }">
+                <span class="text-truncate d-inline-block" style="max-width: 420px;" :title="item.document">
+                  {{ item.document }}
+                </span>
+              </template>
+            </v-data-table>
           </template>
-          <n-empty v-else-if="!rerankResult.error && !rerankResult.timed_out" description="无重排结果（可能降级为空）" />
-        </n-space>
-      </n-space>
-    </n-card>
-  </n-space>
+          <v-empty-state
+            v-else-if="!rerankResult.error && !rerankResult.timed_out"
+            icon="lucide:flask-conical"
+            title="没有排序结果"
+            text="可能被截断成空了，试试减少候选或放宽单段上限"
+          />
+        </template>
+      </v-card-text>
+    </v-card>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { h, ref } from 'vue'
-import type { DataTableColumns } from 'naive-ui'
-import {
-  NAlert,
-  NButton,
-  NCard,
-  NDataTable,
-  NEmpty,
-  NInput,
-  NInputNumber,
-  NSpace,
-  NTag,
-  useDialog,
-  useMessage,
-} from 'naive-ui'
+import { computed, ref } from 'vue'
 import { useBridge } from '@/composables/useBridge'
+import { toast } from '@/composables/useToast'
+import { confirmDialog } from '@/composables/useConfirm'
 
 const { apiPost } = useBridge()
-const message = useMessage()
-const dialog = useDialog()
 
-// 嵌入
+// 表格数据统一成 any[]，避免模板插槽里 item 被推断成 unknown
+const embedBatchDetails = computed<any[]>(() => embedResult.value?.batch_details ?? [])
+const rerankScores = computed<any[]>(() => rerankResult.value?.scores ?? [])
+
+// 语义向量
 const embedText = ref('')
 const embedBatchSize = ref<number | null>(50)
 const embedTimeout = ref<number | null>(5)
 const embedLoading = ref(false)
 const embedResult = ref<any>(null)
 
-const embedColumns: DataTableColumns<any> = [
-  { title: '#', key: 'batch_index', width: 60, render: row => `#${row.batch_index}` },
-  { title: 'batch', key: 'batch_size', width: 80 },
-  { title: '耗时(ms)', key: 'elapsed_ms', width: 100 },
-  { title: '维度', key: 'dimension', width: 80, render: row => row.dimension ?? '—' },
-  {
-    title: '状态',
-    key: 'success',
-    width: 80,
-    render: row => h(NTag, { size: 'small', type: row.success ? 'success' : row.timed_out ? 'warning' : 'error', bordered: false }, { default: () => (row.success ? '成功' : row.timed_out ? '超时' : '失败') }),
-  },
-  { title: '错误', key: 'error', ellipsis: { tooltip: true }, render: row => row.error || '—' },
+const embedHeaders = [
+  { title: '批次', key: 'batch_index', width: 80, sortable: false },
+  { title: '条数', key: 'batch_size', width: 80, sortable: false },
+  { title: '耗时（毫秒）', key: 'elapsed_ms', width: 120, sortable: false },
+  { title: '维度', key: 'dimension', width: 90, sortable: false },
+  { title: '状态', key: 'success', width: 90, sortable: false },
+  { title: '错误', key: 'error', sortable: false },
 ]
 
 async function doEmbedProbe() {
-  const texts = embedText.value.split('\n').map(s => s.trim()).filter(Boolean)
+  const texts = embedText.value.split('\n').map((s) => s.trim()).filter(Boolean)
   if (!texts.length) {
-    message.warning('请输入至少一条文本')
+    toast.warning('请先输入至少一条文字')
     return
   }
   const bs = embedBatchSize.value ?? 50
   if (bs > 200) {
-    const ok = await new Promise<boolean>(resolve => {
-      dialog.warning({
-        title: '批次过大',
-        content: `批次 ${bs} 较大，可能触发供应商 400/413/429 限流，是否继续？`,
-        positiveText: '继续',
-        negativeText: '取消',
-        onPositiveClick: () => resolve(true),
-        onNegativeClick: () => resolve(false),
-        onClose: () => resolve(false),
-      })
+    const ok = await confirmDialog({
+      title: '批次偏大',
+      text: `每批 ${bs} 条比较多，可能触发服务商的限流或拒绝。要继续吗？`,
+      confirmText: '继续',
     })
     if (!ok) return
   }
@@ -190,22 +292,22 @@ async function doEmbedProbe() {
     })
     if (data.error && data.total === undefined) {
       embedResult.value = data
-      message.error(data.error)
+      toast.error(data.error)
     } else {
       embedResult.value = data
-      if (data.failed_batches) message.warning(`有 ${data.failed_batches} 批失败，请查看明细`)
-      else message.success('嵌入探针完成')
+      if (data.failed_batches) toast.warning(`有 ${data.failed_batches} 批失败，请看下方明细`)
+      else toast.success('试跑完成')
     }
   } catch (e: any) {
-    const msg = e.message || '嵌入探针失败'
+    const msg = e.message || '试跑失败'
     embedResult.value = { error: msg }
-    message.error(msg)
+    toast.error(msg)
   } finally {
     embedLoading.value = false
   }
 }
 
-// 重排
+// 排序模型
 const rerankQuery = ref('')
 const rerankDocsText = ref('')
 const rerankTimeout = ref<number | null>(5)
@@ -215,18 +317,18 @@ const rerankLoading = ref(false)
 const rerankResult = ref<any>(null)
 const rerankHasProvider = ref<boolean | null>(null)
 
-const rerankColumns: DataTableColumns<any> = [
-  { title: 'index', key: 'index', width: 70 },
-  { title: 'score', key: 'score', width: 100, render: row => (typeof row.score === 'number' ? row.score.toFixed(4) : String(row.score ?? '—')) },
-  { title: 'document', key: 'document', ellipsis: { tooltip: true } },
+const rerankHeaders = [
+  { title: '序号', key: 'index', width: 80, sortable: false },
+  { title: '相关度', key: 'score', width: 110, sortable: false },
+  { title: '候选文本', key: 'document', sortable: false },
 ]
 
 async function doRerankProbe() {
   if (!rerankQuery.value.trim() || !rerankDocsText.value.trim()) {
-    message.warning('请填写 query 和 documents')
+    toast.warning('要查的内容和候选文本都要填')
     return
   }
-  const documents = rerankDocsText.value.split('\n').map(s => s.trim()).filter(Boolean)
+  const documents = rerankDocsText.value.split('\n').map((s) => s.trim()).filter(Boolean)
   rerankLoading.value = true
   rerankResult.value = null
   try {
@@ -240,16 +342,16 @@ async function doRerankProbe() {
     rerankResult.value = data
     rerankHasProvider.value = data.has_rerank ?? null
     if (data.error) {
-      if (data.has_rerank === false) message.warning(data.error)
-      else if (data.timed_out) message.warning(data.error)
-      else message.error(data.error)
+      if (data.has_rerank === false) toast.warning(data.error)
+      else if (data.timed_out) toast.warning(data.error)
+      else toast.error(data.error)
     } else {
-      message.success('重排探针完成')
+      toast.success('试跑完成')
     }
   } catch (e: any) {
-    const msg = e.message || '重排探针失败'
+    const msg = e.message || '试跑失败'
     rerankResult.value = { error: msg, has_rerank: true }
-    message.error(msg)
+    toast.error(msg)
   } finally {
     rerankLoading.value = false
   }
@@ -257,18 +359,26 @@ async function doRerankProbe() {
 </script>
 
 <style scoped>
-.muted {
-  opacity: 0.6;
-  font-size: 12px;
-}
 .code-block {
-  background: #1a1a2e;
-  color: #e0e0e0;
-  border-radius: 6px;
+  background: rgba(var(--v-theme-on-surface), 0.06);
+  border-radius: 8px;
   padding: 12px;
   overflow-x: auto;
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.4;
+  margin: 0;
+  max-height: 40vh;
+}
+
+.config-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--v-theme-primaryText));
+}
+.config-hint {
+  font-size: 0.75rem;
+  color: rgb(var(--v-theme-secondaryText));
+  margin-top: 2px;
 }
 </style>

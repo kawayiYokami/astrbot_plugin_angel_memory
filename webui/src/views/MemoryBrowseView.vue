@@ -1,110 +1,137 @@
 <template>
-  <n-space vertical :size="16">
-    <n-card embedded>
-      <n-space>
-        <n-select
-          v-model:value="scope"
-          :options="scopeOptions"
-          placeholder="Scope 过滤"
+  <div class="d-flex flex-column ga-4">
+    <!-- 过滤条 -->
+    <v-card rounded="md">
+      <v-card-text class="d-flex flex-wrap align-center ga-3">
+        <v-select
+          v-model="scope"
+          :items="scopeOptions"
+          label="分类域"
           clearable
-          style="width: 200px"
-          @update:value="loadData"
+          density="compact"
+          hide-details
+          variant="outlined"
+          style="max-width: 200px;"
+          @update:model-value="reload"
         />
-        <n-input
-          v-model:value="keyword"
-          placeholder="关键词搜索（judgment / reasoning / tags）"
+        <v-text-field
+          v-model="keyword"
+          label="搜索内容或标签"
+          density="compact"
+          hide-details
+          variant="outlined"
+          prepend-inner-icon="lucide:search"
           clearable
-          style="flex: 1"
-          @keyup.enter="loadData"
-        >
-          <template #suffix>
-            <Icon icon="lucide:search" @click="loadData" style="cursor: pointer" />
-          </template>
-        </n-input>
-      </n-space>
-    </n-card>
+          class="flex-grow-1"
+          style="min-width: 200px;"
+          @keyup.enter="reload"
+        />
+        <v-btn variant="flat" color="primary" prepend-icon="lucide:search" @click="reload">搜索</v-btn>
+      </v-card-text>
+    </v-card>
 
-    <n-card embedded>
-      <n-data-table
-        remote
-        :columns="columns"
-        :data="items"
+    <!-- 记忆列表 -->
+    <v-card rounded="md">
+      <v-data-table-server
+        :headers="headers"
+        :items="items"
+        :items-length="total"
         :loading="loading"
-        :pagination="pagination"
-        :row-key="(row: any) => row.id"
-        @update:page="onPageChange"
-        @update:page-size="onPageSizeChange"
-      />
-    </n-card>
+        v-model:page="page"
+        v-model:items-per-page="pageSize"
+        :items-per-page-options="[10, 20, 50, 100]"
+        item-value="id"
+        density="comfortable"
+        @update:options="onOptions"
+      >
+        <template #item.memory_type="{ item }">
+          <v-chip size="small" variant="tonal">{{ item.memory_type }}</v-chip>
+        </template>
+        <template #item.judgment="{ item }">
+          <span class="text-truncate d-inline-block" style="max-width: 420px;" :title="item.judgment">
+            {{ item.judgment }}
+          </span>
+        </template>
+        <template #item.tags="{ item }">
+          <div class="d-flex flex-wrap ga-1 py-1">
+            <v-chip v-for="tag in parseTags(item.tags)" :key="tag" size="x-small" color="primary" variant="tonal">
+              {{ tag }}
+            </v-chip>
+          </div>
+        </template>
+        <template #item.strength="{ item }">
+          <v-chip size="small" :color="strengthColor(item.strength)" variant="tonal">{{ item.strength }}</v-chip>
+        </template>
+        <template #item.is_active="{ item }">
+          <v-icon
+            icon="lucide:star"
+            size="16"
+            :color="item.is_active ? 'warning' : undefined"
+            :style="item.is_active ? '' : 'opacity:.35'"
+            :aria-label="item.is_active ? '主动记忆' : '非主动记忆'"
+          />
+        </template>
+        <template #item.created_at="{ item }">
+          <span class="text-caption text-medium-emphasis">{{ formatTime(item.created_at) }}</span>
+        </template>
+        <template #item.actions="{ item }">
+          <div class="d-flex ga-1">
+            <v-btn
+              variant="text"
+              size="small"
+              icon="lucide:eye"
+              :aria-label="'查看记忆 ' + item.id"
+              @click="showDetail(item)"
+            />
+            <v-btn
+              variant="text"
+              size="small"
+              icon="lucide:trash-2"
+              color="error"
+              :aria-label="'删除记忆 ' + item.id"
+              @click="confirmDelete(item)"
+            />
+          </div>
+        </template>
+        <template #no-data>
+          <v-empty-state icon="lucide:brain" title="没有找到记忆" text="换个关键词或分类域再试" />
+        </template>
+      </v-data-table-server>
+    </v-card>
 
-    <!-- 详情对话框 -->
-    <n-modal
-      v-model:show="detailDialog"
-      preset="card"
-      title="记忆详情"
-      style="width: 680px"
-      :bordered="false"
-    >
-      <template v-if="selectedItem">
-        <n-descriptions label-placement="left" :column="1">
-          <n-descriptions-item label="ID">{{ selectedItem.id }}</n-descriptions-item>
-          <n-descriptions-item label="类型">{{ selectedItem.memory_type }}</n-descriptions-item>
-          <n-descriptions-item label="Judgment">{{ selectedItem.judgment }}</n-descriptions-item>
-          <n-descriptions-item label="Reasoning">{{ selectedItem.reasoning || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="Tags">
-            <n-space size="small">
-              <n-tag
-                v-for="tag in parseTags(selectedItem.tags)"
-                :key="tag"
-                :bordered="false"
-              >
+    <!-- 详情 -->
+    <v-dialog v-model="detailDialog" max-width="680">
+      <v-card rounded="md">
+        <v-card-title class="text-subtitle-1 font-weight-medium">记忆详情</v-card-title>
+        <v-card-text v-if="selectedItem" class="d-flex flex-column ga-3">
+          <div v-for="row in detailRows" :key="row.label" class="d-flex justify-space-between ga-4">
+            <span class="text-body-2 text-medium-emphasis flex-shrink-0">{{ row.label }}</span>
+            <span class="text-body-2 text-right">{{ row.value }}</span>
+          </div>
+          <div class="d-flex justify-space-between ga-4">
+            <span class="text-body-2 text-medium-emphasis flex-shrink-0">标签</span>
+            <div class="d-flex flex-wrap ga-1 justify-end">
+              <v-chip v-for="tag in parseTags(selectedItem.tags)" :key="tag" size="x-small" variant="tonal">
                 {{ tag }}
-              </n-tag>
-            </n-space>
-          </n-descriptions-item>
-          <n-descriptions-item label="强度">{{ selectedItem.strength }}</n-descriptions-item>
-          <n-descriptions-item label="主动">{{ selectedItem.is_active ? '是' : '否' }}</n-descriptions-item>
-          <n-descriptions-item label="Scope">{{ selectedItem.memory_scope }}</n-descriptions-item>
-          <n-descriptions-item label="创建时间">{{ formatTime(selectedItem.created_at) }}</n-descriptions-item>
-          <n-descriptions-item label="更新时间">{{ formatTime(selectedItem.updated_at) }}</n-descriptions-item>
-        </n-descriptions>
-      </template>
-    </n-modal>
-
-    <!-- 删除确认 -->
-    <n-modal
-      v-model:show="deleteDialog"
-      preset="dialog"
-      type="warning"
-      title="确认删除"
-      :positive-text="'删除'"
-      negative-text="取消"
-      :positive-button-props="{ type: 'error' }"
-      @positive-click="doDelete"
-    >
-      确定要删除这条记忆吗？此操作不可撤销。
-      <div v-if="deleteTarget" class="delete-preview">{{ deleteTarget.judgment }}</div>
-    </n-modal>
-  </n-space>
+              </v-chip>
+              <span v-if="!parseTags(selectedItem.tags).length" class="text-body-2">-</span>
+            </div>
+          </div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-3">
+          <v-spacer />
+          <v-btn variant="text" @click="detailDialog = false">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { h, ref, computed, onMounted } from 'vue'
-import type { DataTableColumns } from 'naive-ui'
-import {
-  NButton,
-  NCard,
-  NDataTable,
-  NDescriptions,
-  NDescriptionsItem,
-  NInput,
-  NModal,
-  NSelect,
-  NSpace,
-  NTag,
-} from 'naive-ui'
-import { Icon } from '@iconify/vue'
+import { ref, computed, onMounted } from 'vue'
 import { useBridge } from '@/composables/useBridge'
+import { toast } from '@/composables/useToast'
+import { confirmDialog } from '@/composables/useConfirm'
 import { formatTime, parseTags } from '@/utils/format'
 
 const { apiGet, apiPost } = useBridge()
@@ -116,133 +143,83 @@ const page = ref(1)
 const pageSize = ref(20)
 const scope = ref<string | null>(null)
 const keyword = ref('')
-const scopeOptions = ref<{ label: string; value: string }[]>([])
+const scopeOptions = ref<{ title: string; value: string }[]>([])
 
 const detailDialog = ref(false)
 const selectedItem = ref<any>(null)
-const deleteDialog = ref(false)
-const deleteTarget = ref<any>(null)
-const deleting = ref(false)
 
-function strengthTagType(s: number): 'success' | 'primary' | 'warning' | 'error' {
+const headers = [
+  { title: '类型', key: 'memory_type', width: 100, sortable: false },
+  { title: '内容', key: 'judgment', sortable: false },
+  { title: '标签', key: 'tags', width: 220, sortable: false },
+  { title: '强度', key: 'strength', width: 90, sortable: false },
+  { title: '主动', key: 'is_active', width: 80, sortable: false, headerProps: { class: 'text-no-wrap' } },
+  { title: '创建时间', key: 'created_at', width: 150, sortable: false },
+  { title: '操作', key: 'actions', width: 110, sortable: false },
+]
+
+const detailRows = computed(() => {
+  const it = selectedItem.value
+  if (!it) return []
+  return [
+    { label: '编号', value: it.id },
+    { label: '类型', value: it.memory_type || '-' },
+    { label: '内容', value: it.judgment || '-' },
+    { label: '说明', value: it.reasoning || '-' },
+    { label: '强度', value: it.strength ?? '-' },
+    { label: '主动', value: it.is_active ? '是' : '否' },
+    { label: '分类域', value: scopeLabel(it.memory_scope) },
+    { label: '创建时间', value: formatTime(it.created_at) },
+    { label: '更新时间', value: formatTime(it.updated_at) },
+  ]
+})
+
+// 分类域：只有 public 是内置英文值，其余是用户自己的柜子名
+function scopeLabel(value: unknown): string {
+  const text = String(value ?? '')
+  if (!text) return '-'
+  return text.toLowerCase() === 'public' ? '公开' : text
+}
+
+function strengthColor(s: number): string {
   if (s >= 80) return 'success'
   if (s >= 50) return 'primary'
   if (s >= 30) return 'warning'
   return 'error'
 }
 
-const pagination = computed(() => ({
-  page: page.value,
-  pageSize: pageSize.value,
-  itemCount: total.value,
-  showSizePicker: true,
-  pageSizes: [10, 20, 50, 100],
-  prefix: ({ itemCount }: { itemCount?: number }) => `共 ${itemCount ?? 0} 条`,
-}))
-
-const columns: DataTableColumns<any> = [
-  { title: '类型', key: 'memory_type', width: 90 },
-  {
-    title: 'Judgment',
-    key: 'judgment',
-    ellipsis: { tooltip: true },
-  },
-  {
-    title: 'Tags',
-    key: 'tags',
-    width: 220,
-    render: row => {
-      const tags = parseTags(row.tags)
-      if (!tags.length) return ''
-      return h(
-        'div',
-        { style: 'display:flex; flex-wrap:wrap; gap:4px;' },
-        tags.map(tag =>
-          h(NTag, { size: 'small', type: 'primary', bordered: false }, { default: () => tag }),
-        ),
-      )
-    },
-  },
-  {
-    title: '强度',
-    key: 'strength',
-    width: 80,
-    render: row =>
-      h(
-        NTag,
-        { size: 'small', type: strengthTagType(row.strength), bordered: false },
-        { default: () => row.strength },
-      ),
-  },
-  {
-    title: '主动',
-    key: 'is_active',
-    width: 60,
-    render: row =>
-      h(Icon, {
-        icon: row.is_active ? 'lucide:star' : 'lucide:star',
-        style: { color: row.is_active ? '#f0a020' : '#888', fontSize: '14px' },
-      }),
-  },
-  {
-    title: '创建时间',
-    key: 'created_at',
-    width: 140,
-    render: row => formatTime(row.created_at),
-  },
-  {
-    title: '操作',
-    key: 'actions',
-    width: 90,
-    render: row =>
-      h('div', { style: 'display:flex; gap:4px;' }, [
-        h(
-          NButton,
-          { size: 'tiny', quaternary: true, onClick: () => showDetail(row) },
-          { icon: () => h(Icon, { icon: 'lucide:eye' }) },
-        ),
-        h(
-          NButton,
-          { size: 'tiny', quaternary: true, type: 'error', onClick: () => confirmDelete(row) },
-          { icon: () => h(Icon, { icon: 'lucide:trash-2' }) },
-        ),
-      ]),
-  },
-]
-
 function showDetail(item: any) {
   selectedItem.value = item
   detailDialog.value = true
 }
 
-function confirmDelete(item: any) {
-  deleteTarget.value = item
-  deleteDialog.value = true
-}
-
-async function doDelete() {
-  if (!deleteTarget.value || deleting.value) return
-  deleting.value = true
+async function confirmDelete(item: any) {
+  const ok = await confirmDialog({
+    title: '删除这条记忆？',
+    text: `删除后无法恢复。\n\n${item.judgment ?? ''}`,
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
   try {
-    await apiPost('memories/delete', { id: deleteTarget.value.id })
-    deleteDialog.value = false
+    await apiPost('memories/delete', { id: item.id })
+    toast.success('已删除')
     await loadData()
   } catch (e) {
-    console.error('删除失败:', e)
-  } finally {
-    deleting.value = false
+    toast.error(`删除失败: ${(e as Error).message}`)
   }
 }
 
-function onPageChange(p: number) {
-  page.value = p
-  loadData()
+function reload() {
+  page.value = 1
+  void loadData()
 }
 
-function onPageSizeChange(s: number) {
-  pageSize.value = s
-  page.value = 1
-  loadData()
+// 分页/页大小变化统一由表格的 options 事件驱动，避免重复请求
+function onOptions(options: { page: number; itemsPerPage: number }) {
+  page.value = options.page
+  pageSize.value = options.itemsPerPage
+  void loadData()
 }
 
 async function loadData() {
@@ -257,7 +234,7 @@ async function loadData() {
     items.value = data.items || []
     total.value = data.total || 0
   } catch (e) {
-    console.error('加载记忆失败:', e)
+    toast.error(`加载记忆失败: ${(e as Error).message}`)
   } finally {
     loading.value = false
   }
@@ -266,18 +243,10 @@ async function loadData() {
 onMounted(async () => {
   try {
     const ov: any = await apiGet('overview')
-    scopeOptions.value = (ov.scopes || []).map((s: string) => ({ label: s, value: s }))
+    scopeOptions.value = (ov.scopes || []).map((s: string) => ({ title: scopeLabel(s), value: s }))
   } catch (e) {
-    /* ignore */
+    console.warn('[记忆浏览] 分类域列表加载失败:', e)
   }
   await loadData()
 })
 </script>
-
-<style scoped>
-.delete-preview {
-  margin-top: 10px;
-  font-size: 12px;
-  opacity: 0.65;
-}
-</style>

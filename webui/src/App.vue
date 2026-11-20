@@ -1,281 +1,150 @@
 <template>
-  <n-config-provider
-    :theme="naiveTheme"
-    :theme-overrides="overrides"
-    :locale="zhCN"
-    :date-locale="dateZhCN"
-  >
-    <n-global-style />
-    <n-message-provider>
-      <n-dialog-provider>
-        <!-- Naive UI 标准 admin 布局：绝对定位三段式 -->
-        <n-layout position="absolute" has-sider>
-          <n-layout-sider
-            bordered
-            class="glass-sider"
-            collapse-mode="width"
-            :collapsed-width="64"
-            :width="208"
-            show-trigger="bar"
-            :collapsed="collapsed"
-            @collapse="collapsed = true"
-            @expand="collapsed = false"
-          >
-            <div class="sider-body">
-              <div class="app-brand" :class="{ 'is-collapsed': collapsed }">
-                <button
-                  class="theme-toggle"
-                  type="button"
-                  :title="isDark ? '切换到光模式' : '切换到暗模式'"
-                  @click="toggleTheme()"
-                >
-                  <Icon :icon="isDark ? 'lucide:sun' : 'lucide:moon'" />
-                </button>
-                <template v-if="!collapsed">
-                  <span class="brand-text">天使的记忆</span>
-                </template>
-              </div>
-              <n-menu
-                :collapsed="collapsed"
-                :collapsed-width="64"
-                :collapsed-icon-size="20"
-                :options="menuOptions"
-                :value="activeKey"
-                @update:value="onMenuSelect"
-              />
-              <div class="sider-footer">
-                <n-menu
-                  :collapsed="collapsed"
-                  :collapsed-width="64"
-                  :collapsed-icon-size="20"
-                  :options="settingsMenuOptions"
-                  :value="route.path === '/settings' ? '/settings' : null"
-                  @update:value="router.push('/settings')"
-                />
-              </div>
-            </div>
-          </n-layout-sider>
+  <v-app>
+    <v-navigation-drawer
+      v-model="drawer"
+      :rail="rail"
+      permanent
+      width="240"
+      rail-width="56"
+      class="memory-drawer"
+      color="transparent"
+    >
+      <div class="d-flex flex-column h-100">
+        <div
+          class="drawer-head pa-2"
+          :class="rail ? 'd-flex flex-column align-center ga-2' : 'd-flex align-center ga-2'"
+        >
+          <v-btn
+            :icon="rail ? 'lucide:panel-left-open' : 'lucide:panel-left-close'"
+            variant="text"
+            size="small"
+            :aria-label="rail ? '展开侧栏' : '收起侧栏'"
+            @click="rail = !rail"
+          />
+          <span v-if="!rail" class="text-subtitle-1 font-weight-medium flex-grow-1 text-truncate">天使的记忆</span>
+        </div>
 
-          <n-layout>
-            <n-layout-content
-              content-style="padding: 24px;"
-              :native-scrollbar="false"
-            >
-              <router-view />
-            </n-layout-content>
-          </n-layout>
-        </n-layout>
-      </n-dialog-provider>
-    </n-message-provider>
-  </n-config-provider>
+        <v-divider />
+
+        <v-list class="flex-grow-1 overflow-y-auto py-2" nav bg-color="transparent">
+          <v-list-item
+            v-for="item in menuItems"
+            :key="item.path"
+            :active="route.path === item.path"
+            color="primary"
+            @click="onNav(item.path)"
+          >
+            <template #prepend>
+              <v-icon :icon="item.icon" />
+            </template>
+            <v-list-item-title v-if="!rail">{{ item.title }}</v-list-item-title>
+            <v-tooltip v-if="rail" activator="parent" location="end">{{ item.title }}</v-tooltip>
+          </v-list-item>
+        </v-list>
+
+        <v-divider />
+
+        <v-list nav bg-color="transparent" class="py-2">
+          <v-list-item :active="route.path === '/settings'" color="primary" @click="onNav('/settings')">
+            <template #prepend>
+              <v-icon icon="lucide:settings" />
+            </template>
+            <v-list-item-title v-if="!rail">插件设置</v-list-item-title>
+            <v-tooltip v-if="rail" activator="parent" location="end">插件设置</v-tooltip>
+          </v-list-item>
+        </v-list>
+      </div>
+    </v-navigation-drawer>
+
+    <v-main>
+      <div class="content-inner">
+        <router-view />
+      </div>
+    </v-main>
+
+    <ToastHost />
+    <ConfirmHost />
+  </v-app>
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted, provide, ref, watchEffect } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { MenuOption } from 'naive-ui'
-import {
-  NConfigProvider,
-  NDialogProvider,
-  NGlobalStyle,
-  NIcon,
-  NLayout,
-  NLayoutContent,
-  NLayoutSider,
-  NMenu,
-  NMessageProvider,
-  darkTheme,
-  dateZhCN,
-  zhCN,
-} from 'naive-ui'
-import { Icon } from '@iconify/vue'
-import { useBridge } from '@/composables/useBridge'
-import { buildThemeOverrides, createThemeApi, themeKey } from './theme'
+import ToastHost from './components/ToastHost.vue'
+import ConfirmHost from './components/ConfirmHost.vue'
 
 const router = useRouter()
 const route = useRoute()
-const { init } = useBridge()
 
-const collapsed = ref(false)
-// naive-ui 的 n-layout-sider 没有 breakpoint 属性，用 matchMedia 实现窄屏自动收起
+const rail = ref(false)
+const drawer = ref(true)
+
+// 窄屏自动收起为 rail，与 brush/meme 一致
 const narrowMql = window.matchMedia('(max-width: 768px)')
-const syncSidebarToWidth = () => {
-  collapsed.value = narrowMql.matches
+const syncRail = () => {
+  rail.value = narrowMql.matches
 }
 onMounted(() => {
-  syncSidebarToWidth()
-  narrowMql.addEventListener('change', syncSidebarToWidth)
+  syncRail()
+  narrowMql.addEventListener('change', syncRail)
 })
 onUnmounted(() => {
-  narrowMql.removeEventListener('change', syncSidebarToWidth)
+  narrowMql.removeEventListener('change', syncRail)
 })
 
-const theme = createThemeApi()
-provide(themeKey, theme)
-const { isDark, toggle: toggleTheme } = theme
+// 插件设置沉底，不进主菜单
+const menuItems = computed(() =>
+  router
+    .getRoutes()
+    .filter((r) => r.meta?.title && r.path !== '/settings')
+    .map((r) => ({
+      path: r.path,
+      title: String(r.meta?.title ?? r.path),
+      icon: String(r.meta?.icon ?? 'lucide:circle'),
+    })),
+)
 
-// data-theme 同步到根节点：CSS 变量按 :root[data-theme] 分组，
-// 且 NModal 会 teleport 到 body，变量必须挂在 documentElement 上才能覆盖弹窗。
-watchEffect(() => {
-  document.documentElement.dataset.theme = theme.mode.value
-})
-
-const naiveTheme = computed(() => (theme.isDark.value ? darkTheme : null))
-const overrides = computed(() => buildThemeOverrides(theme.mode.value))
-
-function renderIcon(icon: string) {
-  return () => h(NIcon, null, { default: () => h(Icon, { icon }) })
+function onNav(path: string) {
+  if (route.path !== path) void router.push(path)
 }
-
-// 从路由表生成菜单（与路由 meta.title / meta.icon 对应）；插件设置单独沉底，不进菜单
-const menuOptions: MenuOption[] = router
-  .getRoutes()
-  .filter(r => r.meta?.title && r.path !== '/settings')
-  .map(r => ({
-    label: r.meta!.title as string,
-    key: r.path,
-    icon: renderIcon((r.meta!.icon as string) || 'lucide:circle'),
-  }))
-
-const settingsMenuOptions: MenuOption[] = [
-  { label: '插件设置', key: '/settings', icon: renderIcon('lucide:settings') },
-]
-
-const activeKey = computed(() => route.path)
-
-function onMenuSelect(key: string) {
-  if (key !== route.path) {
-    router.push(key)
-  }
-}
-
-onMounted(async () => {
-  await init()
-})
 </script>
 
 <style scoped>
-.sider-body {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-}
-
-.sider-footer {
-  margin-top: auto;
-  border-top: 1px solid var(--glass-divider);
-}
-
-.app-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 16px;
-  font-size: 15px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.app-brand.is-collapsed {
-  flex-direction: column;
-  padding: 10px 0;
-}
-
-.brand-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.content-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
 }
 </style>
 
 <style>
-/* ---------- 设计令牌（与 theme.ts tokens 对齐，供自定义元素使用） ---------- */
-
 html,
 body,
 #app {
   height: 100%;
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Microsoft YaHei', sans-serif;
 }
 
-:root[data-theme='light'] {
-  --bg-base: #F5F5F5;
-  --glass-thick-bg: #ffffff;
-  --glass-regular-bg: #ffffff;
-  --glass-border: rgba(60, 60, 67, 0.12);
-  --glass-highlight: rgba(255, 255, 255, 0.9);
-  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-  --glass-divider: rgba(60, 60, 67, 0.12);
-  --accent: #007aff;
-  --accent-soft: rgba(0, 122, 255, 0.12);
-  --text-1: #1d1d1f;
-  --text-2: #6e6e73;
-  --text-3: #8e8e93;
-  --radius-xs: 8px;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-full: 999px;
+html {
+  overscroll-behavior: none;
 }
 
-:root[data-theme='dark'] {
-  --bg-base: #101014;
-  --glass-thick-bg: #18181c;
-  --glass-regular-bg: #18181c;
-  --glass-border: rgba(84, 84, 88, 0.4);
-  --glass-highlight: rgba(255, 255, 255, 0.22);
-  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-  --glass-divider: rgba(84, 84, 88, 0.4);
-  --accent: #0a84ff;
-  --accent-soft: rgba(10, 132, 255, 0.18);
-  --text-1: #f5f5f7;
-  --text-2: #aeaeb2;
-  --text-3: #8e8e93;
-  --radius-xs: 8px;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-full: 999px;
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
 
-body {
-  background: var(--bg-base);
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(var(--v-border-color), 0.24);
 }
 
-/* 左上角主题切换：胶囊圆钮 */
-.theme-toggle {
-  flex-shrink: 0;
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  color: inherit;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-full);
-  background: var(--glass-regular-bg);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    var(--glass-shadow);
-  cursor: pointer;
-  transition: transform 0.15s ease, background 0.2s ease;
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--v-border-color), 0.4);
 }
 
-.theme-toggle:hover {
-  transform: scale(1.06);
-}
-
-.theme-toggle:active {
-  transform: scale(0.94);
-}
-
-/* 弹窗卡片：大圆角 */
-.n-card,
-.n-modal {
-  border-radius: var(--radius-lg);
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 </style>

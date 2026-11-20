@@ -1,84 +1,79 @@
 <template>
-  <div class="group-knowledge-page">
-    <n-spin :show="loading">
-      <n-space vertical :size="16">
-        <n-card embedded>
-          <div class="head">
-            <p class="title">群聊知识库</p>
-            <p class="desc">
-              每个群对每个知识库单独设定可见性。自动：对话时会把该库内容注入上下文；
-              手动：不自动注入，但模型可以主动搜索；不可见：模型既不会自动拿到，也搜不到。
-              未配置的群默认全部「手动」。保存后即时生效。
-            </p>
-          </div>
-        </n-card>
+  <div class="d-flex flex-column ga-4">
+    <v-card rounded="md">
+      <v-card-text>
+        <div class="config-title">群聊知识库</div>
+        <div class="config-hint" style="line-height: 1.7;">
+          每个群对每个知识库单独设定可见性。自动：对话时会把该库内容带进上下文；
+          手动：不自动带入，但模型可以主动搜索；不可见：模型既不会自动拿到，也搜不到。
+          未配置的群默认全部「手动」。保存后即时生效。
+        </div>
+      </v-card-text>
+    </v-card>
 
-        <n-empty
-          v-if="!groups.length"
-          description="群账本里还没有群聊记录。群里产生过对话后会自动登记，也可以先在插件设置里手写 group_knowledge_map。"
-        />
+    <div v-if="loading" class="d-flex justify-center py-10">
+      <v-progress-circular indeterminate color="primary" />
+    </div>
 
-        <n-card v-for="group in groups" :key="group.group_id" embedded>
-          <div class="group-head">
-            <div class="group-meta">
-              <div class="group-name">{{ group.group_name || '未命名群聊' }}</div>
-              <div class="group-id">群号 {{ group.group_id }}</div>
+    <v-empty-state
+      v-else-if="!groups.length"
+      icon="lucide:library"
+      title="还没有群聊记录"
+      text="群里产生过对话后会自动登记，也可以先在插件设置里手写群知识库映射"
+    />
+
+    <template v-else>
+      <v-card v-for="group in groups" :key="group.group_id" rounded="md">
+        <v-card-text class="config-section pb-2">
+          <div class="d-flex align-center ga-3">
+            <div class="flex-grow-1 min-w-0">
+              <div class="config-title text-truncate">{{ group.group_name || '未命名群聊' }}</div>
+              <div class="config-hint">群号 {{ group.group_id }}</div>
             </div>
-            <n-tag :bordered="false" size="small" type="info">
-              自动 {{ autoCount(group) }} 个
-            </n-tag>
+            <v-chip size="small" color="info" variant="tonal">自动 {{ autoCount(group) }} 个</v-chip>
           </div>
+        </v-card-text>
 
-          <div class="domain-list">
-            <div v-for="domain in domains" :key="domain.key" class="domain-row">
-              <div class="domain-name">
-                <span class="domain-label">{{ domain.label }}</span>
-                <span class="domain-key">{{ domain.key }}</span>
-              </div>
-              <n-select
-                :value="group.modes[domain.key]"
-                :options="modeOptions"
-                size="small"
-                class="mode-select"
-                @update:value="(value: string) => setMode(group, domain.key, value)"
-              />
-            </div>
+        <v-card-text class="pt-0 d-flex flex-column ga-2">
+          <div v-for="domain in domains" :key="domain.key" class="d-flex align-center justify-space-between ga-3">
+            <span class="text-body-2">{{ domain.label }}</span>
+            <v-select
+              :model-value="group.modes[domain.key]"
+              :items="modeOptions"
+              density="compact"
+              hide-details
+              variant="outlined"
+              style="max-width: 140px;"
+              :aria-label="domain.label + ' 的可见性'"
+              @update:model-value="(value: string) => setMode(group, domain.key, value)"
+            />
           </div>
-        </n-card>
+        </v-card-text>
+      </v-card>
+    </template>
 
-        <Transition name="fab">
-          <n-button
-            v-if="dirty"
-            class="save-fab"
-            type="primary"
-            round
-            size="large"
-            :loading="saving"
-            @click="save"
-          >
-            <template #icon><Icon icon="lucide:save" /></template>
-            保存更改
-          </n-button>
-        </Transition>
-      </n-space>
-    </n-spin>
+    <Transition name="fab">
+      <v-btn
+        v-if="dirty"
+        class="save-fab"
+        color="primary"
+        variant="flat"
+        size="large"
+        rounded="pill"
+        :loading="saving"
+        prepend-icon="lucide:save"
+        @click="save"
+      >
+        保存更改
+      </v-btn>
+    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import {
-  NButton,
-  NCard,
-  NEmpty,
-  NSelect,
-  NSpace,
-  NSpin,
-  NTag,
-  useMessage,
-} from 'naive-ui'
-import { Icon } from '@iconify/vue'
 import { useBridge } from '@/composables/useBridge'
+import { toast } from '@/composables/useToast'
 
 interface DomainMeta {
   key: string
@@ -92,7 +87,6 @@ interface GroupRow {
 }
 
 const { apiGet, apiPost } = useBridge()
-const message = useMessage()
 
 const domains = ref<DomainMeta[]>([])
 const groups = ref<GroupRow[]>([])
@@ -101,9 +95,9 @@ const saving = ref(false)
 const baseline = ref('')
 
 const modeOptions = [
-  { label: '自动', value: 'auto' },
-  { label: '手动', value: 'manual' },
-  { label: '不可见', value: 'hidden' },
+  { title: '自动', value: 'auto' },
+  { title: '手动', value: 'manual' },
+  { title: '不可见', value: 'hidden' },
 ]
 
 const dirty = computed(
@@ -130,7 +124,7 @@ async function load() {
     }))
     baseline.value = JSON.stringify(groups.value)
   } catch (e) {
-    message.error(`加载群聊知识库失败: ${(e as Error).message}`)
+    toast.error(`加载群聊知识库失败: ${(e as Error).message}`)
   } finally {
     loading.value = false
   }
@@ -146,9 +140,9 @@ async function save() {
       })),
     })
     baseline.value = JSON.stringify(groups.value)
-    message.success('已保存并即时生效')
+    toast.success('已保存并即时生效')
   } catch (e) {
-    message.error(`保存失败: ${(e as Error).message}`)
+    toast.error(`保存失败: ${(e as Error).message}`)
   } finally {
     saving.value = false
   }
@@ -158,75 +152,22 @@ onMounted(load)
 </script>
 
 <style scoped>
-.head .title {
-  margin: 0 0 6px;
-  font-size: 16px;
-  font-weight: 600;
+.config-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--v-theme-primaryText));
 }
-
-.head .desc {
-  margin: 0;
-  font-size: 13px;
-  opacity: 0.75;
-  line-height: 1.6;
-}
-
-.group-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.group-name {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.group-id {
-  font-size: 12px;
-  opacity: 0.6;
+.config-hint {
+  font-size: 0.75rem;
+  color: rgb(var(--v-theme-secondaryText));
   margin-top: 2px;
-}
-
-.domain-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.domain-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.domain-name {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.domain-label {
-  font-size: 13px;
-}
-
-.domain-key {
-  font-size: 11px;
-  opacity: 0.45;
-}
-
-.mode-select {
-  width: 140px;
 }
 
 .save-fab {
   position: fixed;
-  right: 32px;
-  bottom: 32px;
-  z-index: 10;
+  right: 28px;
+  bottom: 28px;
+  z-index: 100;
 }
 
 .fab-enter-active,

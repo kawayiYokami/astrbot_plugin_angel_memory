@@ -1,97 +1,111 @@
 <template>
-  <n-space vertical :size="16">
-    <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen">
+  <div class="d-flex flex-column ga-4">
+    <v-row>
       <!-- 导出 -->
-      <n-grid-item span="2 m:1">
-        <n-card title="导出记忆快照" embedded>
-          <p class="desc">导出中央记忆库的完整快照（记录 + 标签 + 关联），用于备份和迁移。</p>
-          <n-button type="primary" :loading="exporting" @click="doExport">
-            <template #icon><Icon icon="lucide:download" /></template>
-            生成并下载快照
-          </n-button>
-        </n-card>
-      </n-grid-item>
+      <v-col cols="12" md="6">
+        <v-card rounded="md" class="h-100">
+          <v-card-text class="config-section pb-2">
+            <div class="config-title">导出记忆快照</div>
+            <div class="config-hint">把整份记忆库（记录、标签、关联）打包成一个文件，用于备份和迁移</div>
+          </v-card-text>
+          <v-card-text class="pt-0">
+            <v-btn color="primary" variant="flat" prepend-icon="lucide:download" :loading="exporting" @click="doExport">
+              生成并下载快照
+            </v-btn>
+          </v-card-text>
+        </v-card>
+      </v-col>
 
       <!-- 导入 -->
-      <n-grid-item span="2 m:1">
-        <n-card title="导入记忆快照" embedded>
-          <p class="desc">从 JSON 文件导入记忆数据。已存在的记忆将被跳过。</p>
-          <n-upload
-            accept=".json"
-            :max="1"
-            :default-upload="false"
-            :show-file-list="true"
-            @change="onFileChange"
-          >
-            <n-button>
-              <template #icon><Icon icon="lucide:upload" /></template>
-              选择 JSON 文件
-            </n-button>
-          </n-upload>
-          <n-button
-            class="import-btn"
-            :loading="importing"
-            :disabled="!importFile"
-            @click="doImport"
-          >
-            <template #icon><Icon icon="lucide:file-input" /></template>
-            执行导入
-          </n-button>
-        </n-card>
-      </n-grid-item>
-    </n-grid>
+      <v-col cols="12" md="6">
+        <v-card rounded="md" class="h-100">
+          <v-card-text class="config-section pb-2">
+            <div class="config-title">导入记忆快照</div>
+            <div class="config-hint">从快照文件恢复记忆；已经存在的记忆会自动跳过，不会重复写入</div>
+          </v-card-text>
+          <v-card-text class="pt-0 d-flex flex-column ga-3">
+            <v-file-input
+              v-model="importFile"
+              label="选择快照文件"
+              accept=".json"
+              prepend-icon="lucide:upload"
+              density="compact"
+              hide-details
+              variant="outlined"
+              @update:model-value="importResult = null"
+            />
+            <div>
+              <v-btn
+                variant="outlined"
+                prepend-icon="lucide:file-input"
+                :loading="importing"
+                :disabled="!importFile"
+                @click="doImport"
+              >
+                执行导入
+              </v-btn>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
 
-    <n-alert
+    <v-alert
       v-if="importResult"
       :type="importResult.success ? 'success' : 'error'"
       :title="importResult.success ? '导入完成' : '导入失败'"
+      variant="tonal"
     >
       <template v-if="importResult.success">
-        新增 {{ importResult.inserted }} / 跳过 {{ importResult.skipped }} / 失败 {{ importResult.failed }}
+        新增 {{ importResult.inserted }} 条，跳过 {{ importResult.skipped }} 条，失败 {{ importResult.failed }} 条
       </template>
       <template v-else>
         {{ importResult.error }}
       </template>
-    </n-alert>
-  </n-space>
+    </v-alert>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { UploadFileInfo } from 'naive-ui'
-import { NAlert, NButton, NCard, NGrid, NGridItem, NSpace, NUpload } from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
+import { toast } from '@/composables/useToast'
 
 const { apiPost, download } = useBridge()
 
 const exporting = ref(false)
 const importing = ref(false)
-const importFile = ref<File | null>(null)
+const importFile = ref<File | File[] | null>(null)
 const importResult = ref<any>(null)
 
-function onFileChange({ file }: { file: UploadFileInfo }) {
-  importFile.value = file.file ?? null
-  importResult.value = null
+/** v-file-input 单选时给 File，多选时给数组，这里统一成单个文件 */
+function pickedFile(): File | null {
+  const value = importFile.value
+  if (!value) return null
+  if (Array.isArray(value)) return value[0] ?? null
+  return value
 }
 
 async function doExport() {
   exporting.value = true
   try {
     const now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    await download('export', {}, `memory_snapshot_${now}.json`)
+    await download('export', {}, `记忆快照_${now}.json`)
+    toast.success('快照已开始下载')
   } catch (e) {
-    console.error('导出失败:', e)
+    toast.error(`导出失败: ${(e as Error).message}`)
   } finally {
     exporting.value = false
   }
 }
 
 async function doImport() {
-  if (!importFile.value) return
+  const file = pickedFile()
+  if (!file) return
   importing.value = true
   importResult.value = null
   try {
-    const text = await importFile.value.text()
+    const text = await file.text()
     const payload = JSON.parse(text)
     importResult.value = await apiPost('import', payload)
   } catch (e: any) {
@@ -103,13 +117,15 @@ async function doImport() {
 </script>
 
 <style scoped>
-.desc {
-  font-size: 12px;
-  opacity: 0.75;
-  margin-bottom: 12px;
+.config-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--v-theme-primaryText));
 }
-
-.import-btn {
-  margin-top: 12px;
+.config-hint {
+  font-size: 0.75rem;
+  color: rgb(var(--v-theme-secondaryText));
+  margin-top: 2px;
+  line-height: 1.6;
 }
 </style>

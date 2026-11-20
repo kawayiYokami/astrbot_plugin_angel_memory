@@ -1,0 +1,236 @@
+// 上游 dashboard（AstrBot 4.30）的全局覆盖，插件页按需搬运。
+// 来源：`dashboard/src/scss/_variables.scss` 的 :root 块、
+// `dashboard/src/scss/_override.scss` 中插件页实际用到的部分。
+//
+// 刻意没搬的（dashboard 私有，与插件页无关）：
+// - `.v-theme--PurpleThemeDark` 整块（作用域是 dashboard 自家主题名，
+//   插件页主题名是 astrbot，搬了也不生效；对话框/遮罩在截图里已正常）
+// - `.customizer-btn`、`.no-spacer`、`.app-snackbar-message`、
+//   `.provider-icon--monochrome`、logo 滤镜、timeline、markdown 链接色
+
+// ---- 上游 :root 设计变量 ----
+:root {
+  --astrbot-font-cjk-sans: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Noto Sans SC';
+  --astrbot-font-cjk-mono: 'PingFang SC', 'PingFang TC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei';
+  --astrbot-code-color: #111827;
+  --astrbot-radius-control: 12px;
+  --astrbot-radius-navigation: 12px;
+  --astrbot-radius-menu: 16px;
+  --astrbot-radius-card: 20px;
+  --astrbot-radius-dialog: 28px;
+  --astrbot-radius-pill: 9999px;
+  --astrbot-menu-shadow: 0 12px 28px rgba(0, 0, 0, 0.08);
+}
+
+pre,
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono', 'Helvetica Neue', monospace;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+// ---- 相邻 v-row 不叠 margin（上游 _override.scss 原样） ----
+.v-row + .v-row {
+  margin-top: 0;
+}
+
+// ---- 分隔线：不透明 + 主题边框色（上游原样） ----
+.v-divider {
+  opacity: 1;
+  border-color: rgba(var(--v-theme-borderLight), 0.36);
+}
+
+// ---- 选择控件不抢整行 flex：switch/checkbox 在栅格里垂直对齐就靠它 ----
+.v-selection-control {
+  flex: unset;
+}
+
+// ---- 轻提示（ToastHost 的 v-snackbar 与原生一致，上游原样） ----
+.v-overlay.v-snackbar {
+  --v-layout-left: 0px !important;
+  --v-layout-right: 0px !important;
+
+  .v-snackbar__wrapper {
+    min-height: 52px;
+    border-radius: 8px !important;
+    box-shadow: 0 10px 24px rgba(16, 24, 40, 0.16) !important;
+  }
+
+  .v-snackbar__content {
+    padding: 14px 18px;
+    line-height: 1.35;
+    font-weight: 600;
+  }
+
+  .v-snackbar__actions {
+    margin-inline-end: 6px;
+  }
+
+  .v-snackbar__actions .v-btn {
+    color: inherit;
+  }
+
+  .v-snackbar__wrapper.bg-success {
+    color: #ffffff !important;
+    background-color: #457c3c !important;
+  }
+}
+
+// ---- 下拉菜单圆角 + 阴影（v-select / v-combobox 的菜单，上游原样） ----
+.v-overlay.v-menu {
+  .v-overlay__content {
+    border-radius: var(--astrbot-radius-menu);
+  }
+
+  .v-overlay__content > .v-card,
+  .v-overlay__content > .v-list {
+    border: 0 !important;
+    border-radius: inherit !important;
+    box-shadow: var(--astrbot-menu-shadow) !important;
+  }
+
+  .v-overlay__content .v-card,
+  .v-overlay__content .v-list {
+    border: 0 !important;
+  }
+}
+
+// ---- 弹窗：28px 大圆角 + 紧凑内边距，操作按钮全圆角（上游原样；
+// 确认框 ConfirmHost 与图片预览弹窗都走这里） ----
+.v-dialog {
+  --astrbot-dialog-radius: var(--astrbot-radius-dialog);
+  --astrbot-dialog-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+  > .v-overlay__content {
+    > .v-card,
+    > .v-sheet,
+    > form > .v-card,
+    > form > .v-sheet {
+      border-radius: var(--astrbot-dialog-radius) !important;
+      border: 0 !important;
+      box-shadow: var(--astrbot-dialog-shadow) !important;
+
+      > .v-card-title,
+      > .v-card-item {
+        padding-top: 24px !important;
+      }
+
+      > .v-card-title,
+      > .v-card-item .v-card-title {
+        font-weight: 400 !important;
+      }
+
+      > .v-card-actions,
+      > .project-dialog-actions {
+        padding: 16px 24px 24px !important;
+      }
+    }
+  }
+
+  .v-card-actions .v-btn,
+  .dialog-action {
+    border-radius: var(--astrbot-radius-pill) !important;
+  }
+}
+
+.v-dialog--fullscreen {
+  --astrbot-dialog-radius: 0px;
+  --astrbot-dialog-shadow: none;
+}
+
+// ---- 上游 components/_VButtons.scss（插件页用到的部分） ----
+// 按钮文字首字母大写（覆盖 typography button 的 uppercase）、
+// 间距 0、控件圆角 12px；图标按钮按上游放大 6px，保证可点区域
+.v-application .v-btn {
+  text-transform: capitalize;
+  letter-spacing: 0;
+  border-radius: var(--astrbot-radius-control);
+}
+.v-application .v-btn--icon.v-btn--density-default {
+  width: calc(var(--v-btn-height) + 6px);
+  height: calc(var(--v-btn-height) + 6px);
+}
+
+// ---- 上游 components/_VCard.scss ----
+// outlined 卡片边框色、卡片内边距 24px、卡片头 20px 24px（与原生一致）
+.v-application .v-card--variant-outlined {
+  border-color: rgba(var(--v-theme-borderLight), 0.36);
+  .v-divider {
+    border-color: rgba(var(--v-theme-borderLight), 0.36);
+  }
+}
+.v-application .v-card-text {
+  padding: 24px;
+}
+.v-application .v-card-item {
+  padding: 20px 24px;
+}
+
+// ---- 上游 components/_VField.scss：outlined 输入框统一 12px 圆角 ----
+.v-application .v-field--variant-outlined {
+  border-radius: var(--astrbot-radius-control);
+}
+.v-application .v-field--variant-outlined.rounded-md,
+.v-application .v-field--variant-outlined.rounded-lg {
+  border-radius: var(--astrbot-radius-control) !important;
+}
+
+// ---- 上游 components/_VInput.scss：switch/checkbox label 不透明（字号走 settings $label-font-size） ----
+.v-application .v-switch .v-label,
+.v-application .v-checkbox .v-label {
+  opacity: 1;
+}
+
+// ---- 上游 components/_VTextField.scss：输入文字字号走 settings $field-font-size，不逐个覆盖 ----
+
+// ---- 上游 components/_VTabs.scss：页签圆角 12px ----
+.v-application .v-tabs .v-tab {
+  border-radius: var(--astrbot-radius-control);
+}
+
+// ---- 上游 components/_VShadow.scss：elevation-10 统一阴影 ----
+.v-application .elevation-10 {
+  box-shadow: 1px 0 20px rgb(0 0 0 / 8%) !important;
+}
+
+// ---- 上游 layout/_sidebar.scss：侧栏列表项圆角 12px、行高 40px ----
+// 上游选择器是 .leftSidebar .listitem，插件页 drawer 类名不同，这里按 drawer 类名平移，数值与上游一致
+.v-application .brush-drawer .v-list-item,
+.v-application .memory-drawer .v-list-item,
+.v-application .meme-drawer .v-list-item,
+.v-application .heart-drawer .v-list-item {
+  border-radius: var(--astrbot-radius-navigation);
+}
+.v-application .brush-drawer .v-list-item--density-default.v-list-item--one-line,
+.v-application .memory-drawer .v-list-item--density-default.v-list-item--one-line,
+.v-application .meme-drawer .v-list-item--density-default.v-list-item--one-line,
+.v-application .heart-drawer .v-list-item--density-default.v-list-item--one-line {
+  min-height: 40px;
+}
+.v-navigation-drawer__scrim.fade-transition-leave-to {
+  display: none;
+}
+
+// ---- 表格表头不换行：中文两字表头（如「主动」）在窄列里会被挤成两行 ----
+.v-application .v-data-table th {
+  white-space: nowrap;
+}
+
+// ---- 侧栏里的 v-list 也要透明：.v-list 组件样式与 .bg-transparent 同为单类选择器，
+// 组件样式在后会盖掉 utility，bg-color="transparent" 实际失效，必须 !important 压住 ----
+.v-application .memory-drawer .v-list,
+.v-application .meme-drawer .v-list,
+.v-application .brush-drawer .v-list,
+.v-application .heart-drawer .v-list {
+  background-color: transparent !important;
+}
+
+// ---- 侧栏必须与内容区完全同色：drawer 透明，透出 v-app 的 background ----
+.v-application .memory-drawer {
+  background-color: transparent !important;
+}
+
+// ---- 开关关闭态轨道：不用 surface-variant（它要给模型卡片当底色），
+// 用 on-surface 38% 透明度，与 Vuetify 默认一致；亮暗自动跟主题 ----
+.v-application .v-selection-control:not(.v-selection-control--dirty) .v-switch__track {
+  background-color: rgba(var(--v-theme-on-surface), 0.38);
+}

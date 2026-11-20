@@ -4,12 +4,10 @@
       <div class="reflect-title">当前场景心情</div>
       <div v-for="axis in view.soul" :key="axis.key" class="soul-row">
         <span class="soul-name soul-name-left">{{ axis.low }}</span>
-        <n-progress
-          type="line"
-          :percentage="Math.round(axis.value * 100)"
-          :show-indicator="false"
+        <v-progress-linear
+          :model-value="Math.round(axis.value * 100)"
           :height="8"
-          :border-radius="4"
+          rounded
           :color="axis.color"
         />
         <span class="soul-name soul-name-right">{{ axis.high }}</span>
@@ -30,14 +28,14 @@
             item.sourceIds.join('、')
           }}</span>
           <span v-if="item.sourceIds.length" class="reflect-arrow">→</span>
-          <n-tag size="small" :bordered="false">{{ item.type }}</n-tag>
+          <v-chip size="small">{{ item.type }}</v-chip>
           <span class="reflect-judgment">{{ item.judgment }}</span>
         </div>
         <div v-if="item.reasoning" class="reflect-reasoning">{{ item.reasoning }}</div>
         <div v-if="item.tags.length" class="reflect-tags">
-          <n-tag v-for="tag in item.tags" :key="tag" size="tiny" round>
+          <v-chip v-for="tag in item.tags" :key="tag" size="x-small" rounded="pill">
             {{ tag }}
-          </n-tag>
+          </v-chip>
         </div>
       </div>
     </div>
@@ -45,8 +43,6 @@
 </template>
 
 <script setup lang="ts">
-import { NProgress, NTag } from 'naive-ui'
-
 defineProps<{
   view: {
     soul: { key: string; low: string; high: string; value: number; color: string }[]
@@ -81,7 +77,7 @@ defineProps<{
 .reflect-title {
   font-size: 12px;
   font-weight: 600;
-  color: #666;
+  color: rgb(var(--v-theme-secondaryText));
 }
 
 .soul-row {
@@ -93,7 +89,7 @@ defineProps<{
 
 .soul-name {
   font-size: 12px;
-  color: #666;
+  color: rgb(var(--v-theme-secondaryText));
 }
 
 .soul-name-left {
@@ -106,14 +102,14 @@ defineProps<{
 
 .soul-value {
   font-size: 12px;
-  color: #888;
+  color: rgb(var(--v-theme-secondaryText));
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .reflect-plain {
   font-size: 13px;
-  color: #18a058;
+  color: rgb(var(--v-theme-success));
 }
 
 .reflect-item {
@@ -121,7 +117,7 @@ defineProps<{
   flex-direction: column;
   gap: 4px;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(var(--v-theme-on-surface), 0.04);
   border-radius: 6px;
 }
 
@@ -134,19 +130,18 @@ defineProps<{
 
 .reflect-judgment {
   font-size: 13px;
-  color: #333;
   line-height: 1.6;
 }
 
 .reflect-source {
   font-size: 12px;
-  color: #999;
+  opacity: 0.6;
   font-variant-numeric: tabular-nums;
 }
 
 .reflect-arrow {
   font-size: 12px;
-  color: #bbb;
+  opacity: 0.4;
 }
 
 .reflect-tags {
@@ -157,7 +152,7 @@ defineProps<{
 
 .reflect-reasoning {
   font-size: 12px;
-  color: #aaa;
+  opacity: 0.6;
   line-height: 1.5;
   font-style: italic;
 }

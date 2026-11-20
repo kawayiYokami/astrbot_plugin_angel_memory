@@ -1,216 +1,231 @@
 <template>
   <div>
-    <n-spin :show="loading">
-      <n-space v-if="!loading" vertical :size="16">
-        <!-- 统计卡片 -->
-        <n-grid :cols="4" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
-          <n-grid-item span="4 s:2 m:1">
-            <n-card class="stat-card" embedded>
-              <div class="stat-value">{{ overview.memory_count ?? '-' }}</div>
-              <div class="stat-label">记忆总数</div>
-            </n-card>
-          </n-grid-item>
-          <n-grid-item span="4 s:2 m:1">
-            <n-card class="stat-card" embedded>
-              <div class="stat-value">{{ overview.global_tag_count ?? '-' }}</div>
-              <div class="stat-label">全局标签</div>
-            </n-card>
-          </n-grid-item>
-          <n-grid-item span="4 s:2 m:1">
-            <n-card class="stat-card" embedded>
-              <div class="stat-value">{{ overview.note_index_count ?? '-' }}</div>
-              <div class="stat-label">笔记索引</div>
-            </n-card>
-          </n-grid-item>
-          <n-grid-item span="4 s:2 m:1">
-            <n-card class="stat-card" embedded>
-              <div class="stat-value">
-                <Icon
-                  :icon="overview.has_providers ? 'lucide:check-circle-2' : 'lucide:alert-triangle'"
-                  :style="{ color: overview.has_providers ? '#63e2b7' : '#f0a020', fontSize: '30px' }"
+    <div v-if="loading" class="d-flex justify-center py-12">
+      <v-progress-circular indeterminate color="primary" />
+    </div>
+
+    <div v-else class="d-flex flex-column ga-4">
+      <!-- 统计卡片 -->
+      <v-row>
+        <v-col cols="12" sm="6" md="3">
+          <v-card rounded="md">
+            <v-card-text class="stat-card text-center">
+              <div class="text-h5 font-weight-bold">{{ overview.memory_count ?? '-' }}</div>
+              <div class="stat-label text-caption text-medium-emphasis">记忆总数</div>
+            </v-card-text>
+          </v-card>
+        </v-col>
+        <v-col cols="12" sm="6" md="3">
+          <v-card rounded="md">
+            <v-card-text class="stat-card text-center">
+              <div class="text-h5 font-weight-bold">{{ overview.global_tag_count ?? '-' }}</div>
+              <div class="stat-label text-caption text-medium-emphasis">全局标签</div>
+            </v-card-text>
+          </v-card>
+        </v-col>
+        <v-col cols="12" sm="6" md="3">
+          <v-card rounded="md">
+            <v-card-text class="stat-card text-center">
+              <div class="text-h5 font-weight-bold">{{ overview.note_index_count ?? '-' }}</div>
+              <div class="stat-label text-caption text-medium-emphasis">笔记索引</div>
+            </v-card-text>
+          </v-card>
+        </v-col>
+        <v-col cols="12" sm="6" md="3">
+          <v-card rounded="md">
+            <v-card-text class="stat-card text-center">
+              <div class="text-h5 font-weight-bold">
+                <v-icon
+                  :icon="overview.has_providers ? 'lucide:circle-check' : 'lucide:triangle-alert'"
+                  :color="overview.has_providers ? 'success' : 'warning'"
+                  size="30"
                 />
               </div>
-              <div class="stat-label">{{ overview.has_providers ? '提供商就绪' : '无提供商' }}</div>
-            </n-card>
-          </n-grid-item>
-        </n-grid>
+              <div class="stat-label text-caption text-medium-emphasis">
+                {{ overview.has_providers ? '提供商就绪' : '无提供商' }}
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
 
-          <n-grid :cols="2" :x-gap="16" :y-gap="16" responsive="screen">
-            <!-- 配置信息 -->
-            <n-grid-item span="2 m:1">
-            <n-card title="配置信息" embedded>
-              <n-descriptions label-placement="left" :column="1">
-                <n-descriptions-item label="嵌入提供商">
-                  {{ overview.provider_id || '-' }}
-                </n-descriptions-item>
-                <n-descriptions-item label="LLM 提供商">
-                  {{ overview.llm_provider_id || '-' }}
-                </n-descriptions-item>
-                <n-descriptions-item label="索引目录">
-                  <span class="truncate" :title="overview.index_dir">{{ overview.index_dir || '-' }}</span>
-                </n-descriptions-item>
-                <n-descriptions-item label="p-memory 记忆">
-                  {{ overview.pmemory_count ?? '-' }}
-                </n-descriptions-item>
-              </n-descriptions>
-            </n-card>
-          </n-grid-item>
+      <v-row>
+        <!-- 配置信息 -->
+        <v-col cols="12" md="6">
+          <v-card rounded="md">
+            <v-card-text class="config-section">
+              <div class="config-title">配置信息</div>
+            </v-card-text>
+            <v-card-text class="pt-0 d-flex flex-column ga-2">
+              <div class="d-flex justify-space-between align-center ga-4">
+                <span class="text-body-2 text-medium-emphasis text-no-wrap flex-shrink-0">嵌入模型</span>
+                <span class="text-body-2 text-truncate min-w-0 text-right">{{ overview.provider_id || '-' }}</span>
+              </div>
+              <div class="d-flex justify-space-between align-center ga-4">
+                <span class="text-body-2 text-medium-emphasis text-no-wrap flex-shrink-0">对话模型</span>
+                <span class="text-body-2 text-truncate min-w-0 text-right">{{ overview.llm_provider_id || '-' }}</span>
+              </div>
+              <div class="d-flex justify-space-between align-center ga-4">
+                <span class="text-body-2 text-medium-emphasis text-no-wrap flex-shrink-0">索引目录</span>
+                <span class="text-body-2 text-truncate min-w-0 text-right" :title="overview.index_dir">{{ overview.index_dir || '-' }}</span>
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-col>
 
-          <!-- Scope 列表 -->
-          <n-grid-item span="2 m:1">
-            <n-space vertical :size="16">
-              <n-card title="Scope 列表" embedded>
-                <template v-if="overview.scopes?.length">
-                  <n-tag
-                    v-for="scope in overview.scopes"
-                    :key="scope"
-                    type="primary"
-                    class="chip-item"
-                    :bordered="false"
-                  >
-                    {{ scope }}
-                  </n-tag>
+        <!-- Scope 列表 -->
+        <v-col cols="12" md="6">
+          <v-card rounded="md">
+            <v-card-text class="config-section">
+              <div class="config-title">记忆分类域</div>
+              <div class="config-hint">不同会话的记忆分开存放，互不干扰</div>
+            </v-card-text>
+            <v-card-text class="pt-0">
+              <template v-if="overview.scopes?.length">
+                <v-chip
+                  v-for="scope in overview.scopes"
+                  :key="scope"
+                  color="primary"
+                  variant="tonal"
+                  size="small"
+                  class="ma-1"
+                >
+                  {{ scopeLabel(scope) }}
+                </v-chip>
+              </template>
+              <v-empty-state
+                v-else
+                icon="lucide:layers"
+                title="还没有分类域"
+                text="产生第一条记忆后自动出现"
+              />
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
+
+      <!-- 过程追踪记录 -->
+      <v-card rounded="md">
+        <v-card-text class="config-section">
+          <div class="d-flex align-center ga-3">
+            <div class="flex-grow-1 min-w-0">
+              <div class="config-title">过程追踪记录（最近20次）</div>
+            </div>
+            <v-btn
+              v-if="traceSelected.length"
+              size="small"
+              color="error"
+              variant="tonal"
+              :loading="traceDeleting"
+              @click="deleteSelectedTraces"
+            >
+              删除选中（{{ traceSelected.length }}）
+            </v-btn>
+            <v-btn variant="text" size="small" :loading="traceLoading" prepend-icon="lucide:refresh-cw" @click="loadTraces">
+              刷新
+            </v-btn>
+          </div>
+        </v-card-text>
+        <v-card-text class="pt-0 d-flex flex-column ga-3">
+          <v-alert type="warning" variant="tonal" density="compact" class="text-body-2">
+            保存在本机，不会自动清理；需要时勾选后自行删除。提示词含对话原文，仅本机调试用。
+          </v-alert>
+          <v-empty-state
+            v-if="!traceRecords.length && !traceLoading"
+            icon="lucide:scroll-text"
+            title="暂无记录"
+            text="触发几轮对话或等待睡眠后自动生成"
+          />
+          <v-card v-for="r in traceRecords" :key="r.id" variant="outlined" rounded="md">
+            <v-card-text class="pb-1">
+              <div class="d-flex align-center ga-2 flex-wrap">
+                <v-checkbox
+                  v-if="r.status !== 'pending'"
+                  :model-value="traceSelected.includes(r.id)"
+                  density="compact"
+                  hide-details
+                  @update:model-value="(checked: boolean | null) => toggleTraceSelect(r.id, checked === true)"
+                />
+                <v-chip :color="r.type === 'sleep' ? 'info' : undefined" size="small">
+                  {{ traceTypeText(r.type) }}
+                </v-chip>
+                <v-chip :color="traceStatusColor(r.status)" size="small">
+                  {{ traceStatusText(r.status) }}
+                </v-chip>
+                <span class="text-caption text-medium-emphasis">{{ r.time }}</span>
+                <template v-if="r.type === 'sleep'">
+                  <span class="text-caption text-medium-emphasis text-truncate" style="max-width: 260px;">
+                    {{ traceMetaText(r) }}
+                  </span>
                 </template>
-                <n-empty v-else description="暂无 scope" />
-              </n-card>
-            </n-space>
-          </n-grid-item>
-        </n-grid>
-
-        <!-- 过程追踪记录 -->
-        <n-card title="过程追踪记录（最近20次）" embedded>
-          <template #header-extra>
-            <n-space :size="8">
-              <n-button
-                v-if="traceSelected.length"
-                size="small"
-                type="error"
-                secondary
-                :loading="traceDeleting"
-                @click="deleteSelectedTraces"
-                >删除选中（{{ traceSelected.length }}）</n-button
-              >
-              <n-button quaternary size="small" :loading="traceLoading" @click="loadTraces">刷新</n-button>
-            </n-space>
-          </template>
-          <n-space vertical :size="12">
-            <n-alert type="warning" :bordered="false" style="font-size: 12px">
-              持久化到本地 JSONL，重启插件不丢失，也不会自动清理；需要时勾选后自行删除。提示词含对话原文，仅本机调试用。
-            </n-alert>
-            <n-empty
-              v-if="!traceRecords.length && !traceLoading"
-              description="暂无记录，触发几轮对话或等待睡眠后自动生成"
-            />
-            <n-card v-for="r in traceRecords" :key="r.id" size="small" embedded>
-              <template #header>
-                <n-space align="center" :size="8">
-                  <n-checkbox
-                    v-if="r.status !== 'pending'"
-                    :checked="traceSelected.includes(r.id)"
-                    @update:checked="(checked: boolean) => toggleTraceSelect(r.id, checked)"
-                  />
-                  <n-tag :type="r.type === 'sleep' ? 'info' : 'default'" size="small" :bordered="false">{{
-                    traceTypeText(r.type)
-                  }}</n-tag>
-                  <n-tag :type="traceStatusType(r.status)" size="small" :bordered="false">{{
-                    traceStatusText(r.status)
-                  }}</n-tag>
-                  <span class="muted">{{ r.time }}</span>
+                <template v-else>
+                  <v-chip v-if="chatKind(r.session_id)" size="small" variant="tonal">
+                    {{ chatKind(r.session_id) }}
+                  </v-chip>
                   <span
-                    class="muted"
-                    style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
-                    >{{ traceMetaText(r) }}</span
+                    class="text-caption text-medium-emphasis text-truncate"
+                    style="max-width: 260px;"
+                    :title="r.session_id || ''"
                   >
-                </n-space>
-              </template>
-              <template #header-extra>
-                <n-button size="tiny" secondary @click="copyTrace(r)">复制</n-button>
-              </template>
-              <div class="trace-block">
-                <div class="trace-block-head">
-                  <span class="trace-block-title">用户提示词</span>
-                  <n-button-group size="tiny">
-                    <n-button
-                      :type="promptView(r.id) === 'render' ? 'primary' : 'default'"
-                      :secondary="promptView(r.id) === 'render'"
-                      @click="setPromptView(r.id, 'render')"
-                      >渲染</n-button
-                    >
-                    <n-button
-                      :type="promptView(r.id) === 'raw' ? 'primary' : 'default'"
-                      :secondary="promptView(r.id) === 'raw'"
-                      @click="setPromptView(r.id, 'raw')"
-                      >原文</n-button
-                    >
-                  </n-button-group>
+                    {{ chatShortId(r.session_id) }}
+                  </span>
+                </template>
+                <v-spacer />
+                <v-btn variant="text" size="small" prepend-icon="lucide:copy" @click="copyTrace(r)">
+                  复制
+                </v-btn>
+              </div>
+            </v-card-text>
+            <v-card-text class="pt-1 d-flex flex-column ga-3">
+              <div>
+                <div class="d-flex align-center justify-space-between ga-2 mb-1">
+                  <span class="text-caption font-weight-medium text-medium-emphasis">用户提示词</span>
+                  <v-btn-toggle :model-value="promptView(r.id)" density="compact" divided @update:model-value="(v: string) => setPromptView(r.id, v as 'render' | 'raw')">
+                    <v-btn value="render" size="x-small">渲染</v-btn>
+                    <v-btn value="raw" size="x-small">原文</v-btn>
+                  </v-btn-toggle>
                 </div>
                 <pre v-if="promptView(r.id) === 'raw'" class="code-block">{{ r.prompt || '（无）' }}</pre>
                 <div v-else class="md-body" v-html="renderMarkdown(r.prompt)"></div>
               </div>
 
-              <div v-if="r.status !== 'pending'" class="trace-block">
-                <div class="trace-block-head">
-                  <span class="trace-block-title">LLM 返回</span>
-                  <n-button-group size="tiny">
-                    <n-button
-                      :type="resultView(r.id) === 'render' ? 'primary' : 'default'"
-                      :secondary="resultView(r.id) === 'render'"
-                      @click="setResultView(r.id, 'render')"
-                      >渲染</n-button
-                    >
-                    <n-button
-                      :type="resultView(r.id) === 'raw' ? 'primary' : 'default'"
-                      :secondary="resultView(r.id) === 'raw'"
-                      @click="setResultView(r.id, 'raw')"
-                      >原文</n-button
-                    >
-                  </n-button-group>
+              <div v-if="r.status !== 'pending'">
+                <div class="d-flex align-center justify-space-between ga-2 mb-1">
+                  <span class="text-caption font-weight-medium text-medium-emphasis">模型返回</span>
+                  <v-btn-toggle :model-value="resultView(r.id)" density="compact" divided @update:model-value="(v: string) => setResultView(r.id, v as 'render' | 'raw')">
+                    <v-btn value="render" size="x-small">渲染</v-btn>
+                    <v-btn value="raw" size="x-small">原文</v-btn>
+                  </v-btn-toggle>
                 </div>
-                <n-alert v-if="r.error" type="error" :bordered="false" style="white-space: pre-wrap">{{
-                  r.error
-                }}</n-alert>
-                <pre v-if="resultView(r.id) === 'raw'" class="code-block">{{ rawResultText(r) }}</pre>
+                <v-alert v-if="r.error" type="error" variant="tonal" density="compact" style="white-space: pre-wrap">
+                  {{ r.error }}
+                </v-alert>
+                <pre v-else-if="resultView(r.id) === 'raw'" class="code-block">{{ rawResultText(r) }}</pre>
                 <ReflectionResult v-else-if="reflectionView(r)" :view="reflectionView(r)!" />
                 <div v-else class="md-body" v-html="renderResult(r)"></div>
               </div>
 
-              <div v-if="r.summary" class="trace-block">
-                <div class="trace-block-head">
-                  <span class="trace-block-title">摘要</span>
+              <div v-if="r.summary">
+                <div class="mb-1">
+                  <span class="text-caption font-weight-medium text-medium-emphasis">摘要</span>
                 </div>
                 <div class="md-body" v-html="renderJson(r.summary)"></div>
               </div>
-            </n-card>
-          </n-space>
-        </n-card>
-      </n-space>
-    </n-spin>
+            </v-card-text>
+          </v-card>
+        </v-card-text>
+      </v-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import {
-  NAlert,
-  NButton,
-  NButtonGroup,
-  NCard,
-  NCheckbox,
-  NDescriptions,
-  NDescriptionsItem,
-  NEmpty,
-  NGrid,
-  NGridItem,
-  NSpace,
-  NSpin,
-  NTag,
-  useMessage,
-} from 'naive-ui'
 import { useBridge } from '@/composables/useBridge'
+import { toast } from '@/composables/useToast'
 import ReflectionResult from '@/components/ReflectionResult.vue'
 
 const { apiGet, apiPost } = useBridge()
-const message = useMessage()
 
 const loading = ref(true)
 const overview = ref<Record<string, any>>({})
@@ -511,6 +526,30 @@ function traceTypeText(type: string) {
   return type === 'sleep' ? '睡眠' : '反思'
 }
 
+// 记忆分类域：只有 public 是英文内置值，其余是用户自己的柜子名，原样显示
+function scopeLabel(scope: string): string {
+  if (String(scope).toLowerCase() === 'public') return '公开'
+  return String(scope)
+}
+
+// 会话标识：冒号分隔的原始结构（如 default:GroupMessage:123）不直接显示，
+// 只显示尾号，类型解析成「群聊 / 私聊」标签，原文收进 title tooltip 方便排查。
+function chatKind(chatId: string): string {
+  if (!chatId) return ''
+  const segments = String(chatId).split(':').filter(Boolean)
+  const typeSeg = segments.length >= 2 ? segments[segments.length - 2] : ''
+  if (/^(FriendMessage|PrivateMessage)$/i.test(typeSeg)) return '私聊'
+  if (/^GroupMessage$/i.test(typeSeg)) return '群聊'
+  if (/^OtherMessage$/i.test(typeSeg)) return '其他'
+  return ''
+}
+
+function chatShortId(chatId: string): string {
+  if (!chatId) return '无会话ID'
+  const segments = String(chatId).split(':').filter(Boolean)
+  return segments[segments.length - 1] || String(chatId)
+}
+
 function traceMetaText(r: any) {
   if (r.type === 'sleep') {
     const s = r.summary || {}
@@ -519,7 +558,7 @@ function traceMetaText(r: any) {
   return r.session_id || '无会话ID'
 }
 
-function traceStatusType(status: string) {
+function traceStatusColor(status: string) {
   if (status === 'success') return 'success'
   if (status === 'failed') return 'error'
   return 'warning'
@@ -548,7 +587,7 @@ async function loadTraces() {
       traceRecords.value.some((r) => r.id === id && r.status !== 'pending'),
     )
   } catch (e: any) {
-    message.error(e.message || '获取过程记录失败')
+    toast.error(e.message || '获取过程记录失败')
   } finally {
     traceLoading.value = false
   }
@@ -560,14 +599,14 @@ async function deleteSelectedTraces() {
   try {
     const data: any = await apiPost('trace/delete', { ids: traceSelected.value })
     if (data && data.ok) {
-      message.success(`已删除 ${data.deleted ?? 0} 条记录`)
+      toast.success(`已删除 ${data.deleted ?? 0} 条记录`)
     } else {
-      message.error((data && data.note) || '删除失败')
+      toast.error((data && data.note) || '删除失败')
     }
     traceSelected.value = []
     await loadTraces()
   } catch (e: any) {
-    message.error(e.message || '删除失败')
+    toast.error(e.message || '删除失败')
   } finally {
     traceDeleting.value = false
   }
@@ -576,9 +615,9 @@ async function deleteSelectedTraces() {
 async function copyTrace(r: any) {
   try {
     await navigator.clipboard.writeText(JSON.stringify(r, null, 2))
-    message.success('已复制整条记录')
+    toast.success('已复制整条记录')
   } catch {
-    message.error('复制失败，请手动选择文本')
+    toast.error('复制失败，请手动选择文本')
   }
 }
 
@@ -595,67 +634,35 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.config-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--v-theme-primaryText));
+}
+
+/* 统计卡：内边距收窄给文字让位，label 强制不换行，避免被挤成半截 */
 .stat-card {
-  text-align: center;
+  padding: 16px !important;
 }
-
-.stat-value {
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
 .stat-label {
   margin-top: 4px;
-  font-size: 12px;
-  opacity: 0.65;
-}
-
-.chip-item {
-  margin: 2px 4px 2px 0;
-}
-
-.truncate {
-  display: inline-block;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: bottom;
+  overflow: visible;
 }
-
-.muted {
-  opacity: 0.6;
-  font-size: 12px;
+.config-hint {
+  font-size: 0.75rem;
+  color: rgb(var(--v-theme-secondaryText));
+  margin-top: 2px;
 }
 
 .code-block {
-  background: #1a1a2e;
-  color: #e0e0e0;
+  background: rgba(var(--v-theme-on-surface), 0.06);
   border-radius: 6px;
   padding: 12px;
   overflow-x: auto;
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.4;
-}
-
-.trace-block + .trace-block {
-  margin-top: 12px;
-}
-
-.trace-block-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.trace-block-title {
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.75;
 }
 
 .md-body {
@@ -705,8 +712,7 @@ onMounted(async () => {
 }
 
 .md-body :deep(.md-code) {
-  background: #1a1a2e;
-  color: #e0e0e0;
+  background: rgba(var(--v-theme-on-surface), 0.06);
   border-radius: 6px;
   padding: 10px;
   margin: 0 0 6px;
@@ -737,7 +743,6 @@ onMounted(async () => {
 
 .md-body :deep(.json-key) {
   font-weight: 600;
-  color: #d03050;
 }
 
 .md-body :deep(.json-punc) {
@@ -749,13 +754,8 @@ onMounted(async () => {
   opacity: 0.5;
 }
 
-.md-body :deep(.json-num) {
-  color: #18a058;
-}
-
+.md-body :deep(.json-num),
 .md-body :deep(.json-str) {
-  color: #18a058;
   white-space: pre-wrap;
 }
-
 </style>
