@@ -206,7 +206,7 @@ def test_format_profiles_includes_reasoning_and_filters_regular_duplicates():
     assert "[当前昵称（123456）]" in formatted
     assert "[历史昵称（123456）]" not in formatted
     assert "[用户别名]" not in formatted
-    assert "——因为用户在对话中明确说明。" in formatted
+    assert "理由：用户在对话中明确说明。" in formatted
 
     regular = [
         _memory("p1", "小明（123456）希望被称呼为阿明。", ["小明", "123456", "用户别名"]),

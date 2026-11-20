@@ -167,13 +167,15 @@ class MemoryRetirementReviewer:
                 except (ValueError, OSError, OverflowError):
                     time_text = ""
 
-            # 标准格式：id:1747680 2026-11-16 16:32 - 论点 ——因为理由
+            # 标准格式：
+            # - id:1747680 2026-11-16 16:32 - 结论
+            #   理由：依据
             line = f"- id:{short_ids[index]}"
             if time_text:
                 line += f" {time_text}"
             line += f" - {judgment}"
             if reasoning:
-                line += f" ——因为{reasoning}"
+                line += f"\n  理由：{reasoning}"
             blocks.append(line)
         return "\n".join(blocks).rstrip()
 

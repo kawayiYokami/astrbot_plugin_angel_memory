@@ -33,11 +33,11 @@ class MemoryFormatter:
         # 格式化论点
         judgment = str(getattr(memory, "judgment", "") or "").strip()
 
-        # 格式化理由
+        # 格式化理由（另起一行，与结论分开）
         reasoning = ""
         memory_reasoning = str(getattr(memory, "reasoning", "") or "")
         if memory_reasoning and memory_reasoning.strip():
-            reasoning = f" ——因为{memory_reasoning.strip()}"
+            reasoning = f"\n  理由：{memory_reasoning.strip()}"
 
         # 格式化时间（绝对时间，便于引用与回溯）
         time_text = ""
@@ -50,7 +50,9 @@ class MemoryFormatter:
             except (ValueError, OSError, OverflowError):
                 time_text = ""
 
-        # 输出格式：id:1747680 2026-11-16 16:32 - 论点 ——因为理由
+        # 输出格式：
+        # id:1747680 2026-11-16 16:32 - 结论
+        #   理由：依据
         if short_id and time_text:
             return f"id:{short_id} {time_text} - {judgment}{reasoning}"
         if short_id:
@@ -261,7 +263,7 @@ class MemoryFormatter:
                 counter += 1
                 judgment = str(getattr(memory, "judgment", "") or "").strip()
                 reasoning = (
-                    f" ——因为{str(getattr(memory, 'reasoning', '') or '').strip()}"
+                    f"\n   理由：{str(getattr(memory, 'reasoning', '') or '').strip()}"
                     if str(getattr(memory, "reasoning", "") or "").strip()
                     else ""
                 )
