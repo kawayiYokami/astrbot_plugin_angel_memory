@@ -15,11 +15,14 @@
   $color-pack: false,
   $font-size-root: 1rem,
   $border-radius-root: 8px,
-  // 输入文字走 M3 的 Body large（16px）——Text field 的官方档位
-  $field-font-size: 1rem,
-  // 标签未浮动时同为 Body large（16px）；浮动后由 Vuetify 默认 scale 0.75
-  // 收到 12px（Body small）。16 → 12 正是 M3 里 Text field 的两档，比例原生就对。
-  $label-font-size: 1rem,
+  // 输入文字走 M3 的 Body medium（14px）。M3 的 Text field 正文是 Body large 16px，
+  // 但那是给「字段独占一行」的标准表单用的；我们的行式布局里控件值与配置项标题
+  // 并排，16px 会比标题还大，所以取 Body medium，与标题同级。
+  $field-font-size: 0.875rem,
+  // 标签未浮动时同为 14px；浮动后收到 12px（Body small），与说明文字同级。
+  // 12 ÷ 14 ≈ 0.857，对应 M3 里 Body medium → Body small 的跨度。
+  $label-font-size: 0.875rem,
+  $field-label-floating-scale: 0.857,
   $body-font-family: (
     'Outfit',
     'Noto Sans',
