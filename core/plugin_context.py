@@ -7,6 +7,7 @@
 
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
+import inspect
 import re
 import json
 
@@ -438,13 +439,33 @@ class PluginContext:
         if hasattr(event, "get_platform_name"):
             platform_name = str(event.get_platform_name() or "").strip()
 
+        # 兼容不同 AstrBot 版本的签名差异：
+        #   4.29 及更早：umo / conversation_persona_id / platform_name / provider_settings，返回四元组
+        #   4.30+     ：umo / platform_name，返回三元组
         try:
-            persona_id, _persona, _, _ = await persona_manager.resolve_selected_persona(
-                umo=umo,
-                conversation_persona_id=conversation_persona_id,
-                platform_name=platform_name,
-                provider_settings=provider_settings,
-            )
+            _sig_params = inspect.signature(
+                persona_manager.resolve_selected_persona
+            ).parameters
+        except (TypeError, ValueError):
+            _sig_params = {}
+
+        try:
+            if "conversation_persona_id" in _sig_params:
+                persona_id, _persona, *_rest = (
+                    await persona_manager.resolve_selected_persona(
+                        umo=umo,
+                        conversation_persona_id=conversation_persona_id,
+                        platform_name=platform_name,
+                        provider_settings=provider_settings,
+                    )
+                )
+            else:
+                persona_id, _persona, *_rest = (
+                    await persona_manager.resolve_selected_persona(
+                        umo=umo,
+                        platform_name=platform_name,
+                    )
+                )
         except Exception:
             self.logger.error(
                 "[睡眠] 人格解析异常：resolve_selected_persona失败 umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
