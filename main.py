@@ -507,6 +507,24 @@ class AngelMemoryPlugin(Star):
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
                 self.logger.debug("插件内后台任务已收束")
 
+            # 停笔记扫描线程：它持有 NotesStore，库关掉之后下一轮扫描会撞上
+            # ClosedError 并降级，但线程本身还在空转，这里先停干净。
+            # 用 getattr：测试会用 object.__new__ 造实例，属性不一定存在。
+            note_index = getattr(self, "note_index", None)
+            if note_index is not None:
+                try:
+                    await asyncio.to_thread(note_index.stop)
+                    self.logger.debug("笔记索引线程已停止")
+                except Exception as e:
+                    self.logger.error(f"笔记索引线程停止失败: {e}", exc_info=True)
+
+            # 先给 p-memory 的后台线程发停止信号，但不关库：后面还要停组件，
+            # 这段时间足够向量同步线程自己退出，close() 时就不用干等满超时。
+            try:
+                pmemory.request_stop()
+            except Exception as e:
+                self.logger.error(f"通知 p-memory 停止失败: {e}", exc_info=True)
+
             # 停止核心服务
             if self.plugin_manager:
                 await self.plugin_manager.shutdown()

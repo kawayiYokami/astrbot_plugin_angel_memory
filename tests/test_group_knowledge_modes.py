@@ -1,6 +1,7 @@
 """群聊知识库三态：矩阵构建、可见域判定、检索白名单。"""
 
 from __future__ import annotations
+import asyncio
 
 import json
 import tempfile
@@ -69,7 +70,7 @@ def test_note_search_respects_domain_whitelist(tmp_path):
     (raw / "原神" / "角色.md").write_text("# 角色\n共同关键词 原神笔记正文", encoding="utf-8")
     (raw / "绝区零" / "代理人.md").write_text("# 代理人\n共同关键词 绝区零笔记正文", encoding="utf-8")
 
-    pmemory.configure(root=tmp_path / "pmemory", raw_dir=raw)
+    asyncio.run(pmemory.configure(root=tmp_path / "pmemory", raw_dir=raw))
     service = NoteIndexService(raw)
     assert service.upsert_file(raw / "原神" / "角色.md")
     assert service.upsert_file(raw / "绝区零" / "代理人.md")

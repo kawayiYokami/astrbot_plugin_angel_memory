@@ -8,6 +8,8 @@ ComponentFactory - 组件工厂
 并把记忆运行时、笔记索引服务、DeepMind 组装起来。
 """
 
+import asyncio
+import inspect
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -16,6 +18,7 @@ from astrbot.api import logger
 from ..llm_memory.components.embedding_provider import EmbeddingProviderFactory
 from ..llm_memory.components.memory_sql_manager import MemorySqlManager
 from ..pmemory import MemoryStore, pmemory
+from ..pmemory.kb import require_pmemory_version
 from .deepmind import DeepMind
 from .memory_runtime import PMemoryMemoryRuntime
 from .services.legacy_memory_migration import LegacyMemoryMigration
@@ -61,6 +64,9 @@ class ComponentFactory:
             return self._components
 
         try:
+            # 先校验底层库版本：不满足就直接报错停住，不要等重载时撞锁才发现
+            require_pmemory_version()
+
             self.logger.debug("开始创建核心组件...")
             rerank_provider = self._resolve_rerank_provider()
             rerank_max_docs = self._resolve_rerank_max_docs()
@@ -73,8 +79,8 @@ class ComponentFactory:
             # 1. 嵌入提供商（可选，失败则记忆检索走纯全文）
             embedding_provider = await self._try_create_embedding_provider()
 
-            # 2. 配置 p-memory 单例
-            self._configure_pmemory(
+            # 2. 配置 p-memory 单例（打开库也在里面完成，放工作线程）
+            await self._configure_pmemory(
                 embedding_provider=embedding_provider,
                 rerank_provider=rerank_provider,
                 rerank_max_docs=rerank_max_docs,
@@ -162,7 +168,7 @@ class ComponentFactory:
             "tier0_cycle_days": 3,
         }
 
-    def _configure_pmemory(
+    async def _configure_pmemory(
         self,
         *,
         embedding_provider,
@@ -173,7 +179,7 @@ class ComponentFactory:
         """数据目录放在 memory_center 同级，向量按 space 存，换供应商只新增 space。"""
         root = Path(self.plugin_context.get_memory_center_dir()).parent / "pmemory"
         raw_dir = self._resolve_raw_dir()
-        pmemory.configure(
+        await pmemory.configure(
             root=root,
             raw_dir=raw_dir,
             embedding_provider=embedding_provider,
@@ -343,23 +349,19 @@ class ComponentFactory:
         self._components.clear()
         self._initialized = False
 
-    def shutdown(self):
-        """关闭所有组件，释放资源"""
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
+    async def shutdown(self):
+        """关闭所有组件，释放资源。
 
+        整条链都是 async：组件可以自己实现 async shutdown/close/stop，
+        这里直接 await，不再用 ThreadPoolExecutor + asyncio.run 把协程
+        丢到另一个循环去跑（那样会跨 loop 报错，也等不到真正的收束）。
+        """
         self.logger.debug("开始关闭所有核心组件...")
 
-        component_shutdown_order = [
-            "legacy_migration",
-            "note_index",
-            "deepmind",
-            "memory_runtime",
-            "memory_sql_manager",
-            "embedding_provider",
-        ]
-
-        def _try_shutdown_component(component_name: str, component: Any) -> None:
+        # 关闭顺序不写死清单：按创建顺序逆序关，后建的先关（依赖方向）。
+        # 手写清单会漏——之前 memory_store 就没在清单里，加了新组件也没人提醒。
+        # 创建即进 self._components，关闭就遍历它，新增组件自动被收进来。
+        async def _try_shutdown_component(component_name: str, component: Any) -> None:
             shutdown_method = None
             for method_name in ("shutdown", "close", "stop", "dispose"):
                 if hasattr(component, method_name):
@@ -372,25 +374,21 @@ class ComponentFactory:
             try:
                 self.logger.debug(f"正在关闭组件: {component_name}...")
                 result = shutdown_method()
-                if hasattr(result, "__await__"):
-                    try:
-                        asyncio.get_running_loop()
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            executor.submit(asyncio.run, result).result()
-                    except RuntimeError:
-                        asyncio.run(result)
+                if inspect.isawaitable(result):
+                    await result
                 self.logger.debug(f"组件 {component_name} 已关闭")
             except Exception as e:
                 self.logger.error(f"关闭组件 {component_name} 失败: {e}", exc_info=True)
 
-        for component_name in component_shutdown_order:
-            component = self._components.get(component_name)
-            if component:
-                _try_shutdown_component(component_name, component)
-                self._components.pop(component_name, None)
+        for component_name, component in reversed(list(self._components.items())):
+            if component is not None:
+                await _try_shutdown_component(component_name, component)
+        self._components.clear()
 
         try:
-            pmemory.close()
+            # native 关闭会 join 同步线程，放工作线程，别阻塞事件循环
+            await asyncio.to_thread(pmemory.close)
+            self.logger.debug("p-memory 知识库已关闭")
         except Exception as e:
             self.logger.error(f"关闭 p-memory 失败: {e}", exc_info=True)
 

@@ -104,6 +104,11 @@ class NoteIndexService:
                 return
             self._stop.set()
             self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                # 线程卡在 upsert_file 里没退出来。保留句柄，下次 stop 还能再等；
+                # 置 None 会让再 start() 开出第二条扫描线程。
+                logger.warning("[笔记导入] 扫描线程未在 5 秒内结束，保留句柄待下次停止")
+                return
             self._thread = None
 
     def _loop(self) -> None:

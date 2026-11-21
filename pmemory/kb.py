@@ -9,12 +9,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from p_memory import KnowledgeBase
+from p_memory.errors import ClosedError
 
 from .config import (
     DOMAIN_DIRS,
@@ -29,6 +31,42 @@ from astrbot.api import logger
 
 SPACE_ENCODING = "sq8"
 SCOPES_FILE = "scopes.json"
+
+# 插件依赖 p-memory 的最低版本。
+# 0.4.0 起同一路径在进程内共享句柄并按引用计数关闭；更早的版本第二次打开会
+# 直接撞 native 目录锁，插件重载后记忆功能整轮失效，且只在日志里留一行。
+REQUIRED_PMEMORY_VERSION = (0, 4, 0)
+
+
+def _version_tuple(text: str) -> tuple:
+    """把 "0.4.0" 这类版本串变成可比较的元组，非数字部分直接跳过。"""
+    parts = []
+    for piece in str(text).split(".")[:3]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def require_pmemory_version() -> None:
+    """启动时校验 p-memory 版本，不满足就带着修法报错。
+
+    与其等到重载时抛一句无法归因的 LockedError，不如启动就说清版本不对、
+    该装哪个版本。这条检查在组件创建最前面调用，不通过就整条初始化停住。
+    """
+    import p_memory
+
+    current = str(getattr(p_memory, "__version__", "0.0.0"))
+    if _version_tuple(current) >= REQUIRED_PMEMORY_VERSION:
+        return
+    required = ".".join(str(part) for part in REQUIRED_PMEMORY_VERSION)
+    raise RuntimeError(
+        f"p-memory 版本过低：当前 {current}，需要 >= {required}。"
+        "旧版不支持同一数据目录在进程内共享句柄，插件重载后会撞上目录锁，"
+        "记忆功能整轮失效。"
+        f'请执行 pip install -U "p-memory>={required}"，然后重启 AstrBot。'
+    )
 
 
 def _slug(value: str) -> str:
@@ -67,6 +105,9 @@ def _log_event(event: dict) -> None:
 class PMemory:
     """知识库单例：数据目录、回调注册、笔记域根目录都在这里收口。"""
 
+    # 同一数据目录的句柄由 p_memory 自己共享并按引用计数关闭：同进程第二次打开
+    # 拿到的是同一个句柄，归零才真正关。这里不再自己维护路径占用表。
+
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._root: Optional[Path] = None
@@ -79,6 +120,10 @@ class PMemory:
         self._reranker: Optional[RerankBridge] = None
         self._space_id: Optional[str] = None
         self._sync_started = False
+        self._sync_thread: Optional[threading.Thread] = None
+        # 关闭后拒绝再打开：close() 之后任何访问都必须失败，否则后台线程会把库
+        # 重新打开、把目录锁又拿回去，下次重载必撞锁
+        self._closed = False
         # 提供商对象所属的事件循环：回调必须回到这条循环，否则跨 loop 使用会报错
         self._owner_loop: Optional[Any] = None
         # 已知 scope 名单：库不支持「跨全部 scope」的读，生命周期操作只能显式列全
@@ -87,7 +132,7 @@ class PMemory:
 
     # === 配置 ===
 
-    def configure(
+    async def configure(
         self,
         root: str | Path,
         raw_dir: str | Path | None = None,
@@ -95,9 +140,18 @@ class PMemory:
         rerank_provider: Any = None,
         rerank_options: Optional[Dict[str, int]] = None,
     ) -> None:
-        """设置数据目录与提供商。重复调用会关掉旧库，下次访问按新配置重开。"""
+        """设置数据目录与提供商，并在这里完成打开。
+
+        打开动作只允许发生在这一处：配置完成后立刻开库，此后任何线程访问 `kb`
+        时库一定已经打开。重复调用会先关旧库再按新配置重开。
+        """
+        # close 必须在锁外调用：它内部要 join 向量同步线程，持锁 join 会死锁。
+        # 这期间 _closed 为 True，其他线程访问 kb 会拿到 ClosedError 并降级。
+        self.close()
+
         with self._lock:
-            self.close()
+            # 重新配置视为重新启用：close() 置上的关闭标志在这里清掉
+            self._closed = False
             self._root = Path(root)
             self._raw_dir = Path(raw_dir) if raw_dir else None
             self._embedding_provider = embedding_provider
@@ -107,21 +161,50 @@ class PMemory:
             self._scopes = {SCOPE_PUBLIC}
             self._scopes_loaded = False
 
+        # 开库放工作线程，不能留在主循环线程上：
+        # 库的嵌入回调是同步的、在调用线程上直接跑，而 _CallbackRunner 判定
+        # 「当前线程就是归属循环线程」时会退回自带后台循环，跨 loop 使用提供商
+        # 对象会抛 RuntimeError。放到工作线程，回调才能正常投递回主循环。
+        try:
+            await asyncio.to_thread(self.ensure_open)
+        except Exception:
+            logger.exception("[PMEMORY] 知识库打开失败，本次运行记忆功能不可用")
+
+    def ensure_open(self) -> None:
+        """打开知识库。
+
+        只应由 configure() 调用。其他线程一律通过 `kb` 只读访问——打开时机
+        集中在这里，才不会出现「谁先访问谁打开」。
+        """
+        with self._lock:
+            if self._closed:
+                raise ClosedError("p-memory 知识库已关闭，不再接受访问")
+            if self._kb is None:
+                self._open()
+
     @property
     def root(self) -> Optional[Path]:
         return self._root
 
     @property
     def kb(self) -> KnowledgeBase:
+        """只读访问。库没打开或已关闭都抛 ClosedError。
+
+        抛 ClosedError 而不是 RuntimeError：它是 PMemoryError 子类，调用方
+        现有的 `except PMemoryError` 都能接住并降级，不会让异常穿透到工具层。
+        """
         with self._lock:
+            if self._closed:
+                raise ClosedError("p-memory 知识库已关闭，不再接受访问")
             if self._kb is None:
-                self._open()
-            assert self._kb is not None
+                raise ClosedError(
+                    "p-memory 知识库尚未打开：打开只发生在 configure()，"
+                    "调用方不应依赖首次访问触发"
+                )
             return self._kb
 
     @property
     def space_id(self) -> Optional[str]:
-        self.kb  # 触发打开与回调注册
         return self._space_id
 
     # === scope 名单 ===
@@ -173,8 +256,39 @@ class PMemory:
         except Exception:
             logger.warning("[PMEMORY] 写入 scope 名单失败")
 
-    def close(self) -> None:
+    def request_stop(self) -> None:
+        """通知后台线程停止，但不关库。
+
+        卸载流程开头就调它：向量同步线程在每次访问 kb 前都会检查关闭标志，
+        提前置上之后，它在后续几步（停笔记线程、关各组件）期间就能自然退出，
+        走到 close() 时不必再干等满超时。关闭标志一旦置上就不会再清，
+        所以这之后所有使用接口都按「已关闭」处理——这正是关闭期间要的语义。
+        """
         with self._lock:
+            self._closed = True
+
+    def close(self) -> bool:
+        """关闭知识库。"""
+        # 1) 先置关闭标志并取出同步线程引用。标志必须在锁内先落，
+        #    这样正在跑的向量同步下一次访问 kb 就会失败退出，不会把库重新打开。
+        with self._lock:
+            self._closed = True
+            # 只读，不清：清掉的话下一次 close()（卸载链上会调两次）看不到线程，
+            # 会直接进关库流程，把这层保护作废。
+            sync_thread = self._sync_thread
+
+        # 2) 等同步线程收尾。必须在锁外 join：它内部要拿同一把锁，锁内等会死锁。
+        #    不设超时不是「无限等」：sync 按批调嵌入回调，关闭标志一置上，下一批
+        #    就抛异常中断（实测 0.07 秒退出）；即使正卡在一次嵌入调用里，那一次
+        #    也有超时（provider 60 秒、bridge 120 秒），最坏等一次调用就返回。
+        #    所以这里就等到底——等不到说明中断机制坏了，该暴露而不是靠超时跳过藏起来。
+        if sync_thread is not None and sync_thread.is_alive():
+            sync_thread.join()
+
+        # 3) 真正关库与回调线程
+        with self._lock:
+            # 线程确认结束，此时才清引用
+            self._sync_thread = None
             if self._kb is not None:
                 try:
                     self._kb.close()
@@ -274,7 +388,11 @@ class PMemory:
                 logger.warning("[PMEMORY] 嵌入提供商当前不可用，跳过向量回调注册")
                 return
 
-            bridge = EmbeddingBridge(self._embedding_provider, loop=owner_loop)
+            bridge = EmbeddingBridge(
+                self._embedding_provider,
+                loop=owner_loop,
+                should_stop=lambda: self._closed,
+            )
             dimension = bridge.probe_dimension()
             if dimension <= 0:
                 logger.warning("[PMEMORY] 嵌入维度探测失败，跳过向量空间注册")
@@ -312,13 +430,32 @@ class PMemory:
         space_id = self._space_id
 
         def _run() -> None:
+            if self._closed:
+                return
             try:
                 report = self.kb.embeddings.sync(space_id, namespace=memory_namespace())
-                logger.info("[PMEMORY] 记忆向量同步完成 空间=%s 结果=%s", space_id, report)
+                value = report.get("value") if isinstance(report, dict) else None
+                interrupted = (value or {}).get("interrupted")
+                if interrupted:
+                    # 关闭时由嵌入回调抛异常中断，库把它记在 interrupted 里，
+                    # 剩下的记录留到下次启动继续补，不算失败。
+                    logger.debug(
+                        "[PMEMORY] 记忆向量同步被中断（%s），剩余记录下次启动补齐",
+                        interrupted,
+                    )
+                else:
+                    logger.info(
+                        "[PMEMORY] 记忆向量同步完成 空间=%s 结果=%s", space_id, report
+                    )
+            except ClosedError:
+                # close() 期间访问 kb 会抛这个，属正常收尾，不记异常
+                logger.debug("[PMEMORY] 记忆向量同步在关闭过程中中断")
             except Exception:
                 logger.exception("[PMEMORY] 记忆向量同步失败，检索在补齐前走全文")
 
-        threading.Thread(target=_run, daemon=True, name="pmemory-sync").start()
+        thread = threading.Thread(target=_run, daemon=True, name="pmemory-sync")
+        self._sync_thread = thread
+        thread.start()
 
     # === 运维信息 ===
 

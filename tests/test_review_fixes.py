@@ -1,8 +1,8 @@
 """review 返修点的回归测试：直读越权、假成功、迁移导出。"""
 
 from __future__ import annotations
-
 import asyncio
+
 import json
 import tempfile
 import time
@@ -48,7 +48,7 @@ def _setup_notes(tmp_path: Path):
     (raw / "绝区零").mkdir(parents=True, exist_ok=True)
     (raw / "原神" / "角色.md").write_text("# 角色\n原神正文 hidden测试", encoding="utf-8")
     (raw / "绝区零" / "代理人.md").write_text("# 代理人\n绝区零正文 hidden测试", encoding="utf-8")
-    pmemory.configure(root=tmp_path / "pmemory", raw_dir=raw)
+    asyncio.run(pmemory.configure(root=tmp_path / "pmemory", raw_dir=raw))
     service = NoteIndexService(raw)
     assert service.upsert_file(raw / "原神" / "角色.md")
     assert service.upsert_file(raw / "绝区零" / "代理人.md")
@@ -127,7 +127,7 @@ def test_merge_with_missing_source_creates_nothing(tmp_path):
         PMemoryMemoryRuntime,
     )
 
-    pmemory.configure(root=tmp_path / "pmemory", raw_dir=None)
+    asyncio.run(pmemory.configure(root=tmp_path / "pmemory", raw_dir=None))
     try:
         store = MemoryStore()
         runtime = PMemoryMemoryRuntime(store)
@@ -163,7 +163,7 @@ def test_create_same_judgment_twice_keeps_one(tmp_path):
         PMemoryMemoryRuntime,
     )
 
-    pmemory.configure(root=tmp_path / "pmemory", raw_dir=None)
+    asyncio.run(pmemory.configure(root=tmp_path / "pmemory", raw_dir=None))
     try:
         store = MemoryStore()
         runtime = PMemoryMemoryRuntime(store)
@@ -192,7 +192,7 @@ def test_feedback_skips_duplicate_create(tmp_path):
         PMemoryMemoryRuntime,
     )
 
-    pmemory.configure(root=tmp_path / "pmemory", raw_dir=None)
+    asyncio.run(pmemory.configure(root=tmp_path / "pmemory", raw_dir=None))
     try:
         store = MemoryStore()
         runtime = PMemoryMemoryRuntime(store)
@@ -216,7 +216,7 @@ def test_same_judgment_different_scope_keeps_both(tmp_path):
         PMemoryMemoryRuntime,
     )
 
-    pmemory.configure(root=tmp_path / "pmemory", raw_dir=None)
+    asyncio.run(pmemory.configure(root=tmp_path / "pmemory", raw_dir=None))
     try:
         store = MemoryStore()
         runtime = PMemoryMemoryRuntime(store)
@@ -236,7 +236,7 @@ def test_same_judgment_different_scope_keeps_both(tmp_path):
 
 def test_migration_exports_json_then_imports(tmp_path):
     root = Path(tempfile.mkdtemp(prefix="pmem-mig-"))
-    pmemory.configure(root=root, raw_dir=None)
+    asyncio.run(pmemory.configure(root=root, raw_dir=None))
     try:
         sql, db = _make_source()
         db.add_memory(

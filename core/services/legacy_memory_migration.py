@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -63,6 +64,12 @@ class LegacyMemoryMigration:
         self.logger = logger or plugin_logger
         self._lock = asyncio.Lock()
         self._task: Optional[asyncio.Task] = None
+        # 自管单线程 executor：asyncio.to_thread 走默认池，拿不到底层线程，
+        # 取消协程时写库线程仍在跑。自管才能保证 shutdown 等到它真正结束。
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="legacy-migration"
+        )
+        self._migrate_future = None
 
     def _already_done(self) -> bool:
         """迁过一次就永久跳过：不读旧 SQL，也不读备份。"""
@@ -178,9 +185,11 @@ class LegacyMemoryMigration:
                 f"待迁移候选={len(import_records)}"
             )
             try:
-                result = await asyncio.to_thread(
+                future = self._executor.submit(
                     self._migrate, import_records, import_tags
                 )
+                self._migrate_future = future
+                result = await asyncio.wrap_future(future)
             except Exception as e:
                 cost_ms = int((time.time() - started) * 1000)
                 self.logger.error(
@@ -457,7 +466,46 @@ class LegacyMemoryMigration:
                 found.add(legacy_id)
         return found
 
+    async def shutdown(self) -> None:
+        """取消迁移任务并等它收束。
+
+        只 cancel 不 await 是不够的：任务可能正停在 await asyncio.to_thread(...)
+        里，取消不会立刻停掉底层写库线程，随后 pmemory.close() 会和它抢同一份
+        native 句柄。
+        """
+        task, self._task = self._task, None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if task.cancelled():
+                self.logger.debug("[旧记忆迁移] 任务已取消")
+            elif task.exception() is not None:
+                self.logger.warning(f"[旧记忆迁移] 任务异常退出: {task.exception()}")
+
+        # 协程取消不等于线程停下：写库跑在自管 executor 的线程里，必须单独等。
+        # 等待期间的任何结果都不能让 executor 逃过关闭，所以 shutdown 放 finally：
+        # 迁移线程在 30 秒内抛错结束时会从 future.result() 原样重抛，
+        # 那条路径既不是超时也不该吞掉，但绝不能因此跳过 executor.shutdown。
+        future = self._migrate_future
+        self._migrate_future = None
+        try:
+            if future is not None and not future.done():
+                try:
+                    await asyncio.to_thread(future.result, 30)
+                except TimeoutError:
+                    # 超时后必须报出来，否则后面的 shutdown(wait=True) 会等很久。
+                    self.logger.warning(
+                        "[旧记忆迁移] 写库线程 30 秒未结束，卸载将等待它退出（可能较久）"
+                    )
+                except Exception as e:
+                    # 迁移线程已抛错结束，线程本身已经退了；记一条即可，
+                    # 不要让它冒到 shutdown() 外面——那会跳过下面的 executor 关闭。
+                    self.logger.warning(f"[旧记忆迁移] 写库线程异常结束: {e}")
+        finally:
+            await asyncio.to_thread(self._executor.shutdown, True)
+
     def stop(self) -> None:
+        """同步版：只发取消信号。关闭流程请用 shutdown()。"""
         if self._task is not None and not self._task.done():
             self._task.cancel()
         self._task = None

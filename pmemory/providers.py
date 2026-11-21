@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from p_memory.errors import EmbedCallbackError
 
@@ -132,14 +132,22 @@ class EmbeddingBridge:
         provider: Any,
         timeout: float = 120.0,
         loop: Optional[asyncio.AbstractEventLoop] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._provider = provider
         self._timeout = float(timeout)
         self._runner = _CallbackRunner("pmemory-embed", loop)
+        self._should_stop = should_stop
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
+        # 库按 max_batch 分批调这个回调，每批之间都回到 Python 一次。
+        # 在批与批之间抛异常，库会当成中断信号：记进返回值的 interrupted 字段
+        # 并立刻停止，不重试（实测：抛出的第 3 批之后不再有第 4 批，sync 立即返回）。
+        # 关闭时靠这个让正在跑的向量同步当场停下，不必等整轮跑完。
+        if self._should_stop is not None and self._should_stop():
+            raise RuntimeError("知识库正在关闭，停止向量同步")
         try:
             result = self._runner.run(
                 self._provider.embed_documents(list(texts)), self._timeout

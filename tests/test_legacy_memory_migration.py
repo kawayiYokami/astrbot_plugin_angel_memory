@@ -7,8 +7,8 @@
 """
 
 from __future__ import annotations
-
 import asyncio
+
 import json
 import tempfile
 import time
@@ -185,7 +185,7 @@ def _migrate(
 
 def _setup_env(backup_dir: Path | None = None):
     root = Path(tempfile.mkdtemp(prefix="pmem-mig-"))
-    pmemory.configure(root=root, raw_dir=None)
+    asyncio.run(pmemory.configure(root=root, raw_dir=None))
     return root, MemoryStore()
 
 

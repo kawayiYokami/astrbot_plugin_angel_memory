@@ -152,6 +152,6 @@ class BackgroundInitializer:
 
         # 关闭所有由ComponentFactory创建的组件
         if self.component_factory:
-            await asyncio.to_thread(self.component_factory.shutdown)
+            await self.component_factory.shutdown()
 
         self.logger.debug("后台初始化器已成功关闭")

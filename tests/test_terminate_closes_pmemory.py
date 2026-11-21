@@ -18,9 +18,15 @@ class FakePmemory:
         self.close_calls = 0
         self._kb = object() if opened else None
 
-    def close(self) -> None:
+    def close(self) -> bool:
+        """真实 close() 返回 bool：True 表示确实关掉了。
+
+        替身必须跟着返回 True，否则 main.py 的 `if not closed` 会走 warning
+        分支——日志被静默改写，且「已关闭」那条分支永远测不到。
+        """
         self.close_calls += 1
         self._kb = None
+        return True
 
     def _open(self):
         if self._kb is not None:

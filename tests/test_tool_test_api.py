@@ -4,6 +4,7 @@
 """
 
 from __future__ import annotations
+import asyncio
 
 import json
 import logging
@@ -265,14 +266,14 @@ class _ProbeCtx:
         return list(self._visible)
 
 
-def _fresh_store() -> MemoryStore:
+async def _fresh_store() -> MemoryStore:
     root = Path(tempfile.mkdtemp(prefix="pmem-tooltest-"))
-    pmemory.configure(root=root, raw_dir=None)
+    await pmemory.configure(root=root, raw_dir=None)
     return MemoryStore()
 
 
-def _seed_memory():
-    store = _fresh_store()
+async def _seed_memory():
+    store = await _fresh_store()
     try:
         store.remember("红豆喜欢甜食", "聊天里提到", ["红豆"], "知识记忆", "public", pinned=True)
         record = store.list_records(all_scopes=True)[0]
@@ -324,7 +325,7 @@ async def test_empty_query_rejected_on_both_endpoints(monkeypatch):
 @pytest.mark.asyncio
 async def test_auto_rag_returns_injection_text_only(monkeypatch):
     """自动 RAG 只返回注入上下文原文，不夹带任何自造说明。"""
-    memory = _seed_memory()
+    memory = await _seed_memory()
     deepmind = _FakeDeepmind([memory])
     ctx = _ProbeCtx(deepmind, auto=["gi"])
     api = ToolTestAPI(ctx)
@@ -347,7 +348,7 @@ async def test_auto_rag_returns_injection_text_only(monkeypatch):
 @pytest.mark.asyncio
 async def test_active_recall_returns_tool_text_only(monkeypatch):
     """主动搜索只返回工具原文，不夹带自动 RAG 的内容。"""
-    memory = _seed_memory()
+    memory = await _seed_memory()
     deepmind = _FakeDeepmind([memory])
     ctx = _ProbeCtx(deepmind, auto=["gi"])
     api = ToolTestAPI(ctx)
@@ -365,7 +366,7 @@ async def test_active_recall_returns_tool_text_only(monkeypatch):
 @pytest.mark.asyncio
 async def test_preview_session_is_isolated_and_cleaned(monkeypatch):
     """注入预览用独立会话，跑完必须清掉，不污染真实会话缓存。"""
-    memory = _seed_memory()
+    memory = await _seed_memory()
     deepmind = _FakeDeepmind([memory])
     ctx = _ProbeCtx(deepmind, auto=["gi"])
     api = ToolTestAPI(ctx)
@@ -396,7 +397,7 @@ async def test_recall_failure_is_reported(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_injection_failure_is_reported(monkeypatch):
-    memory = _seed_memory()
+    memory = await _seed_memory()
     deepmind = _FakeDeepmind([memory], inject_boom=True)
     ctx = _ProbeCtx(deepmind, auto=["gi"])
     api = ToolTestAPI(ctx)

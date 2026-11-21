@@ -5,6 +5,7 @@
 """
 
 from __future__ import annotations
+import asyncio
 
 import json
 import tempfile
@@ -17,7 +18,7 @@ from astrbot_plugin_angel_memory.web_api.maintenance_api import MaintenanceAPI
 
 def _fresh_store() -> MemoryStore:
     root = Path(tempfile.mkdtemp(prefix="pmem-web-"))
-    pmemory.configure(root=root, raw_dir=None)
+    asyncio.run(pmemory.configure(root=root, raw_dir=None))
     return MemoryStore()
 
 
