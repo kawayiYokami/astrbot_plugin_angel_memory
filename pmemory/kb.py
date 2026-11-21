@@ -3,8 +3,9 @@
 一个数据目录承载全部记忆、笔记与向量。嵌入与重排由本项目注册回调提供，
 回调是运行时状态、不落盘，所以每次打开数据目录都要重新注册。
 
-打开时机：ComponentFactory 创建完提供商后调用 `configure()`，首次访问 `kb`
-时才真正开库，避免启动期就把锁和索引初始化压在关键路径上。
+打开时机：ComponentFactory 创建完提供商后调用 `configure()`，在那里完成开库。
+此后任何线程访问 `kb` 时库一定已经打开；没配置或已关闭一律抛 `ClosedError`，
+不存在「谁先访问谁打开」。
 """
 
 from __future__ import annotations
@@ -35,18 +36,20 @@ SCOPES_FILE = "scopes.json"
 # 插件依赖 p-memory 的最低版本。
 # 0.4.0 起同一路径在进程内共享句柄并按引用计数关闭；更早的版本第二次打开会
 # 直接撞 native 目录锁，插件重载后记忆功能整轮失效，且只在日志里留一行。
-REQUIRED_PMEMORY_VERSION = (0, 4, 0)
+REQUIRED_PMEMORY_VERSION = "0.4.0"
 
 
 def _version_tuple(text: str) -> tuple:
-    """把 "0.4.0" 这类版本串变成可比较的元组，非数字部分直接跳过。"""
-    parts = []
-    for piece in str(text).split(".")[:3]:
-        digits = "".join(ch for ch in piece if ch.isdigit())
-        parts.append(int(digits) if digits else 0)
-    while len(parts) < 3:
-        parts.append(0)
-    return tuple(parts)
+    """把版本串变成可比较的四元组，最后一位标记是否正式版。
+
+    预发布（rc / beta / dev）排在**同号正式版之下**：PEP 440 里
+    0.4.0rc1 < 0.4.0，门禁不能把一个还不带共享句柄的 rc 当成 0.4.0 放过去。
+    """
+    core = str(text or "").strip().split("+")[0]
+    prerelease = bool(re.search(r"[A-Za-z]", core))
+    numbers = re.findall(r"\d+", core)[:3]
+    parts = [int(piece) for piece in numbers] + [0] * (3 - len(numbers))
+    return (parts[0], parts[1], parts[2], 0 if prerelease else 1)
 
 
 def require_pmemory_version() -> None:
@@ -58,14 +61,13 @@ def require_pmemory_version() -> None:
     import p_memory
 
     current = str(getattr(p_memory, "__version__", "0.0.0"))
-    if _version_tuple(current) >= REQUIRED_PMEMORY_VERSION:
+    if _version_tuple(current) >= _version_tuple(REQUIRED_PMEMORY_VERSION):
         return
-    required = ".".join(str(part) for part in REQUIRED_PMEMORY_VERSION)
     raise RuntimeError(
-        f"p-memory 版本过低：当前 {current}，需要 >= {required}。"
+        f"p-memory 版本过低：当前 {current}，需要 >= {REQUIRED_PMEMORY_VERSION}。"
         "旧版不支持同一数据目录在进程内共享句柄，插件重载后会撞上目录锁，"
         "记忆功能整轮失效。"
-        f'请执行 pip install -U "p-memory>={required}"，然后重启 AstrBot。'
+        f'请执行 pip install -U "p-memory>={REQUIRED_PMEMORY_VERSION}"，然后重启 AstrBot。'
     )
 
 
@@ -146,8 +148,10 @@ class PMemory:
         时库一定已经打开。重复调用会先关旧库再按新配置重开。
         """
         # close 必须在锁外调用：它内部要 join 向量同步线程，持锁 join 会死锁。
-        # 这期间 _closed 为 True，其他线程访问 kb 会拿到 ClosedError 并降级。
-        self.close()
+        # 但也不能直接同步调：configure 跑在事件循环线程上，而同步线程里的嵌入
+        # 回调要投递回这条循环——在这儿 join 就是两边互等，循环冻到嵌入超时为止。
+        # 放到工作线程去等，循环保持空闲，回调才跑得回来。
+        await asyncio.to_thread(self.close)
 
         with self._lock:
             # 重新配置视为重新启用：close() 置上的关闭标志在这里清掉
@@ -267,7 +271,7 @@ class PMemory:
         with self._lock:
             self._closed = True
 
-    def close(self) -> bool:
+    def close(self) -> None:
         """关闭知识库。"""
         # 1) 先置关闭标志并取出同步线程引用。标志必须在锁内先落，
         #    这样正在跑的向量同步下一次访问 kb 就会失败退出，不会把库重新打开。

@@ -92,7 +92,9 @@ class NoteIndexService:
     def start(self) -> None:
         """启动后台扫描线程，并立即做一次全量导入。"""
         with self._lock:
-            if self._thread is not None:
+            # 只有还活着才算「已经在跑」。上一次 stop 没等到它退出时句柄会留着，
+            # 那个线程后来死了就该能重新起一条，否则 start 永远空转。
+            if self._thread is not None and self._thread.is_alive():
                 return
             self._stop.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True, name="pmemory-notes")

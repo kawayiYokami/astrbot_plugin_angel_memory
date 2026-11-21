@@ -373,9 +373,12 @@ class ComponentFactory:
 
             try:
                 self.logger.debug(f"正在关闭组件: {component_name}...")
-                result = shutdown_method()
-                if inspect.isawaitable(result):
-                    await result
+                if inspect.iscoroutinefunction(shutdown_method):
+                    await shutdown_method()
+                else:
+                    # 同步关闭方法可能内部 join 线程（笔记扫描是 join(5)），
+                    # 直接压在事件循环上会把整个 AstrBot 冻住，所以放工作线程。
+                    await asyncio.to_thread(shutdown_method)
                 self.logger.debug(f"组件 {component_name} 已关闭")
             except Exception as e:
                 self.logger.error(f"关闭组件 {component_name} 失败: {e}", exc_info=True)
@@ -383,7 +386,6 @@ class ComponentFactory:
         for component_name, component in reversed(list(self._components.items())):
             if component is not None:
                 await _try_shutdown_component(component_name, component)
-        self._components.clear()
 
         try:
             # native 关闭会 join 同步线程，放工作线程，别阻塞事件循环

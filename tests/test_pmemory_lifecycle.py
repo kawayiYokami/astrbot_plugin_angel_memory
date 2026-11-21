@@ -49,7 +49,7 @@ async def test_kb_after_close_raises_closed_error():
     """
     pm = PMemory()
     await pm.configure(tempfile.mkdtemp())
-    assert pm.close() is None  # close 不再返回结果：一定会关干净
+    pm.close()  # 一定会关干净，没有「跳过」这个结果
 
     with pytest.raises(ClosedError) as excinfo:
         _ = pm.kb
@@ -186,6 +186,66 @@ def test_migration_shutdown_closes_executor_when_worker_raises():
     # executor 确实关了 —— 关过的 executor 拒绝再提交
     with pytest.raises(RuntimeError):
         obj._executor.submit(lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_close_interrupts_real_vector_sync():
+    """关闭标志能让真实的向量同步在下一批嵌入回调处停下。
+
+    只验证「join 存在」不够：中断只发生在 `embed()` 入口，如果同步线程还没走到
+    第一次嵌入回调，join 就是无界的。这条用真实库 + 慢嵌入回调跑一遍。
+    """
+
+    class SlowProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def embed_documents(self, texts):
+            self.calls += 1
+            await asyncio.sleep(0.15)
+            return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+        def get_model_info(self):
+            return {"model_name": "slow"}
+
+        def is_available(self) -> bool:
+            return True
+
+    from astrbot_plugin_angel_memory.pmemory.config import memory_namespace
+    from astrbot_plugin_angel_memory.pmemory.memory import MemoryStore
+
+    pm = PMemory()
+    provider = SlowProvider()
+    await pm.configure(tempfile.mkdtemp(), None, provider, None, None)
+
+    store = MemoryStore(pm)
+    for index in range(10):
+        store.remember(f"内容 {index}", "", ["t"], "知识", "public")
+
+    kb = pm._kb
+    space_id = pm._space_id
+    sync_thread = threading.Thread(
+        target=lambda: kb.embeddings.sync(
+            space_id, batch=1, namespace=memory_namespace()
+        ),
+        daemon=True,
+        name="pmemory-sync-test",
+    )
+    pm._sync_thread = sync_thread
+    sync_thread.start()
+    await asyncio.sleep(0.3)  # 让它进入第一批嵌入
+
+    started = time.time()
+    # 和 configure 一样放工作线程：close 要 join 同步线程，而同步线程的嵌入回调
+    # 要回到这条循环，直接在循环线程上等就是两边互等。
+    await asyncio.to_thread(pm.close)
+    elapsed = time.time() - started
+
+    assert not sync_thread.is_alive(), "close 返回时同步线程还活着"
+    assert elapsed < 5, f"close 用了 {elapsed:.1f}s，中断没生效"
+    # 中断生效的话不会把 10 条全部嵌入完；跑满了说明关闭标志没被看到
+    assert provider.calls < 10, f"同步跑完了全部 {provider.calls} 批，中断没生效"
+    assert pm._kb is None
 
 
 def test_requires_pmemory_version():

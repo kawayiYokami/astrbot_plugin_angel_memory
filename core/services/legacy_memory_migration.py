@@ -25,6 +25,7 @@ import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -492,8 +493,10 @@ class LegacyMemoryMigration:
             if future is not None and not future.done():
                 try:
                     await asyncio.to_thread(future.result, 30)
-                except TimeoutError:
+                except (TimeoutError, FuturesTimeoutError):
                     # 超时后必须报出来，否则后面的 shutdown(wait=True) 会等很久。
+                    # 两个类型都接：Python 3.11 之前 concurrent.futures.TimeoutError
+                    # 还不是内建 TimeoutError 的别名。
                     self.logger.warning(
                         "[旧记忆迁移] 写库线程 30 秒未结束，卸载将等待它退出（可能较久）"
                     )
