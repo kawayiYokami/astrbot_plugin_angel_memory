@@ -37,31 +37,49 @@ class DebugAPI:
 
     def _get_rerank_provider(self) -> Any | None:
         # p-memory 模式：重排器只从 AstrBot 上下文取，不再经过已下线的旧索引组件。
-        # 回退到上游 context 查找
+        # 重排提供商在框架里就是普通 provider，按 ID 走 get_provider_by_id 取，
+        # 再按是否具备 rerank() 判能力；get_all_providers() 只返回文本生成 provider，
+        # 扫不到重排提供商，所以只作最后兜底。
         try:
             ctx = self.plugin_context.get_astrbot_context()
-            # 显式 ID
-            try:
-                rerank_id = self.plugin_context.get_rerank_provider_id()
-                if rerank_id and hasattr(ctx, "get_rerank_provider_by_id"):
-                    p = ctx.get_rerank_provider_by_id(rerank_id)
-                    if p and hasattr(p, "rerank"):
-                        return p
-                llm_id = self.plugin_context.get_llm_provider_id()
-                if llm_id and hasattr(ctx, "get_provider_by_id"):
-                    p = ctx.get_provider_by_id(llm_id)
-                    if p and hasattr(p, "rerank"):
-                        return p
-            except Exception:
-                pass
-            if hasattr(ctx, "get_all_rerank_providers"):
-                for p in ctx.get_all_rerank_providers() or []:
-                    if hasattr(p, "rerank"):
-                        return p
-            if hasattr(ctx, "get_all_providers"):
-                for p in ctx.get_all_providers() or []:
-                    if hasattr(p, "rerank"):
-                        return p
+
+            candidate_ids: list[str] = []
+            for getter in (
+                self.plugin_context.get_rerank_provider_id,
+                self.plugin_context.get_llm_provider_id,
+            ):
+                try:
+                    pid = str(getter() or "").strip()
+                except Exception:
+                    continue
+                if pid and pid not in candidate_ids:
+                    candidate_ids.append(pid)
+
+            for pid in candidate_ids:
+                # get_rerank_provider_by_id 是未来框架可能新增的专用入口，存在就优先用；
+                # 当前 4.30 没有这个方法，实际生效的是 get_provider_by_id。
+                for attr in ("get_rerank_provider_by_id", "get_provider_by_id"):
+                    fn = getattr(ctx, attr, None)
+                    if not callable(fn):
+                        continue
+                    try:
+                        provider = fn(pid)
+                    except Exception:
+                        continue
+                    if provider is not None and hasattr(provider, "rerank"):
+                        return provider
+
+            for attr in ("get_all_rerank_providers", "get_all_providers"):
+                fn = getattr(ctx, attr, None)
+                if not callable(fn):
+                    continue
+                try:
+                    providers = fn() or []
+                except Exception:
+                    continue
+                for provider in providers:
+                    if hasattr(provider, "rerank"):
+                        return provider
         except Exception:
             pass
         return None
@@ -99,6 +117,7 @@ class DebugAPI:
         return max(128, min(8192, v))
 
     @staticmethod
+    @staticmethod
     def _extract_rerank_items(resp: Any) -> list[dict[str, Any]]:
         if resp is None:
             return []
@@ -122,14 +141,30 @@ class DebugAPI:
             if isinstance(it, dict):
                 out.append(it)
             else:
+                # 框架的 RerankResult 只有 index / relevance_score，没有 score 字段，
+                # 两个都要带出来，否则下游按 score 取会拿到 None。
                 out.append(
                     {
                         "index": getattr(it, "index", None),
                         "score": getattr(it, "score", None),
+                        "relevance_score": getattr(it, "relevance_score", None),
                         "id": getattr(it, "id", None),
                     }
                 )
         return out
+
+    @staticmethod
+    def _pick_score(item: dict[str, Any]) -> float:
+        """重排分数：框架 RerankResult 用 relevance_score，有的供应商直接给 score。"""
+        for key in ("score", "relevance_score", "relevanceScore"):
+            value = item.get(key)
+            if value is None:
+                continue
+            try:
+                return float(value)
+            except Exception:
+                continue
+        return 0.0
 
     async def embedding_probe(self):
         """POST /debug/embedding  嵌入探针（单次覆盖批次/超时）"""
@@ -486,12 +521,7 @@ class DebugAPI:
                 idx = int(idx)
                 if idx < 0 or idx >= len(documents):
                     continue
-                sc = it.get("score", it.get("relevance_score", it.get("relevanceScore", 0)))
-                try:
-                    sc = float(sc)
-                except Exception:
-                    sc = 0.0
-                scores.append({"index": idx, "score": sc, "document": documents[idx][:120]})
+                scores.append({"index": idx, "score": self._pick_score(it), "document": documents[idx][:120]})
             except Exception:
                 continue
 
@@ -499,11 +529,7 @@ class DebugAPI:
         if not scores and items:
             # 尝试直接取 relevance_score 排序
             for idx, it in enumerate(items[: len(documents)]):
-                try:
-                    sc = float(it.get("relevance_score", it.get("score", 0)) or 0)
-                except Exception:
-                    sc = 0.0
-                scores.append({"index": idx, "score": sc, "document": documents[idx][:120]})
+                scores.append({"index": idx, "score": self._pick_score(it), "document": documents[idx][:120]})
 
         scores.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
 
