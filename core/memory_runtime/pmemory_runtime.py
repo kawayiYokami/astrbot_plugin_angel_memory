@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from astrbot.api import logger
 
@@ -73,10 +73,10 @@ def to_base_memory(record: dict) -> BaseMemory:
 class PMemoryMemoryRuntime(MemoryRuntime):
     """唯一实现：全部记忆读写交给 p-memory。"""
 
-    def __init__(self, store: MemoryStore, decay_policy: Optional[dict] = None) -> None:
+    def __init__(self, store: MemoryStore, decay_policy: dict | None = None) -> None:
         self._store = store
         self._decay_policy = decay_policy
-        self._decay_candidates: List[dict] = []
+        self._decay_candidates: list[dict] = []
 
     # === 写 ===
 
@@ -85,9 +85,9 @@ class PMemoryMemoryRuntime(MemoryRuntime):
         memory_type: str,
         judgment: str,
         reasoning: str,
-        tags: List[str],
+        tags: list[str],
         is_active: bool = False,
-        strength: Optional[int] = None,
+        strength: int | None = None,
         memory_scope: str = "public",
     ) -> str:
         """新增一条记忆；同柜子已有同正文时返回那条的 id，不重复写。"""
@@ -112,11 +112,11 @@ class PMemoryMemoryRuntime(MemoryRuntime):
     async def comprehensive_recall(
         self,
         query: str,
-        limit: Optional[int] = None,
+        limit: int | None = None,
         event: Any = None,
-        vector: Optional[List[float]] = None,
+        vector: list[float] | None = None,
         memory_scope: str = "public",
-    ) -> List[BaseMemory]:
+    ) -> list[BaseMemory]:
         del event, vector  # 向量由库内部完成，宿主不再传向量
         # 主动回忆不重排、不设分数门槛：按库的融合分取前面这些条就够了
         records = await asyncio.to_thread(
@@ -131,11 +131,11 @@ class PMemoryMemoryRuntime(MemoryRuntime):
     async def chained_recall(
         self,
         query: str,
-        entities: List[str],
-        vector: Optional[List[float]] = None,
+        entities: list[str],
+        vector: list[float] | None = None,
         event: Any = None,
         memory_scope: str = "public",
-    ) -> List[BaseMemory]:
+    ) -> list[BaseMemory]:
         del vector, event
         merged = " ".join(
             [str(query or "").strip()]
@@ -154,14 +154,14 @@ class PMemoryMemoryRuntime(MemoryRuntime):
 
     async def get_memories_by_ids(
         self,
-        memory_ids: List[str],
-        memory_scope: Optional[str] = None,
-    ) -> List[BaseMemory]:
+        memory_ids: list[str],
+        memory_scope: str | None = None,
+    ) -> list[BaseMemory]:
         records = await asyncio.to_thread(self._get_many, memory_ids, memory_scope)
         return [to_base_memory(record) for record in records]
 
-    def _get_many(self, memory_ids: List[str], memory_scope: Optional[str]) -> List[dict]:
-        output: List[dict] = []
+    def _get_many(self, memory_ids: list[str], memory_scope: str | None) -> list[dict]:
+        output: list[dict] = []
         for memory_id in memory_ids:
             record = self._store.get(memory_id, memory_scope or "public")
             if record:
@@ -172,12 +172,12 @@ class PMemoryMemoryRuntime(MemoryRuntime):
 
     async def feedback(
         self,
-        useful_memory_ids: Optional[List[str]] = None,
-        recalled_memory_ids: Optional[List[str]] = None,
-        memory_actions: Optional[List[dict]] = None,
+        useful_memory_ids: list[str] | None = None,
+        recalled_memory_ids: list[str] | None = None,
+        memory_actions: list[dict] | None = None,
         memory_scope: str = "public",
-    ) -> List[BaseMemory]:
-        refreshed: List[dict] = []
+    ) -> list[BaseMemory]:
+        refreshed: list[dict] = []
         useful = list(useful_memory_ids or [])
         recalled = list(recalled_memory_ids or [])
         if useful or recalled:
@@ -198,12 +198,12 @@ class PMemoryMemoryRuntime(MemoryRuntime):
                 refreshed.append(record)
         return [to_base_memory(record) for record in refreshed]
 
-    def _judgment_index(self, scope: str) -> Dict[tuple, dict]:
+    def _judgment_index(self, scope: str) -> dict[tuple, dict]:
         """当前可见范围内「(正文, 柜子) → 已有记录」，供写入前判重。
 
         判重键用正文全等而不是相似度：同一句话在同一个柜子里只该有一条。
         """
-        index: Dict[tuple, dict] = {}
+        index: dict[tuple, dict] = {}
         for record in self._store.list_records(scope):
             key = (
                 str(record.get("judgment") or "").strip(),
@@ -213,8 +213,8 @@ class PMemoryMemoryRuntime(MemoryRuntime):
         return index
 
     def _apply_action(
-        self, action: dict, scope: str, existing: Optional[Dict[tuple, dict]] = None
-    ) -> Optional[dict]:
+        self, action: dict, scope: str, existing: dict[tuple, dict] | None = None
+    ) -> dict | None:
         """update 原地更新；merge 新建后删除源记忆；create 同正文同柜子只留一条。
 
         删除有意不看 scope：合并允许跨会话收拢记忆，删的是全局 id。
@@ -290,7 +290,7 @@ class PMemoryMemoryRuntime(MemoryRuntime):
         self._decay_candidates = list(report.get("candidates") or [])
         return int(report.get("decayed") or 0)
 
-    async def list_retirement_candidates(self) -> List[BaseMemory]:
+    async def list_retirement_candidates(self) -> list[BaseMemory]:
         # 衰减引擎不认 pinned：判过 keep 的记忆强度照样归零、照样被返回。
         # 这里必须再筛一遍，否则 keep 只是面板上的一个勾，下一轮又会被送审。
         records = [
@@ -302,9 +302,9 @@ class PMemoryMemoryRuntime(MemoryRuntime):
 
     async def apply_retirement_decisions(
         self,
-        delete_ids: List[str],
-        keep_ids: List[str],
-    ) -> Dict[str, int]:
+        delete_ids: list[str],
+        keep_ids: list[str],
+    ) -> dict[str, int]:
         deleted = await asyncio.to_thread(self._store.delete, delete_ids)
         kept = 0
         for memory_id in keep_ids:

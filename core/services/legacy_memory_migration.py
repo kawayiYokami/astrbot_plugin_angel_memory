@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from astrbot.api import logger as plugin_logger
 
@@ -64,7 +64,7 @@ class LegacyMemoryMigration:
         self._version = str(version or "")
         self.logger = logger or plugin_logger
         self._lock = asyncio.Lock()
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         # 自管单线程 executor：asyncio.to_thread 走默认池，拿不到底层线程，
         # 取消协程时写库线程仍在跑。自管才能保证 shutdown 等到它真正结束。
         self._executor = ThreadPoolExecutor(
@@ -116,7 +116,7 @@ class LegacyMemoryMigration:
             return
         self._task = loop.create_task(self.run_if_needed())
 
-    async def run_if_needed(self) -> Dict[str, Any]:
+    async def run_if_needed(self) -> dict[str, Any]:
         async with self._lock:
             if self._already_done():
                 return {"status": "skipped", "written": 0, "source": "已迁移过"}
@@ -273,10 +273,10 @@ class LegacyMemoryMigration:
     # === 导出 / 导入 ===
 
     def _export_to_json(
-        self, records: List[dict], tag_index: Dict[str, List[str]]
+        self, records: list[dict], tag_index: dict[str, list[str]]
     ) -> Path:
         """合并后的记录连同标签一起落盘，返回导出文件路径。"""
-        export_records: List[dict] = []
+        export_records: list[dict] = []
         for row in records:
             if not isinstance(row, dict):
                 continue
@@ -299,7 +299,7 @@ class LegacyMemoryMigration:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         return self._export_file
 
-    def _read_export_file(self, path: Path) -> Tuple[List[dict], Dict[str, List[str]]]:
+    def _read_export_file(self, path: Path) -> tuple[list[dict], dict[str, list[str]]]:
         with Path(path).open("r", encoding="utf-8") as f:
             snapshot = json.load(f)
         if not isinstance(snapshot, dict) or not isinstance(
@@ -311,7 +311,7 @@ class LegacyMemoryMigration:
 
     # === 数据源读取 ===
 
-    async def _read_sql(self) -> Tuple[List[dict], Dict[str, List[str]], str]:
+    async def _read_sql(self) -> tuple[list[dict], dict[str, list[str]], str]:
         try:
             snapshot = await self._sql.export_backup_snapshot()
         except Exception as e:
@@ -323,7 +323,7 @@ class LegacyMemoryMigration:
             "",
         )
 
-    def _read_latest_backup(self) -> Tuple[List[dict], Dict[str, List[str]], str]:
+    def _read_latest_backup(self) -> tuple[list[dict], dict[str, list[str]], str]:
         if self._backup_dir is None or not self._backup_dir.is_dir():
             return [], {}, ""
         files = sorted(self._backup_dir.glob(BACKUP_GLOB))
@@ -345,7 +345,7 @@ class LegacyMemoryMigration:
 
     # === 实际写入（同步，跑在线程里） ===
 
-    def _migrate(self, records: List[dict], tag_index: Dict[str, List[str]]) -> Dict[str, int]:
+    def _migrate(self, records: list[dict], tag_index: dict[str, list[str]]) -> dict[str, int]:
         existing = self._existing_legacy_ids()
         # 除了按旧 ID 判重，还要按「正文 + 柜子」判重：
         # 备份文件是新库自己导出的快照，把新库已有的记忆当成旧数据再写一遍，
@@ -422,7 +422,7 @@ class LegacyMemoryMigration:
         }
 
     @staticmethod
-    def _legacy_key(legacy_id: str) -> Dict[str, Any]:
+    def _legacy_key(legacy_id: str) -> dict[str, Any]:
         # 与 p-memory 自带导入器的溯源结构保持一致，排障时能直接对回旧表
         return {
             "legacy": {
@@ -433,14 +433,14 @@ class LegacyMemoryMigration:
         }
 
     @staticmethod
-    def _tag_index(snapshot: Dict[str, Any]) -> Dict[str, List[str]]:
+    def _tag_index(snapshot: dict[str, Any]) -> dict[str, list[str]]:
         """标签来源有两种：旧库的 global_tags + 关系表，或备份内嵌在记录里。"""
         names = {
             str(tag.get("id")): str(tag.get("name") or "")
             for tag in (snapshot.get("global_tags") or [])
             if isinstance(tag, dict)
         }
-        index: Dict[str, List[str]] = {}
+        index: dict[str, list[str]] = {}
         for rel in snapshot.get("memory_tag_rel") or []:
             if not isinstance(rel, dict):
                 continue
@@ -457,8 +457,8 @@ class LegacyMemoryMigration:
                 index.setdefault(memory_id, [str(tag) for tag in inline if str(tag).strip()])
         return index
 
-    def _existing_legacy_ids(self) -> Set[str]:
-        found: Set[str] = set()
+    def _existing_legacy_ids(self) -> set[str]:
+        found: set[str] = set()
         for record in self._store.list_records(all_scopes=True):
             metadata = record.get("metadata") or {}
             legacy = metadata.get("legacy") or {}
@@ -510,7 +510,7 @@ class LegacyMemoryMigration:
                 await asyncio.wait_for(
                     asyncio.to_thread(self._executor.shutdown, True), timeout=30
                 )
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 self.logger.error(
                     "[旧记忆迁移] 写库线程 30 秒仍未退出，放弃等待，随进程退出"
                 )

@@ -4,7 +4,7 @@ Angel Eye 插件 - JSON 解析工具
 """
 
 import json
-from typing import Dict, Optional, Any, List
+from typing import Any
 
 from astrbot.api import logger
 
@@ -20,21 +20,21 @@ def _strip_code_fences(text: str) -> str:
     return text.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
 
 
-def _find_json_candidates(text: str) -> List[str]:
+def _find_json_candidates(text: str) -> list[str]:
     """
     在文本中扫描并返回所有"平衡的大括号"子串，作为潜在的 JSON 候选。
     - 跳过字符串字面量中的花括号
     - 支持嵌套
     返回顺序为出现顺序（从左到右）
     """
-    candidates: List[str] = []
+    candidates: list[str] = []
     if not text:
         return candidates
 
     in_string = False
     escape = False
     depth = 0
-    start_idx: Optional[int] = None
+    start_idx: int | None = None
 
     for i, ch in enumerate(text):
         if in_string:
@@ -55,12 +55,11 @@ def _find_json_candidates(text: str) -> List[str]:
             if depth == 0:
                 start_idx = i
             depth += 1
-        elif ch == "}":
-            if depth > 0:
-                depth -= 1
-                if depth == 0 and start_idx is not None:
-                    candidates.append(text[start_idx : i + 1])
-                    start_idx = None
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start_idx is not None:
+                candidates.append(text[start_idx : i + 1])
+                start_idx = None
 
     return candidates
 
@@ -77,7 +76,7 @@ class JsonParser:
         """初始化 JSON 解析器。"""
         self.logger = logger
 
-    def parse_llm_response(self, response_text: str) -> Optional[Dict[str, Any]]:
+    def parse_llm_response(self, response_text: str) -> dict[str, Any] | None:
         """
         从 LLM 响应文本中解析出 feedback_data 字典。
 
@@ -128,9 +127,9 @@ class JsonParser:
         self,
         text: str,
         separator: str = "---JSON---",
-        required_fields: Optional[List[str]] = None,
-        optional_fields: Optional[List[str]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        required_fields: list[str] | None = None,
+        optional_fields: list[str] | None = None,
+    ) -> dict[str, Any] | None:
         """
         从可能包含其他文本的字符串中，智能地提取最符合条件的单个JSON对象。
 
@@ -190,12 +189,11 @@ class JsonParser:
                     continue  # 只处理对象类型的JSON
 
                 # 硬性条件：检查必须字段
-                if required_fields:
-                    if not all(field in parsed_json for field in required_fields):
-                        self.logger.debug(
-                            f"候选JSON缺少必须字段，跳过: {candidate_str[:100]}..."
-                        )
-                        continue
+                if required_fields and not all(field in parsed_json for field in required_fields):
+                    self.logger.debug(
+                        f"候选JSON缺少必须字段，跳过: {candidate_str[:100]}..."
+                    )
+                    continue
 
                 # 计算分数
                 score = 0

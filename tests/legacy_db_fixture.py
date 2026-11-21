@@ -10,7 +10,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _LEGACY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_records (
@@ -72,9 +72,9 @@ class LegacyDb:
         self,
         judgment: str,
         *,
-        memory_id: Optional[str] = None,
+        memory_id: str | None = None,
         reasoning: str = "旧库背景",
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
         memory_type: str = "知识记忆",
         strength: int = 50,
         is_active: bool = False,
@@ -83,8 +83,8 @@ class LegacyDb:
         last_recalled_at: float = 0.0,
         last_decay_at: float = 0.0,
         memory_scope: str = "public",
-        created_at: Optional[float] = None,
-        updated_at: Optional[float] = None,
+        created_at: float | None = None,
+        updated_at: float | None = None,
     ) -> str:
         import uuid
 
@@ -119,7 +119,7 @@ class LegacyDb:
                     )
         return mid
 
-    def add_user(self, platform: str, user_id: str, names: List[str]) -> None:
+    def add_user(self, platform: str, user_id: str, names: list[str]) -> None:
         now = time.time()
         with self._connect() as conn:
             conn.execute(
@@ -137,7 +137,7 @@ class LegacyDb:
                 (group_id, group_name, now, now),
             )
 
-    def dump(self) -> Dict[str, Any]:
+    def dump(self) -> dict[str, Any]:
         with self._connect() as conn:
             return {
                 "records": [dict(r) for r in conn.execute("SELECT * FROM memory_records").fetchall()],

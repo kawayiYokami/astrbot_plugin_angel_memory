@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from quart import jsonify, request
 
@@ -19,7 +19,7 @@ class TraceAPI:
     def __init__(self, plugin_context):
         self.plugin_context = plugin_context
 
-    def _get_deepmind(self) -> Optional[Any]:
+    def _get_deepmind(self) -> Any | None:
         try:
             return self.plugin_context.get_component("deepmind")
         except Exception:
@@ -57,14 +57,14 @@ class TraceAPI:
             return jsonify({"ok": False, "deleted": 0, "note": f"删除记录失败: {e}"})
         return jsonify({"ok": True, "deleted": deleted})
 
-    async def _collect_records(self, deepmind) -> List[Dict[str, Any]]:
+    async def _collect_records(self, deepmind) -> list[dict[str, Any]]:
         store = getattr(deepmind, "trace_store", None)
         persisted = (
             await store.read_recent(limit=self.TRACE_LIMIT) if store is not None else []
         )
 
         # 内存中仍处于 pending 的反思记录尚未落盘，一并展示
-        pending: List[Dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
         buffer = getattr(deepmind, "reflection_trace", None)
         if buffer is not None:
             for entry in buffer.snapshot():
@@ -80,7 +80,7 @@ class TraceAPI:
         return merged[: self.TRACE_LIMIT]
 
     @staticmethod
-    def _sort_key(record: Dict[str, Any]) -> float:
+    def _sort_key(record: dict[str, Any]) -> float:
         try:
             timestamp = float(record.get("timestamp", 0.0) or 0.0)
         except (TypeError, ValueError):

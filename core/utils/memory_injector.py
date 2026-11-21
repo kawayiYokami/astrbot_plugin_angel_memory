@@ -4,7 +4,8 @@
 负责格式化记忆并注入到大模型的提示词中。
 """
 
-from typing import List, Dict, Any
+from typing import Any
+
 from ..session_memory import MemoryItem
 from .memory_formatter import MemoryFormatter
 from .memory_id_resolver import MemoryIDResolver
@@ -15,7 +16,7 @@ class MemoryInjector:
 
     @staticmethod
     def format_memories_for_prompt(
-        feedback_data: Dict[str, Any], session_memories: List[MemoryItem]
+        feedback_data: dict[str, Any], session_memories: list[MemoryItem]
     ) -> str:
         """
         格式化记忆用于LLM提示词
@@ -48,7 +49,7 @@ class MemoryInjector:
 
     @staticmethod
     def format_session_memories_for_prompt(
-        session_memories: List[MemoryItem], short_id_registry=None
+        session_memories: list[MemoryItem], short_id_registry=None
     ) -> str:
         """
         格式化会话工作记忆用于LLM提示词

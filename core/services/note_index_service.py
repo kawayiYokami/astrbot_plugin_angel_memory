@@ -12,11 +12,10 @@ import asyncio
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
-from ...pmemory import DOMAIN_DIRS, NotesStore
 
 from astrbot.api import logger
+
+from ...pmemory import DOMAIN_DIRS, NotesStore
 
 SCAN_INTERVAL_SECONDS = 60
 
@@ -27,21 +26,21 @@ class NoteIndexService:
     def __init__(
         self,
         raw_dir: str | Path,
-        notes: Optional[NotesStore] = None,
+        notes: NotesStore | None = None,
         scan_interval: int = SCAN_INTERVAL_SECONDS,
     ) -> None:
         self._raw_dir = Path(raw_dir)
         self._notes = notes or NotesStore(self._raw_dir)
         self._scan_interval = max(10, int(scan_interval))
-        self._state: Dict[str, Tuple[float, int]] = {}
+        self._state: dict[str, tuple[float, int]] = {}
         self._lock = threading.RLock()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
     # === 域与路径 ===
 
     @staticmethod
-    def domain_for_path(path: Path, raw_dir: Path) -> Optional[str]:
+    def domain_for_path(path: Path, raw_dir: Path) -> str | None:
         try:
             relative = path.resolve().relative_to(raw_dir.resolve())
         except ValueError:
@@ -52,8 +51,8 @@ class NoteIndexService:
                 return domain
         return None
 
-    def _domain_dirs(self) -> List[Tuple[str, Path]]:
-        output: List[Tuple[str, Path]] = []
+    def _domain_dirs(self) -> list[tuple[str, Path]]:
+        output: list[tuple[str, Path]] = []
         for domain, relative in DOMAIN_DIRS.items():
             directory = self._raw_dir / relative
             if directory.is_dir():
@@ -62,9 +61,9 @@ class NoteIndexService:
 
     # === 扫描 ===
 
-    def scan_all(self) -> Dict[str, int]:
+    def scan_all(self) -> dict[str, int]:
         """全量对比：新增/变更写入，消失的删除。返回各域处理条数。"""
-        result: Dict[str, int] = {}
+        result: dict[str, int] = {}
         for domain, directory in self._domain_dirs():
             changed = 0
             seen: set[str] = set()
@@ -175,8 +174,8 @@ class NoteIndexService:
     # === 读 ===
 
     def find_note(
-        self, note_id: int, domains: Optional[List[str]] = None
-    ) -> Tuple[Optional[str], Optional[dict]]:
+        self, note_id: int, domains: list[str] | None = None
+    ) -> tuple[str | None, dict | None]:
         """按 id 定位笔记。给 domains 时只查白名单内的域，hidden 域碰都不碰。"""
         if domains is not None:
             wanted = [str(name).strip().lower() for name in domains if str(name).strip()]
@@ -197,7 +196,7 @@ class NoteIndexService:
         return None, None
 
     @staticmethod
-    def file_for_note(note: dict) -> Optional[Path]:
+    def file_for_note(note: dict) -> Path | None:
         """从已查到的 note 直接解析文件路径，不再回查库。"""
         if not isinstance(note, dict):
             return None
@@ -207,7 +206,7 @@ class NoteIndexService:
         path = Path(source)
         return path if path.is_file() else None
 
-    def path_for_note(self, domain: Optional[str], note: dict) -> str:
+    def path_for_note(self, domain: str | None, note: dict) -> str:
         """从已查到的 note 直接算相对路径，不再回查库。"""
         if not isinstance(note, dict):
             return ""
@@ -220,7 +219,7 @@ class NoteIndexService:
         except ValueError:
             return Path(source).name
 
-    def note_file(self, note_id: int) -> Optional[Path]:
+    def note_file(self, note_id: int) -> Path | None:
         _, note = self.find_note(note_id)
         return self.file_for_note(note or {})
 
@@ -234,8 +233,8 @@ class NoteIndexService:
         self,
         query: str,
         max_results: int = 50,
-        domains: Optional[List[str]] = None,
-    ) -> List[dict]:
+        domains: list[str] | None = None,
+    ) -> list[dict]:
         """按笔记聚合的检索结果，形状对齐旧 `search_notes`。
 
         `domains` 是允许检索的域白名单；不给表示全部已知域。不可见域由调用方
@@ -245,7 +244,7 @@ class NoteIndexService:
         if not text:
             return []
         allowed = list(domains) if domains is not None else [name for name, _ in self._domain_dirs()]
-        items: List[dict] = []
+        items: list[dict] = []
         for name in allowed:
             if not name:
                 continue
@@ -277,8 +276,8 @@ class NoteIndexService:
         self,
         query: str,
         max_results: int = 50,
-        domains: Optional[List[str]] = None,
-    ) -> List[dict]:
+        domains: list[str] | None = None,
+    ) -> list[dict]:
         return await asyncio.to_thread(self.search_notes, query, max_results, domains)
 
     async def search_notes_by_top_k(
@@ -286,9 +285,9 @@ class NoteIndexService:
         query: str,
         recall_count: int = 100,
         top_k: int = 20,
-        domain: Optional[str] = None,
-        domains: Optional[List[str]] = None,
-    ) -> List[dict]:
+        domain: str | None = None,
+        domains: list[str] | None = None,
+    ) -> list[dict]:
         del recall_count
         allowed = domains if domains is not None else ([domain] if domain else None)
         return await asyncio.to_thread(self.search_notes, query, top_k, allowed)

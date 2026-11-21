@@ -5,10 +5,10 @@ InitializationManager - 初始化状态管理器
 与PluginContext协作，PluginContext负责资源管理，InitializationManager负责状态管理。
 """
 
-from enum import Enum
-from threading import RLock, Event
-import time
 import asyncio
+import time
+from enum import Enum
+from threading import Event, RLock
 
 from astrbot.api import logger
 

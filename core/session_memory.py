@@ -11,9 +11,9 @@
 
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
-
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from ..llm_memory.models.data_models import BaseMemory
 from .config import MemoryCapacityConfig, MemoryConstants
@@ -28,10 +28,7 @@ def is_source_alive(bound_text: str, alive_texts) -> bool:
     bound = str(bound_text or "").strip()
     if not bound:
         return False
-    for text in alive_texts or []:
-        if str(text or "").strip() == bound:
-            return True
-    return False
+    return any(str(text or "").strip() == bound for text in alive_texts or [])
 
 
 @dataclass
@@ -63,8 +60,8 @@ class SessionMemory:
     def __init__(
         self,
         session_id: str,
-        capacity_config: Optional[MemoryCapacityConfig] = None,
-        capacity_provider: Optional[Callable[[], float]] = None,
+        capacity_config: MemoryCapacityConfig | None = None,
+        capacity_provider: Callable[[], float] | None = None,
     ):
         """
         初始化会话记忆
@@ -98,7 +95,7 @@ class SessionMemory:
 
     def add_memories(
         self,
-        memories: List[BaseMemory],
+        memories: list[BaseMemory],
         recalled_message_id: str = "",
         recalled_message_text: str = "",
     ) -> None:
@@ -173,7 +170,7 @@ class SessionMemory:
 
     def _cleanup_by_capacity(
         self, memory_type: str, multiplier: float
-    ) -> List[MemoryItem]:
+    ) -> list[MemoryItem]:
         """按类型槽位清理：最久没被召回的先走，同分时更早写入的先走。"""
         capacity = self._capacity_of(memory_type, multiplier)
         if capacity <= 0:
@@ -191,7 +188,7 @@ class SessionMemory:
         self._remove_items(removed)
         return removed
 
-    def _remove_items(self, items: List[MemoryItem]) -> None:
+    def _remove_items(self, items: list[MemoryItem]) -> None:
         """从短期记忆里移除指定条目。"""
         removed_ids = {item.id for item in items}
         self.memories = [
@@ -200,7 +197,7 @@ class SessionMemory:
         for memory_id in removed_ids:
             self.memory_map.pop(memory_id, None)
 
-    def prune_departed(self, alive_texts) -> List[MemoryItem]:
+    def prune_departed(self, alive_texts) -> list[MemoryItem]:
         """移除来源消息已经不在本轮上下文里的记忆条目，返回被移除的条目本身。
 
         `alive_texts` 是本轮上下文里所有用户消息的纯文本。条目存的是它当初作为
@@ -221,7 +218,7 @@ class SessionMemory:
             self._remove_items(departed)
             return departed
 
-    def get_memories(self) -> List[MemoryItem]:
+    def get_memories(self) -> list[MemoryItem]:
         """
         获取短期记忆中的所有记忆条目
 
@@ -237,7 +234,7 @@ class SessionMemory:
             self.memories.clear()
             self.memory_map.clear()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         获取短期记忆统计信息
 
@@ -246,7 +243,7 @@ class SessionMemory:
         """
         multiplier = self._current_multiplier()
         with self.lock:
-            by_type: Dict[str, Dict[str, Any]] = {}
+            by_type: dict[str, dict[str, Any]] = {}
             for memory in self.memories:
                 slot = by_type.setdefault(
                     memory.memory_type,
@@ -269,8 +266,8 @@ class SessionMemoryManager:
 
     def __init__(
         self,
-        capacity_config: Optional[MemoryCapacityConfig] = None,
-        capacity_provider: Optional[Callable[[], float]] = None,
+        capacity_config: MemoryCapacityConfig | None = None,
+        capacity_provider: Callable[[], float] | None = None,
     ):
         """
         Args:
@@ -280,7 +277,7 @@ class SessionMemoryManager:
         self.capacity_config = capacity_config or MemoryCapacityConfig()
         self.capacity_provider = capacity_provider
         self.lock = threading.Lock()
-        self.sessions: Dict[str, SessionMemory] = {}
+        self.sessions: dict[str, SessionMemory] = {}
 
     def get_or_create_session(self, session_id: str) -> SessionMemory:
         """
@@ -302,7 +299,7 @@ class SessionMemoryManager:
     def add_memories_to_session(
         self,
         session_id: str,
-        memories: List[BaseMemory],
+        memories: list[BaseMemory],
         recalled_message_id: str = "",
         recalled_message_text: str = "",
     ) -> None:
@@ -320,7 +317,7 @@ class SessionMemoryManager:
 
     def prune_departed_from_session(
         self, session_id: str, alive_texts
-    ) -> List[MemoryItem]:
+    ) -> list[MemoryItem]:
         """按本轮上下文清理来源已离场的记忆，返回被移除的记忆条目本身。"""
         with self.lock:
             session = self.sessions.get(session_id)
@@ -328,7 +325,7 @@ class SessionMemoryManager:
             return []
         return session.prune_departed(alive_texts)
 
-    def get_session_memories(self, session_id: str) -> List[MemoryItem]:
+    def get_session_memories(self, session_id: str) -> list[MemoryItem]:
         """
         获取短期记忆
 
@@ -355,7 +352,7 @@ class SessionMemoryManager:
                 self.sessions[session_id].clear()
                 del self.sessions[session_id]
 
-    def get_all_session_stats(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_session_stats(self) -> dict[str, dict[str, Any]]:
         """获取全部会话的统计信息。"""
         with self.lock:
             sessions = list(self.sessions.items())

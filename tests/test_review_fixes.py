@@ -1,8 +1,8 @@
 """review 返修点的回归测试：直读越权、假成功、迁移导出。"""
 
 from __future__ import annotations
-import asyncio
 
+import asyncio
 import json
 import tempfile
 import time
@@ -12,12 +12,13 @@ from astrbot_plugin_angel_memory.core.services.legacy_memory_migration import (
     EXPORT_FILE,
     LegacyMemoryMigration,
 )
-from astrbot_plugin_angel_memory.core.services.note_index_service import NoteIndexService
+from astrbot_plugin_angel_memory.core.services.note_index_service import (
+    NoteIndexService,
+)
 from astrbot_plugin_angel_memory.llm_memory.components.memory_sql_manager import (
     MemorySqlManager,
 )
 from astrbot_plugin_angel_memory.pmemory import MemoryStore, pmemory
-
 from legacy_db_fixture import LegacyDb
 
 

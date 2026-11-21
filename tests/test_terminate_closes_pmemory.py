@@ -6,9 +6,8 @@ pmemory 用替身，不真的开库。替身按真实语义模拟：已打开时
 
 import logging
 
-import pytest
-
 import astrbot_plugin_angel_memory.main as plugin_main
+import pytest
 
 
 class FakePmemory:

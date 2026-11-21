@@ -12,16 +12,15 @@
 """
 
 import asyncio
+import contextlib
 import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import pytest
-from p_memory.errors import ClosedError, PMemoryError
-
 from astrbot_plugin_angel_memory.pmemory.kb import PMemory
+from p_memory.errors import ClosedError, PMemoryError
 
 
 @pytest.mark.asyncio
@@ -311,10 +310,8 @@ async def test_configure_does_not_block_event_loop():
         )
     finally:
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
     elapsed = time.time() - started
 
     assert elapsed < 5, f"configure 用了 {elapsed:.1f}s"
@@ -329,7 +326,6 @@ def test_requires_pmemory_version():
     静默失效。这条检查让它在启动时就停下来，并说清该装哪个版本。
     """
     import p_memory
-
     from astrbot_plugin_angel_memory.pmemory.kb import require_pmemory_version
 
     original = p_memory.__version__

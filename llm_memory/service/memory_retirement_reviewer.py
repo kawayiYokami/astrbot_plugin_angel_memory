@@ -12,8 +12,9 @@ import asyncio
 import json
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 from ..models.data_models import BaseMemory
 from ..prompts.prompt_assembler import PromptAssembler
@@ -40,7 +41,7 @@ class RetirementReviewError(Exception):
 class RetirementReviewOutcome:
     """一次淘汰审查的结果。"""
 
-    decisions: Dict[str, str]
+    decisions: dict[str, str]
     prompt: str
     system_prompt: str
     response: str
@@ -88,18 +89,18 @@ class MemoryRetirementReviewer:
                 provider.text_chat(prompt=user_prompt, system_prompt=system_prompt),
                 timeout=self.REVIEW_TIMEOUT_SECONDS,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RetirementReviewError(
                 f"审查调用超时（{int(self.REVIEW_TIMEOUT_SECONDS)} 秒）",
                 prompt=user_prompt,
                 system_prompt=system_prompt,
-            )
+            ) from None
         except Exception as e:
             raise RetirementReviewError(
                 f"审查调用失败: {e}",
                 prompt=user_prompt,
                 system_prompt=system_prompt,
-            )
+            ) from e
 
         response_text = str(getattr(llm_response, "completion_text", "") or "")
         if not response_text.strip():
@@ -118,7 +119,7 @@ class MemoryRetirementReviewer:
                 prompt=user_prompt,
                 system_prompt=system_prompt,
                 response=response_text,
-            )
+            ) from e
 
         return RetirementReviewOutcome(
             decisions=decisions,
@@ -128,7 +129,7 @@ class MemoryRetirementReviewer:
             candidate_count=len(candidate_list),
         )
 
-    def _build_short_ids(self, count: int) -> List[str]:
+    def _build_short_ids(self, count: int) -> list[str]:
         return [f"m{index}-{self._id_token}" for index in range(count)]
 
     def build_system_prompt(self) -> str:
@@ -153,7 +154,7 @@ class MemoryRetirementReviewer:
         candidates: Sequence[BaseMemory],
         short_ids: Sequence[str],
     ) -> str:
-        blocks: List[str] = []
+        blocks: list[str] = []
         for index, mem in enumerate(candidates):
             judgment = str(getattr(mem, "judgment", "") or "").strip()
             reasoning = str(getattr(mem, "reasoning", "") or "").strip()
@@ -184,7 +185,7 @@ class MemoryRetirementReviewer:
         text: str,
         candidates: Sequence[BaseMemory],
         short_ids: Sequence[str],
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """把模型返回解析为「真实记忆 ID -> 裁决」表；无法解析时抛 ValueError。"""
         data = self._extract_json(text)
         if not isinstance(data, dict):
@@ -197,7 +198,7 @@ class MemoryRetirementReviewer:
         short_id_map = {
             str(short_ids[index]): str(mem.id) for index, mem in enumerate(candidates)
         }
-        decisions: Dict[str, str] = {}
+        decisions: dict[str, str] = {}
         for item in raw_decisions:
             if not isinstance(item, dict):
                 continue
@@ -209,7 +210,7 @@ class MemoryRetirementReviewer:
         return decisions
 
     @staticmethod
-    def _extract_json(text: str) -> Optional[Any]:
+    def _extract_json(text: str) -> Any | None:
         cleaned = str(text or "").strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.strip("`")

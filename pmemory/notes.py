@@ -9,14 +9,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from astrbot.api import logger
 from p_memory.errors import PMemoryError
 
 from .config import DOMAIN_DIRS, SCOPE_PUBLIC, knowledge_namespace
 from .kb import pmemory
-
-from astrbot.api import logger
 
 SNIPPET_MAX_CHARS = 120
 DEFAULT_TITLE_LIMIT = 5
@@ -37,7 +36,7 @@ class NotesStore:
 
     # === 目录与路径 ===
 
-    def root_dir(self, domain: str) -> Optional[Path]:
+    def root_dir(self, domain: str) -> Path | None:
         relative = DOMAIN_DIRS.get(str(domain or "").strip().lower())
         if not relative or self._raw_dir is None:
             return None
@@ -51,8 +50,8 @@ class NotesStore:
         prefix = str(root).replace("\\", "/").rstrip("/") + "/"
         return text[len(prefix):] if text.startswith(prefix) else text.rsplit("/", 1)[-1]
 
-    def _filter(self, domain: str, note_ids: Optional[List[int]] = None) -> dict:
-        flt: Dict[str, Any] = {
+    def _filter(self, domain: str, note_ids: list[int] | None = None) -> dict:
+        flt: dict[str, Any] = {
             "namespace": knowledge_namespace(domain),
             "scopes": [SCOPE_PUBLIC],
         }
@@ -108,28 +107,28 @@ class NotesStore:
 
     # === 读 ===
 
-    def get_note(self, note_id: int, domain: Optional[str] = None) -> Optional[dict]:
+    def get_note(self, note_id: int, domain: str | None = None) -> dict | None:
         flt = self._filter(domain) if domain else {"scopes": [SCOPE_PUBLIC]}
         try:
             return self._store.kb.notes.get(int(note_id), filter=flt)
         except PMemoryError:
             return None
 
-    def get_chunk(self, chunk_id: int, domain: Optional[str] = None) -> Optional[dict]:
+    def get_chunk(self, chunk_id: int, domain: str | None = None) -> dict | None:
         flt = self._filter(domain) if domain else {"scopes": [SCOPE_PUBLIC]}
         try:
             return self._store.kb.notes.get_chunk(int(chunk_id), filter=flt)
         except PMemoryError:
             return None
 
-    def chunks(self, note_id: int, domain: Optional[str] = None) -> List[dict]:
+    def chunks(self, note_id: int, domain: str | None = None) -> list[dict]:
         flt = self._filter(domain) if domain else {"scopes": [SCOPE_PUBLIC]}
         try:
             return self._store.kb.notes.chunks(int(note_id), filter=flt) or []
         except PMemoryError:
             return []
 
-    def resolve_note_id(self, domain: str, path: str | Path) -> Optional[int]:
+    def resolve_note_id(self, domain: str, path: str | Path) -> int | None:
         """按域内相对路径定位笔记 id。
 
         文件名只挂在切片的名字列上，所以先用 stem 命中候选，再逐个校验
@@ -157,7 +156,7 @@ class NotesStore:
         except PMemoryError:
             logger.exception("[PMEMORY] 路径定位笔记失败 域=%s path=%s", domain, relative)
             return None
-        seen: List[int] = []
+        seen: list[int] = []
         for hit in result.get("hits") or []:
             record = hit.get("record") or {}
             note_id = record.get("note_id")
@@ -179,7 +178,7 @@ class NotesStore:
         title_limit: int = DEFAULT_TITLE_LIMIT,
         content_chars: int = DEFAULT_CONTENT_CHARS,
         candidate_limit: int = DEFAULT_CANDIDATE_LIMIT,
-    ) -> Dict[str, List[dict]]:
+    ) -> dict[str, list[dict]]:
         text = _text(query)
         empty = {"titles": [], "contents": [], "paths": []}
         if not text:
@@ -208,7 +207,7 @@ class NotesStore:
             "paths": self._block_items(domain, section.get("paths"), with_snippets=False),
         }
 
-    def search_docs(self, domain: str, query: str, *, limit: int = 20) -> List[dict]:
+    def search_docs(self, domain: str, query: str, *, limit: int = 20) -> list[dict]:
         text = _text(query)
         if not text:
             return []
@@ -225,7 +224,7 @@ class NotesStore:
         except PMemoryError:
             logger.exception("[PMEMORY] 笔记检索失败 域=%s", domain)
             return []
-        groups: Dict[int, List[dict]] = {}
+        groups: dict[int, list[dict]] = {}
         for hit in result.get("hits") or []:
             record = hit.get("record") or {}
             note_id = record.get("note_id") if record.get("kind") == "chunk" else record.get("id")
@@ -237,7 +236,7 @@ class NotesStore:
             groups.setdefault(note_id, []).append(
                 {"chunk_id": record.get("id"), "line": record.get("offset"), "score": score}
             )
-        items: List[dict] = []
+        items: list[dict] = []
         for note_id, hits in list(groups.items())[: max(1, int(limit))]:
             note = self.get_note(note_id, domain)
             if not note:
@@ -253,7 +252,7 @@ class NotesStore:
             )
         return items
 
-    def search_doc_chunks(self, domain: str, note_id: int, query: str, *, limit: int = 50) -> List[dict]:
+    def search_doc_chunks(self, domain: str, note_id: int, query: str, *, limit: int = 50) -> list[dict]:
         text = _text(query)
         if not text or not isinstance(note_id, int):
             return []
@@ -271,7 +270,7 @@ class NotesStore:
         except PMemoryError:
             logger.exception("[PMEMORY] 单篇笔记检索失败 域=%s note=%s", domain, note_id)
             return []
-        refs: List[dict] = []
+        refs: list[dict] = []
         seen: set[int] = set()
         for hit in result.get("hits") or []:
             record = hit.get("record") or {}
@@ -287,7 +286,7 @@ class NotesStore:
                 seen.add(chunk_id)
                 refs.append({"chunk_id": chunk_id, "offset": ref.get("offset"), "score": score})
         chunks_map = {chunk.get("id"): chunk for chunk in self.chunks(note_id, domain)}
-        output: List[dict] = []
+        output: list[dict] = []
         for ref in refs:
             chunk = chunks_map.get(ref["chunk_id"]) or {}
             output.append(
@@ -302,8 +301,8 @@ class NotesStore:
 
     # === 内部 ===
 
-    def _block_items(self, domain: str, hits: object, *, with_snippets: bool) -> List[dict]:
-        rows: List[tuple] = []
+    def _block_items(self, domain: str, hits: object, *, with_snippets: bool) -> list[dict]:
+        rows: list[tuple] = []
         seen: set[int] = set()
         for hit in hits or []:
             record = hit.get("record") or {}
@@ -312,7 +311,7 @@ class NotesStore:
                 continue
             seen.add(note_id)
             rows.append((note_id, record, hit))
-        items: List[dict] = []
+        items: list[dict] = []
         for note_id, record, hit in rows:
             note = self.get_note(note_id, domain)
             if not note:

@@ -4,12 +4,12 @@
 负责将记忆格式化为统一的文本格式，便于阅读和理解。
 """
 
-from types import SimpleNamespace
-from typing import List, Dict, Any, Optional
 import time
+from types import SimpleNamespace
+from typing import Any
 
-from ..session_memory import MemoryItem
 from ..config import MemoryConstants
+from ..session_memory import MemoryItem
 
 
 class MemoryFormatter:
@@ -62,7 +62,7 @@ class MemoryFormatter:
         return f"{judgment}{reasoning}"
 
     @staticmethod
-    def format_memories_by_type(memories: List[MemoryItem]) -> Dict[str, List[str]]:
+    def format_memories_by_type(memories: list[MemoryItem]) -> dict[str, list[str]]:
         """
         按类型分组格式化记忆
 
@@ -92,9 +92,9 @@ class MemoryFormatter:
 
     @staticmethod
     def format_memories_for_prompt(
-        memories: List[MemoryItem],
-        useful_memory_ids: Optional[List[str]] = None,
-        action_memories: Optional[List[Dict[str, Any]]] = None,
+        memories: list[MemoryItem],
+        useful_memory_ids: list[str] | None = None,
+        action_memories: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         格式化记忆用于提示词
@@ -152,7 +152,7 @@ class MemoryFormatter:
         return "".join(formatted_lines)
 
     @staticmethod
-    def _deduplicate_memories(memories: List[MemoryItem]) -> List[MemoryItem]:
+    def _deduplicate_memories(memories: list[MemoryItem]) -> list[MemoryItem]:
         """
         去重记忆列表，基于judgment文本内容
 
@@ -175,7 +175,7 @@ class MemoryFormatter:
         return deduplicated
 
     @staticmethod
-    def format_session_memories(memories: List[MemoryItem], short_id_registry=None) -> str:
+    def format_session_memories(memories: list[MemoryItem], short_id_registry=None) -> str:
         """
         格式化会话工作记忆列表，无过滤，但会去重。每条记忆带全局短 ID。
 
@@ -222,10 +222,10 @@ class MemoryFormatter:
 
         return "".join(formatted_lines)
 
-    
+
 
     @staticmethod
-    def format_memories_for_display(memories: List[MemoryItem]) -> str:
+    def format_memories_for_display(memories: list[MemoryItem]) -> str:
         """
         格式化记忆用于显示
 

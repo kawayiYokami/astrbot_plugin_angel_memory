@@ -4,19 +4,19 @@
 负责处理记忆ID的转换和解析相关逻辑，避免代码重复。
 """
 
-from typing import List, Dict, Any
+from typing import Any, ClassVar
 
 
 class MemoryIDResolver:
     """记忆ID解析器"""
 
-    ALLOWED_NEW_MEMORY_TYPES = {"knowledge", "skill", "emotional", "event"}
-    ALLOWED_MEMORY_ACTIONS = {"create", "merge", "updata"}
+    ALLOWED_NEW_MEMORY_TYPES: ClassVar[set[str]] = {"knowledge", "skill", "emotional", "event"}
+    ALLOWED_MEMORY_ACTIONS: ClassVar[set[str]] = {"create", "merge", "updata"}
 
     @staticmethod
     def generate_id_mapping(
-        items: List[Dict[str, Any]], id_field: str = "id"
-    ) -> Dict[str, str]:
+        items: list[dict[str, Any]], id_field: str = "id"
+    ) -> dict[str, str]:
         """
         生成内存态自增短 ID 映射（每次调用从 m0 开始递增）。
 
@@ -39,8 +39,8 @@ class MemoryIDResolver:
 
     @staticmethod
     def resolve_memory_ids(
-        short_ids: List[str], memories: List, logger=None
-    ) -> List[str]:
+        short_ids: list[str], memories: list, logger=None
+    ) -> list[str]:
         """
         将短ID转换为完整ID
 
@@ -67,8 +67,8 @@ class MemoryIDResolver:
 
     @staticmethod
     def normalize_memory_actions_format(
-        memory_actions_raw: List[Dict[str, Any]], logger=None
-    ) -> List[Dict[str, Any]]:
+        memory_actions_raw: list[dict[str, Any]], logger=None
+    ) -> list[dict[str, Any]]:
         """
         统一化 memory_actions 结构。
 
@@ -77,7 +77,7 @@ class MemoryIDResolver:
         - action=merge 时：必须携带 source_memory_ids 和 memory
         - action=updata 时：必须携带且只能携带 1 个 source_memory_id，并携带 memory
         """
-        normalized_actions: List[Dict[str, Any]] = []
+        normalized_actions: list[dict[str, Any]] = []
 
         if not isinstance(memory_actions_raw, list):
             if logger:
@@ -114,7 +114,7 @@ class MemoryIDResolver:
                     )
                 continue
 
-            normalized_action: Dict[str, Any] = {
+            normalized_action: dict[str, Any] = {
                 "action": action,
                 "memory": {
                     "type": memory_type,

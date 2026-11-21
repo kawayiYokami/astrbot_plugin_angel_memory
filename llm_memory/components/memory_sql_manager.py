@@ -12,7 +12,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from astrbot.api import logger
 
@@ -100,8 +100,8 @@ class MemorySqlManager:
 
     def _init_short_id_registry(self) -> None:
         """启动时加载全部记忆 ID，分配纯数字短 ID（从 10000 开始递增）。"""
-        self._short_to_full: Dict[str, str] = {}
-        self._full_to_short: Dict[str, str] = {}
+        self._short_to_full: dict[str, str] = {}
+        self._full_to_short: dict[str, str] = {}
         self._next_short_id: int = 10000
 
         with self._connect() as conn:
@@ -144,9 +144,9 @@ class MemorySqlManager:
         """根据短 ID 获取完整 ID，未注册则返回空字符串。"""
         return self._short_to_full.get(str(short_id or "").strip(), "")
 
-    def build_id_mapping(self, full_ids: List[str]) -> Dict[str, str]:
+    def build_id_mapping(self, full_ids: list[str]) -> dict[str, str]:
         """为一组完整 ID 构建 {短ID: 完整ID} 映射（用于反思等场景）。"""
-        mapping: Dict[str, str] = {}
+        mapping: dict[str, str] = {}
         for full_id in full_ids:
             short_id = self.get_short_id(full_id)
             if short_id:
@@ -168,35 +168,34 @@ class MemorySqlManager:
             return
         name = str(user_name or "").strip()
         now = time.time()
-        with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT user_names FROM user_ledger WHERE platform = ? AND user_id = ?",
-                    (plat, uid),
-                ).fetchone()
-                if row is None:
-                    names = [name] if name else []
-                    conn.execute(
-                        "INSERT INTO user_ledger (platform, user_id, user_names, first_seen_at, last_seen_at) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (plat, uid, json.dumps(names, ensure_ascii=False), now, now),
-                    )
-                    return
-                try:
-                    names = json.loads(str(row["user_names"] or "[]"))
-                except (json.JSONDecodeError, ValueError):
-                    names = []
-                if not isinstance(names, list):
-                    names = []
-                if name and name not in names:
-                    names.append(name)
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_names FROM user_ledger WHERE platform = ? AND user_id = ?",
+                (plat, uid),
+            ).fetchone()
+            if row is None:
+                names = [name] if name else []
                 conn.execute(
-                    "UPDATE user_ledger SET user_names = ?, last_seen_at = ? "
-                    "WHERE platform = ? AND user_id = ?",
-                    (json.dumps(names, ensure_ascii=False), now, plat, uid),
+                    "INSERT INTO user_ledger (platform, user_id, user_names, first_seen_at, last_seen_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (plat, uid, json.dumps(names, ensure_ascii=False), now, now),
                 )
+                return
+            try:
+                names = json.loads(str(row["user_names"] or "[]"))
+            except (json.JSONDecodeError, ValueError):
+                names = []
+            if not isinstance(names, list):
+                names = []
+            if name and name not in names:
+                names.append(name)
+            conn.execute(
+                "UPDATE user_ledger SET user_names = ?, last_seen_at = ? "
+                "WHERE platform = ? AND user_id = ?",
+                (json.dumps(names, ensure_ascii=False), now, plat, uid),
+            )
 
-    def get_known_user_ids(self, platform: str = "") -> List[str]:
+    def get_known_user_ids(self, platform: str = "") -> list[str]:
         """返回账本中全部已知用户 ID；platform 非空时只返回该平台下的 ID。
 
         不带平台时返回跨平台去重后的 ID 集合（仅用于画像判定锚点），
@@ -222,7 +221,7 @@ class MemorySqlManager:
                 unique.append(uid)
         return unique
 
-    def get_user_names(self, platform: str, user_id: str) -> List[str]:
+    def get_user_names(self, platform: str, user_id: str) -> list[str]:
         """返回某平台下某用户账本中登记过的全部昵称。"""
         plat = str(platform or "").strip()
         uid = str(user_id or "").strip()
@@ -250,31 +249,30 @@ class MemorySqlManager:
             return
         gname = str(group_name or "").strip()
         now = time.time()
-        with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT group_name FROM group_ledger WHERE group_id = ?",
-                    (gid,),
-                ).fetchone()
-                if row is None:
-                    conn.execute(
-                        "INSERT INTO group_ledger (group_id, group_name, first_seen_at, last_seen_at) "
-                        "VALUES (?, ?, ?, ?)",
-                        (gid, gname, now, now),
-                    )
-                    return
-                if gname:
-                    conn.execute(
-                        "UPDATE group_ledger SET group_name = ?, last_seen_at = ? WHERE group_id = ?",
-                        (gname, now, gid),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE group_ledger SET last_seen_at = ? WHERE group_id = ?",
-                        (now, gid),
-                    )
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT group_name FROM group_ledger WHERE group_id = ?",
+                (gid,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO group_ledger (group_id, group_name, first_seen_at, last_seen_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (gid, gname, now, now),
+                )
+                return
+            if gname:
+                conn.execute(
+                    "UPDATE group_ledger SET group_name = ?, last_seen_at = ? WHERE group_id = ?",
+                    (gname, now, gid),
+                )
+            else:
+                conn.execute(
+                    "UPDATE group_ledger SET last_seen_at = ? WHERE group_id = ?",
+                    (now, gid),
+                )
 
-    def get_known_group_ids(self) -> List[str]:
+    def get_known_group_ids(self) -> list[str]:
         """返回群账本中全部已知群 ID。"""
         with self._connect() as conn:
             rows = conn.execute("SELECT group_id FROM group_ledger").fetchall()
@@ -294,14 +292,14 @@ class MemorySqlManager:
             return ""
         return str(row["group_name"] or "").strip()
 
-    def list_ledger_users(self) -> List[Dict[str, Any]]:
+    def list_ledger_users(self) -> list[dict[str, Any]]:
         """返回账本全部用户，最近活跃在前（供 WebUI 画像列表使用）。"""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT platform, user_id, user_names, first_seen_at, last_seen_at "
                 "FROM user_ledger ORDER BY last_seen_at DESC"
             ).fetchall()
-        users: List[Dict[str, Any]] = []
+        users: list[dict[str, Any]] = []
         for row in rows:
             platform = str(row["platform"] or "").strip()
             user_id = str(row["user_id"] or "").strip()
@@ -323,14 +321,14 @@ class MemorySqlManager:
             })
         return users
 
-    def list_ledger_groups(self) -> List[Dict[str, Any]]:
+    def list_ledger_groups(self) -> list[dict[str, Any]]:
         """返回账本全部群，最近活跃在前。"""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT group_id, group_name, first_seen_at, last_seen_at "
                 "FROM group_ledger ORDER BY last_seen_at DESC"
             ).fetchall()
-        groups: List[Dict[str, Any]] = []
+        groups: list[dict[str, Any]] = []
         for row in rows:
             group_id = str(row["group_id"] or "").strip()
             if not group_id:
@@ -345,11 +343,11 @@ class MemorySqlManager:
 
     # ===== 旧库迁移源（只读） =====
 
-    async def export_backup_snapshot(self) -> Dict[str, Any]:
+    async def export_backup_snapshot(self) -> dict[str, Any]:
         """导出旧 SQL 记忆快照（只被自动迁移读取，不再作为运行期数据源）。"""
         return await asyncio.to_thread(self._export_backup_snapshot_sync)
 
-    def _export_backup_snapshot_sync(self) -> Dict[str, Any]:
+    def _export_backup_snapshot_sync(self) -> dict[str, Any]:
         with self._connect() as conn:
             records_rows = conn.execute(
                 """

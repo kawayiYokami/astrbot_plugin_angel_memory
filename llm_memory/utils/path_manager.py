@@ -7,7 +7,6 @@
 
 import re
 from pathlib import Path
-from typing import Optional, Dict
 
 from astrbot.api import logger
 
@@ -16,10 +15,10 @@ class PathManager:
     """中央路径管理器 - 统一管理所有路径和供应商数据库分离"""
 
     _instance = None
-    _project_root: Optional[Path] = None
-    _current_provider: Optional[str] = None
-    _base_dir: Optional[Path] = None
-    _base_data_dir: Optional[Path] = None
+    _project_root: Path | None = None
+    _current_provider: str | None = None
+    _base_dir: Path | None = None
+    _base_data_dir: Path | None = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -178,7 +177,7 @@ class PathManager:
 
     # === 便捷方法 ===
 
-    def list_databases(self) -> Dict[str, Path]:
+    def list_databases(self) -> dict[str, Path]:
         """列出当前供应商的所有数据库文件"""
         if not self.is_provider_set():
             return {}
@@ -188,7 +187,7 @@ class PathManager:
             "file_db": self.get_file_db_path(),
         }
 
-    def get_database_info(self) -> Dict[str, any]:
+    def get_database_info(self) -> dict[str, any]:
         """获取当前供应商的数据库信息"""
         if not self.is_provider_set():
             return {}

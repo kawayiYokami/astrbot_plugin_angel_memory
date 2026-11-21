@@ -4,12 +4,11 @@
 将切片搜索结果格式化为提示词文本，包含内容摘要和位置信息。
 """
 
-from typing import Dict, List
 
 
 class NoteContextBuilder:
     @staticmethod
-    def build_candidate_list_for_prompt(notes: List[Dict]) -> str:
+    def build_candidate_list_for_prompt(notes: list[dict]) -> str:
         if not notes:
             return ""
 
@@ -34,7 +33,7 @@ class NoteContextBuilder:
             if len(content) > max_content_len:
                 content = content[:max_content_len] + "..."
 
-            parts = [f"[笔记切片]"]
+            parts = ["[笔记切片]"]
             if note_id >= 0:
                 parts.append(f"ID: {note_id}")
             parts.append(f"路径: {source_file_path}")

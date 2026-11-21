@@ -10,7 +10,7 @@ import copy
 import threading
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class ReflectionTraceBuffer:
@@ -28,7 +28,7 @@ class ReflectionTraceBuffer:
         provider_id: str,
         prompt: str,
         system_prompt: str = "",
-    ) -> Optional[int]:
+    ) -> int | None:
         """提示词构造完成后入档，返回 trace id 供结果回填；异常时返回 None。
 
         prompt 只存本次的用户提示词，固定指南另存 system_prompt。
@@ -36,7 +36,7 @@ class ReflectionTraceBuffer:
         try:
             trace_id = self._next_id
             self._next_id += 1
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "id": trace_id,
                 "timestamp": time.time(),
                 "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
@@ -57,7 +57,7 @@ class ReflectionTraceBuffer:
 
     def complete(
         self,
-        trace_id: Optional[int],
+        trace_id: int | None,
         *,
         status: str,
         response: str = "",
@@ -83,7 +83,7 @@ class ReflectionTraceBuffer:
         except Exception:
             pass
 
-    def snapshot(self) -> List[Dict[str, Any]]:
+    def snapshot(self) -> list[dict[str, Any]]:
         """返回从旧到新的记录深拷贝，不暴露内部可变对象。"""
         try:
             with self._lock:

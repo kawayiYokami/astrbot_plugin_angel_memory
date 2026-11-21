@@ -6,12 +6,11 @@
 2. 从后往前保留500token
 """
 
-import re
-from typing import Set, Tuple, Optional, List
-from astrbot.api.event import AstrMessageEvent
 import json
+import re
 
 from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
 
 
 class QueryProcessor:
@@ -38,7 +37,7 @@ class QueryProcessor:
                 secretary_decision = angelheart_data.get("secretary_decision", {})
 
                 # 提取RAG字段
-                for field in rag_fields.keys():
+                for field in rag_fields:
                     field_value = secretary_decision.get(field, [])
                     if isinstance(field_value, list):
                         rag_fields[field] = [str(item).strip() for item in field_value if item and str(item).strip()]
@@ -50,7 +49,7 @@ class QueryProcessor:
 
         return rag_fields
 
-    def _extract_assistant_names(self, event: AstrMessageEvent) -> Set[str]:
+    def _extract_assistant_names(self, event: AstrMessageEvent) -> set[str]:
         """
         从事件中提取助理的所有名字和别名
 
@@ -93,7 +92,7 @@ class QueryProcessor:
 
         return names
 
-    def _filter_assistant_names(self, query: str, names: Set[str]) -> str:
+    def _filter_assistant_names(self, query: str, names: set[str]) -> str:
         """
         从查询中过滤掉助理名字和别名
 

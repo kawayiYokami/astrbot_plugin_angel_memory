@@ -22,9 +22,9 @@ from .notes import NotesStore
 __all__ = [
     "DOMAIN_DIRS",
     "SCOPE_PUBLIC",
-    "PMemory",
     "MemoryStore",
     "NotesStore",
+    "PMemory",
     "knowledge_namespace",
     "memory_namespace",
     "normalize_domain",

@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response
@@ -27,10 +27,12 @@ GROUP_MESSAGE_TYPE = "GroupMessage"
 
 PUBLIC_SCOPE = "public"
 
-_OK = lambda data=None, message="": json_response(
+def _OK(data=None, message=""):
+    return json_response(
     {"status": "ok", "message": message, "data": data}
 )
-_ERR = lambda message, status_code=400: error_response(message, status_code=status_code)
+def _ERR(message, status_code=400):
+    return error_response(message, status_code=status_code)
 
 
 def build_session_id(group_id: object, platform_id: str = DEFAULT_PLATFORM_ID) -> str:
@@ -41,7 +43,7 @@ def build_session_id(group_id: object, platform_id: str = DEFAULT_PLATFORM_ID) -
 class ScopeMapAPI:
     """分柜映射编辑所需的候选名单。"""
 
-    def __init__(self, plugin_context: "PluginContext", plugin=None):
+    def __init__(self, plugin_context: PluginContext, plugin=None):
         self._ctx = plugin_context
         self._plugin = plugin
 
@@ -59,10 +61,10 @@ class ScopeMapAPI:
             }
         )
 
-    async def _persona_names(self) -> List[str]:
+    async def _persona_names(self) -> list[str]:
         """人格名即 persona_id：v3 的 name 字段就是它（astrbot/core/persona_mgr.py:445）。"""
         manager = getattr(self._ctx.astrbot_context, "persona_manager", None)
-        names: List[str] = []
+        names: list[str] = []
         if manager is not None:
             try:
                 rows = await manager.get_all_personas()
@@ -85,7 +87,7 @@ class ScopeMapAPI:
                     names.append(name)
         return sorted(set(names))
 
-    def _groups(self) -> List[Dict[str, str]]:
+    def _groups(self) -> list[dict[str, str]]:
         """群列表复用群聊知识库那份实现（群账本 + 配置里出现过的群）。"""
         from .group_knowledge_api import GroupKnowledgeAPI
 

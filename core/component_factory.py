@@ -11,7 +11,7 @@ ComponentFactory - 组件工厂
 import asyncio
 import inspect
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from astrbot.api import logger
 
@@ -43,7 +43,7 @@ class ComponentFactory:
         self.plugin_context = plugin_context
         self.context = plugin_context.get_astrbot_context()  # 保持向后兼容
         self.logger = logger
-        self._components: Dict[str, Any] = {}
+        self._components: dict[str, Any] = {}
         self._initialized = False
         self.init_manager = init_manager
 
@@ -53,7 +53,7 @@ class ComponentFactory:
         self.logger.debug("ComponentFactory初始化完成")
         self.logger.debug(f"当前提供商: {plugin_context.get_current_provider()}")
 
-    async def create_all_components(self) -> Dict[str, Any]:
+    async def create_all_components(self) -> dict[str, Any]:
         """
         异步创建所有核心组件
 
@@ -146,7 +146,7 @@ class ComponentFactory:
         except Exception:
             return 1024
 
-    def _resolve_raw_dir(self) -> Optional[Path]:
+    def _resolve_raw_dir(self) -> Path | None:
         try:
             return self.plugin_context.get_path_manager().get_raw_dir()
         except Exception as e:
@@ -154,7 +154,7 @@ class ComponentFactory:
             return None
 
     @staticmethod
-    def _build_decay_policy() -> Dict[str, Any]:
+    def _build_decay_policy() -> dict[str, Any]:
         """把内置三档参数翻译成 p-memory 的 DecayPolicy。
 
         这几个值经过长期实测，固定写在此处，不对外暴露覆盖入口：
@@ -230,7 +230,7 @@ class ComponentFactory:
         self.logger.debug(f"嵌入提供商创建完成: {embedding_provider.get_model_info()}")
         return embedding_provider
 
-    def _resolve_rerank_provider(self) -> Optional[Any]:
+    def _resolve_rerank_provider(self) -> Any | None:
         """
         解析上游重排提供商（可选）。
 
@@ -336,7 +336,7 @@ class ComponentFactory:
 
     # === 状态 ===
 
-    def get_components(self) -> Dict[str, Any]:
+    def get_components(self) -> dict[str, Any]:
         """获取已创建的组件"""
         return self._components.copy()
 

@@ -7,12 +7,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from quart import jsonify, request
-
-from astrbot.api import logger
 
 from ..core.services.legacy_memory_migration import LegacyMemoryMigration
 
@@ -26,12 +23,12 @@ class MaintenanceAPI:
         path_manager = self.plugin_context.get_path_manager()
         memory_center_dir = path_manager.get_memory_center_dir()
         state_path = memory_center_dir / "maintenance_state.json"
-        result: Dict[str, Any] = {"state": None, "backups": []}
+        result: dict[str, Any] = {"state": None, "backups": []}
 
         # 读取 maintenance_state.json
         if os.path.exists(str(state_path)):
             try:
-                with open(str(state_path), "r", encoding="utf-8") as f:
+                with open(str(state_path), encoding="utf-8") as f:
                     result["state"] = json.load(f)
             except Exception as e:
                 result["state_error"] = str(e)
@@ -103,9 +100,9 @@ class MaintenanceAPI:
             return False
 
     @staticmethod
-    def _existing_legacy_ids(store) -> Set[str]:
+    def _existing_legacy_ids(store) -> set[str]:
         """新库里已有的旧 ID（与自动迁移同一口径，避免导入后迁移又写一遍）。"""
-        found: Set[str] = set()
+        found: set[str] = set()
         try:
             records = store.list_records(all_scopes=True)
         except Exception:
@@ -120,7 +117,7 @@ class MaintenanceAPI:
         return found
 
     @staticmethod
-    def _normalize_snapshot_records(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _normalize_snapshot_records(data: dict[str, Any]) -> list[dict[str, Any]]:
         """旧快照（关系表）与新快照（内嵌标签）统一成带 tags 列表的记录。"""
         tag_index = LegacyMemoryMigration._tag_index(data)
         normalized = []
@@ -163,7 +160,7 @@ class MaintenanceAPI:
         try:
             records = self._normalize_snapshot_records(data)
             existing_legacy = await asyncio.to_thread(self._existing_legacy_ids, store)
-            existing_ids: Set[str] = set()
+            existing_ids: set[str] = set()
             try:
                 for record in await asyncio.to_thread(store.list_records, all_scopes=True):
                     rid = (record or {}).get("id")

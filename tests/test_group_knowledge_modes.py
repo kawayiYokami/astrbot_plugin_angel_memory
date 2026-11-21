@@ -1,13 +1,13 @@
 """群聊知识库三态：矩阵构建、可见域判定、检索白名单。"""
 
 from __future__ import annotations
+
 import asyncio
-
 import json
-import tempfile
-from pathlib import Path
 
-from astrbot_plugin_angel_memory.core.services.note_index_service import NoteIndexService
+from astrbot_plugin_angel_memory.core.services.note_index_service import (
+    NoteIndexService,
+)
 from astrbot_plugin_angel_memory.pmemory import pmemory
 from astrbot_plugin_angel_memory.pmemory.config import (
     DOMAIN_DIRS,

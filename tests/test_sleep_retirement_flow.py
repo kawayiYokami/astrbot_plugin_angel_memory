@@ -91,7 +91,7 @@ class _FakeProvider:
     def __init__(self, responder=None):
         self.responder = responder
 
-    async def text_chat(self, prompt: str, system_prompt: str = None):
+    async def text_chat(self, prompt: str, system_prompt: str | None = None):
         text = self.responder(prompt) if self.responder else ""
         return SimpleNamespace(completion_text=text)
 

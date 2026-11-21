@@ -1,10 +1,9 @@
 """钉死消息内容的归一化口径：账本侧与上下文侧必须得到同一个纯文本。"""
 
+from astrbot.core.agent.message import TextPart, ThinkPart
 from astrbot_plugin_angel_memory.core.services.injection_service import (
     DeepMindInjectionService,
 )
-
-from astrbot.core.agent.message import TextPart, ThinkPart
 
 plain = DeepMindInjectionService._plain_text
 

@@ -3,10 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from astrbot.api import FunctionTool
+from astrbot.api import FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent
-
-from astrbot.api import logger
 
 
 @dataclass
@@ -76,11 +74,9 @@ class NoteCreateTool(FunctionTool):
         filename = f"{safe_title}_{timestamp}.md"
 
         # AI 自主生成的笔记统一存放在 raw/.angel/note/，与用户手动放入的文件区分开
-        rel_dir = ".angel/note"
         notes_dir = Path(raw_dir) / ".angel" / "note"
         notes_dir.mkdir(parents=True, exist_ok=True)
         target_path = notes_dir / filename
-        relative_path = f"{rel_dir}/{filename}"
 
         # 正文首行补上标题（若 LLM 未自带 H1）
         body = str(content).strip()
@@ -101,4 +97,7 @@ class NoteCreateTool(FunctionTool):
             return f"笔记《{title}》已保存为 {filename}，但索引同步稍有延迟，稍后即可检索。"
 
         self.logger.info(f"{self.name}: 完成 笔记={filename} 标题={title}")
-        return f"学习笔记《{title}》已保存并归档为 {filename}，已纳入知识库索引，之后可通过检索或 angel_note_read 查看。"
+        return (
+            f"学习笔记《{title}》已保存并归档为 {filename}，"
+            "已纳入知识库索引，之后可通过检索或 angel_note_read 查看。"
+        )

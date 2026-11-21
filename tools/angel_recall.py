@@ -4,15 +4,13 @@ angel_recall - 统一检索工具
 一次调用同时检索记忆和笔记切片，合并返回。
 """
 
-from typing import List
-from astrbot.api import FunctionTool
-from astrbot.api.event import AstrMessageEvent
 from dataclasses import dataclass, field
 
-from ..llm_memory.models.data_models import BaseMemory
-from ..core.utils.memory_formatter import MemoryFormatter
+from astrbot.api import FunctionTool, logger
+from astrbot.api.event import AstrMessageEvent
 
-from astrbot.api import logger
+from ..core.utils.memory_formatter import MemoryFormatter
+from ..llm_memory.models.data_models import BaseMemory
 
 
 @dataclass
@@ -63,11 +61,11 @@ class CoreMemoryRecallTool(FunctionTool):
             self.logger.error(f"{self.name}: 获取上下文失败: {e}")
             return "错误：无法确定当前会话，检索已拒绝。"
 
-        parts: List[str] = []
+        parts: list[str] = []
 
         # === 记忆检索 ===
         try:
-            all_memories: List[BaseMemory] = await memory_runtime.comprehensive_recall(
+            all_memories: list[BaseMemory] = await memory_runtime.comprehensive_recall(
                 query=query,
                 limit=50,
                 event=event,
@@ -147,7 +145,7 @@ class CoreMemoryRecallTool(FunctionTool):
         return ""
 
     @staticmethod
-    def _aggregate_by_file(note_results: List[dict]) -> List[dict]:
+    def _aggregate_by_file(note_results: list[dict]) -> list[dict]:
         """将切片搜索结果按文件聚合"""
         from collections import OrderedDict
         file_map: OrderedDict = OrderedDict()
@@ -170,7 +168,7 @@ class CoreMemoryRecallTool(FunctionTool):
         return list(file_map.values())
 
     @staticmethod
-    def _precise_filter(note_results: List[dict], query: str) -> List[dict]:
+    def _precise_filter(note_results: list[dict], query: str) -> list[dict]:
         """精准过滤：content 必须包含原始查询词（按空格/|拆词，至少命中一个完整词）"""
         import re
         normalized = query.strip().lower()

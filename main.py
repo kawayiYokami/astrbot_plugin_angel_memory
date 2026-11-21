@@ -7,24 +7,25 @@ AstrBot Angel Memory Plugin
 采用新的懒加载+后台预初始化架构，实现极速启动和智能提供商等待。
 """
 
-from astrbot.api.star import Context, Star, register
-from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.provider import ProviderRequest
-from astrbot.core.star.star_tools import StarTools
 import asyncio
 import copy
 
 from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.provider import ProviderRequest
+from astrbot.api.star import Context, Star, register
+from astrbot.core.star.star_tools import StarTools
+
+from .core.plugin_context import PluginContextFactory
 
 # 导入核心模块
 from .core.plugin_manager import PluginManager
-from .core.plugin_context import PluginContextFactory
 from .core.version import PLUGIN_VERSION
 from .pmemory import pmemory
-from .tools.angel_remember import CoreMemoryRememberTool
-from .tools.angel_recall import CoreMemoryRecallTool
-from .tools.angel_note_read import NoteRecallTool
 from .tools.angel_note_create import NoteCreateTool
+from .tools.angel_note_read import NoteRecallTool
+from .tools.angel_recall import CoreMemoryRecallTool
+from .tools.angel_remember import CoreMemoryRememberTool
 
 
 @register(
@@ -209,7 +210,6 @@ class AngelMemoryPlugin(Star):
                 "memory_runtime": self.memory_runtime,
                 "memory_store": self.memory_store,
                 "note_index": self.note_index,
-                "deepmind": self.deepmind,
             }
             self.plugin_manager.set_main_thread_components(main_components)
 
@@ -290,10 +290,7 @@ class AngelMemoryPlugin(Star):
                 "conversation": "会话ID键",
                 "default": "默认规则",
             }.get(matched_by, matched_by)
-            if scope_mode == "group":
-                scope_key_example = f'{{"{conversation_id}": "家人"}}'
-            else:
-                scope_key_example = '{"女友": "恋爱"}'
+            scope_key_example = f'{{"{conversation_id}": "家人"}}' if scope_mode == "group" else '{"女友": "恋爱"}'
             self.logger.debug(
                 f"[会话分类提示] 分柜方式={scope_mode} 当前人格={persona_name or '(空)'} "
                 f"当前会话ID={conversation_id} 命中来源={match_desc} 命中键={matched_key} "

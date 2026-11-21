@@ -1,8 +1,6 @@
 """灵魂情绪轴的回归测试。"""
 
-import math
 
-import pytest
 
 from astrbot_plugin_angel_memory.core.soul import soul_state as soul_state_module
 from astrbot_plugin_angel_memory.core.soul.soul_state import SoulState

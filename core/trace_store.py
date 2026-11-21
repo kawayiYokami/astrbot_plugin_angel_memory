@@ -15,8 +15,9 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 COMPRESSED_FIELDS = ("prompt", "system_prompt", "response")
 COMPRESSED_MARKER = "__lzma__"
@@ -56,7 +57,7 @@ class TraceStore:
 
     # === 写入 ===
 
-    def append_sync(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def append_sync(self, record: dict[str, Any]) -> dict[str, Any]:
         """追加一条记录（同步），返回补齐 id/时间后的记录。"""
         entry = self._normalize_record(record)
         line = json.dumps(entry, ensure_ascii=False)
@@ -66,19 +67,19 @@ class TraceStore:
                 f.write(line + "\n")
         return entry
 
-    async def append(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    async def append(self, record: dict[str, Any]) -> dict[str, Any]:
         return await asyncio.to_thread(self.append_sync, record)
 
     # === 读取 ===
 
-    def read_recent_sync(self, limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+    def read_recent_sync(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
         """从文件尾部倒序取最近若干条，返回按时间正序（旧 -> 新）的列表。"""
         limit = max(1, int(limit))
         offset = max(0, int(offset))
         if not self._path.exists():
             return []
 
-        collected: List[Dict[str, Any]] = []
+        collected: list[dict[str, Any]] = []
         skipped = 0
         try:
             with self._lock:
@@ -96,7 +97,7 @@ class TraceStore:
             return collected[::-1]
         return collected[::-1]
 
-    async def read_recent(self, limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+    async def read_recent(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.read_recent_sync, limit, offset)
 
     # === 清理 ===
@@ -108,7 +109,7 @@ class TraceStore:
             return 0
 
         with self._lock:
-            kept: List[str] = []
+            kept: list[str] = []
             removed = 0
             with self._path.open("r", encoding="utf-8") as f:
                 for raw_line in f:
@@ -138,9 +139,9 @@ class TraceStore:
 
     # === 内部 ===
 
-    def _normalize_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_record(self, record: dict[str, Any]) -> dict[str, Any]:
         source = dict(record or {})
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "id": str(source.pop("id", "") or self._new_id()),
             "timestamp": float(source.pop("timestamp", 0.0) or time.time()),
             "type": str(source.pop("type", "") or "reflection"),
@@ -160,7 +161,7 @@ class TraceStore:
     def _new_id() -> str:
         return f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
 
-    def _parse_line(self, raw_line: bytes) -> Optional[Dict[str, Any]]:
+    def _parse_line(self, raw_line: bytes) -> dict[str, Any] | None:
         try:
             parsed = json.loads(raw_line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError):

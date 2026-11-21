@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import traceback
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from astrbot.api.web import json_response, request
@@ -26,7 +26,7 @@ DEFAULT_UMO = "aiocqhttp:GroupMessage:0"
 PREVIEW_SESSION_ID = "__tool_test_preview__"
 
 
-def _ok(text: str, errors: List[str] | None = None):
+def _ok(text: str, errors: list[str] | None = None):
     return json_response({"text": text, "errors": list(errors or [])})
 
 
@@ -44,7 +44,7 @@ def _format_error(exc: BaseException) -> str:
 class PreviewEvent:
     """替身事件：只提供检索链路会读的字段。"""
 
-    def __init__(self, umo: str, group_id: str, plugin_context: "PluginContext"):
+    def __init__(self, umo: str, group_id: str, plugin_context: PluginContext):
         self.unified_msg_origin = umo
         self._group_id = group_id
         self.plugin_context = plugin_context
@@ -64,18 +64,18 @@ class PreviewEvent:
 class ToolTestAPI:
     """两条检索链路的只读探针。"""
 
-    def __init__(self, plugin_context: "PluginContext"):
+    def __init__(self, plugin_context: PluginContext):
         self._ctx = plugin_context
 
     # === 入参 ===
 
     @staticmethod
-    async def _payload() -> Dict[str, Any]:
+    async def _payload() -> dict[str, Any]:
         data = await request.json(default=None)
         return data if isinstance(data, dict) else {}
 
     @staticmethod
-    def _normalize(payload: Dict[str, Any]) -> Dict[str, str]:
+    def _normalize(payload: dict[str, Any]) -> dict[str, str]:
         return {
             "query": str(payload.get("query") or "").strip(),
             "umo": str(payload.get("umo") or "").strip() or DEFAULT_UMO,
@@ -89,7 +89,7 @@ class ToolTestAPI:
         if not payload["query"]:
             return _ok("", ["查询词不能为空"])
 
-        errors: List[str] = []
+        errors: list[str] = []
         event = PreviewEvent(payload["umo"], payload["group_id"], self._ctx)
 
         deepmind = self._ctx.get_component("deepmind")
@@ -117,7 +117,7 @@ class ToolTestAPI:
         return _ok(text, errors)
 
     async def _inject_preview(
-        self, deepmind, event: PreviewEvent, retrieval: Dict[str, Any], query: str = ""
+        self, deepmind, event: PreviewEvent, retrieval: dict[str, Any], query: str = ""
     ) -> str:
         """跑真实注入流程，返回最终会交给模型的那段上下文。"""
         from astrbot.api.provider import ProviderRequest
@@ -187,7 +187,7 @@ class ToolTestAPI:
             return _ok("", [f"工具执行失败：{_format_error(e)}"])
 
         # 工具内部对记忆段和笔记段各自兜底，失败只写进文本不抛异常
-        errors: List[str] = []
+        errors: list[str] = []
         for marker in ("检索失败：", "笔记服务不可用", "检索已拒绝", "错误："):
             if marker in raw:
                 errors.append(f"工具返回里出现「{marker}」")
@@ -196,4 +196,4 @@ class ToolTestAPI:
         return _ok(raw, errors)
 
 
-__all__ = ["ToolTestAPI", "PreviewEvent", "DEFAULT_UMO", "PREVIEW_SESSION_ID"]
+__all__ = ["DEFAULT_UMO", "PREVIEW_SESSION_ID", "PreviewEvent", "ToolTestAPI"]

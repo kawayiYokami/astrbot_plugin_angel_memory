@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 from ...llm_memory.models.data_models import BaseMemory
 from ...llm_memory.service.memory_retirement_reviewer import (
@@ -57,7 +58,7 @@ class DeepMindSleepService:
             )
             return False
 
-    async def _recycle_memories(self) -> Dict[str, Any]:
+    async def _recycle_memories(self) -> dict[str, Any]:
         """衰减 -> 取候选 -> 审查 -> 应用裁决。审查失败时整批跳过。"""
         deepmind = self.deepmind
         await deepmind.memory_system.decay_tier0_memories()
@@ -118,12 +119,12 @@ class DeepMindSleepService:
     @staticmethod
     def _split_decisions(
         candidates: Sequence[BaseMemory],
-        decisions: Dict[str, str],
-    ) -> Tuple[List[str], List[str], List[str]]:
+        decisions: dict[str, str],
+    ) -> tuple[list[str], list[str], list[str]]:
         """按裁决表拆分候选：删除、永久化、悬而不决。"""
-        delete_ids: List[str] = []
-        keep_ids: List[str] = []
-        undecided: List[str] = []
+        delete_ids: list[str] = []
+        keep_ids: list[str] = []
+        undecided: list[str] = []
         for memory in candidates:
             memory_id = str(getattr(memory, "id", "") or "")
             if not memory_id:
@@ -138,7 +139,7 @@ class DeepMindSleepService:
         return delete_ids, keep_ids, undecided
 
     @staticmethod
-    def _empty_recycle_result() -> Dict[str, Any]:
+    def _empty_recycle_result() -> dict[str, Any]:
         return {
             "candidates": 0,
             "deleted": 0,
@@ -154,7 +155,7 @@ class DeepMindSleepService:
 
     async def _record_sleep_trace(
         self,
-        recycle_result: Dict[str, Any],
+        recycle_result: dict[str, Any],
         start_time: float,
     ) -> None:
         """把本轮睡眠的审查过程追加到持久化追踪文件。"""

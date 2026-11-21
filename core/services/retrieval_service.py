@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 from astrbot.api.event import AstrMessageEvent
 
@@ -12,7 +12,7 @@ class DeepMindRetrievalService:
 
     def parse_memory_context(
         self, event: AstrMessageEvent
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         if not hasattr(event, "angelmemory_context"):
             return None
 
@@ -38,14 +38,14 @@ class DeepMindRetrievalService:
 
     async def retrieve_memories_and_notes(
         self, event: AstrMessageEvent, query: str, readonly: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """检索长期记忆与候选笔记。
 
         `readonly=True` 时跳过灵魂共鸣等会改状态的分支，供面板探针复用同一条链路。
         """
         deepmind = self.deepmind
 
-        errors: List[str] = []
+        errors: list[str] = []
 
         memory_query = deepmind.query_processor.process_query_for_memory(query, event)
 

@@ -4,15 +4,15 @@
 处理插件的配置选项和默认值。
 """
 
-from typing import Any, Dict, Union
 from dataclasses import dataclass
+from typing import Any, ClassVar
 
 
 class ConfigValidator:
     """通用配置验证器"""
 
     @staticmethod
-    def validate_positive_int(value: Any, field_name: str, max_value: int = None) -> int:
+    def validate_positive_int(value: Any, field_name: str, max_value: int | None = None) -> int:
         """验证正整数"""
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError(f"{field_name} must be a positive integer, got: {value}")
@@ -22,7 +22,7 @@ class ConfigValidator:
 
     @staticmethod
     def validate_non_negative_int(
-        value: Any, field_name: str, max_value: int = None
+        value: Any, field_name: str, max_value: int | None = None
     ) -> int:
         """验证非负整数"""
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -35,7 +35,7 @@ class ConfigValidator:
 
     @staticmethod
     def validate_positive_number(
-        value: Any, field_name: str, max_value: Union[int, float] = None
+        value: Any, field_name: str, max_value: float | None = None
     ) -> float:
         """验证正数（整数或浮点数）"""
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
@@ -88,7 +88,7 @@ class MemoryConstants:
     TIME_DAY = 86400
 
     # 记忆类型映射
-    MEMORY_TYPE_NAMES = {
+    MEMORY_TYPE_NAMES: ClassVar[dict[str, str]] = {
         "knowledge": "知识",
         "event": "事件",
         "skill": "技能",
@@ -97,7 +97,7 @@ class MemoryConstants:
         "meta": "元记忆",
     }
 
-    MEMORY_TYPE_MAPPING = {
+    MEMORY_TYPE_MAPPING: ClassVar[dict[str, str]] = {
         "知识记忆": "knowledge",
         "事件记忆": "event",
         "技能记忆": "skill",
@@ -119,7 +119,7 @@ class MemoryConfig:
 
     def __init__(
         self,
-        config: Dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
         data_dir: str = MemoryConstants.DEFAULT_DATA_DIR,
     ):
         """
@@ -141,7 +141,8 @@ class MemoryConfig:
         memory_behavior = config_get("memory_behavior", {})
 
         self._min_message_length = ConfigValidator.validate_positive_int(
-            memory_behavior.get("min_message_length") or config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH),
+            memory_behavior.get("min_message_length")
+            or config_get("min_message_length", MemoryConstants.MIN_MESSAGE_LENGTH),
             "min_message_length",
             max_value=500,
         )
@@ -206,11 +207,15 @@ class MemoryConfig:
         note_assistant = config_get("note_assistant", {})
         if not isinstance(note_assistant, dict):
             note_assistant = {}
-        note_topk_raw = note_assistant.get("top_k", None)
+        note_topk_raw = note_assistant.get("top_k")
         if note_topk_raw is None:
             # 兼容旧格式
             note_topk = config_get("note_topk", {})
-            note_topk_raw = note_topk.get("top_k", MemoryConstants.NOTE_TOP_K) if isinstance(note_topk, dict) else MemoryConstants.NOTE_TOP_K
+            note_topk_raw = (
+                note_topk.get("top_k", MemoryConstants.NOTE_TOP_K)
+                if isinstance(note_topk, dict)
+                else MemoryConstants.NOTE_TOP_K
+            )
         self._note_top_k = ConfigValidator.validate_non_negative_int(
             note_topk_raw,
             "note_assistant.top_k",
@@ -293,7 +298,7 @@ class MemoryConfig:
         """获取统一注入Top-K配置值"""
         return self._note_top_k
     @property
-    def conversation_scope_map(self) -> Dict[str, Any]:
+    def conversation_scope_map(self) -> dict[str, Any]:
         """会话ID到记忆分类域的映射表（原始值，校验由PluginContext负责）。"""
         return self._conversation_scope_map
 
@@ -319,7 +324,7 @@ class MemoryConfig:
         """
         return self.config.get(key, default)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "min_message_length": self.min_message_length,

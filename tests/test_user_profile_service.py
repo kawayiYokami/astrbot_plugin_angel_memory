@@ -55,8 +55,13 @@ if PACKAGE_NAME not in sys.modules:
     package.__path__ = [str(Path(__file__).resolve().parents[1])]
     sys.modules[PACKAGE_NAME] = package
 
-from astrbot_plugin_angel_memory.core.services.user_profile_service import UserProfileService
-from astrbot_plugin_angel_memory.llm_memory.models.data_models import BaseMemory, MemoryType
+from astrbot_plugin_angel_memory.core.services.user_profile_service import (
+    UserProfileService,
+)
+from astrbot_plugin_angel_memory.llm_memory.models.data_models import (
+    BaseMemory,
+    MemoryType,
+)
 from astrbot_plugin_angel_memory.llm_memory.utils.user_profile import (
     extract_user_id_from_tags,
     extract_user_ids_from_tags,

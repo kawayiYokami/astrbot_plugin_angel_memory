@@ -14,11 +14,10 @@ import asyncio
 import math
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from quart import jsonify, request
+from typing import Any
 
 from astrbot.api import logger
+from quart import jsonify, request
 
 
 class NotesAPI:
@@ -40,7 +39,7 @@ class NotesAPI:
     # === 文件元信息（现场读，标题取首个 # 行） ===
 
     @staticmethod
-    def _file_meta(abs_path: Path) -> Dict[str, Any]:
+    def _file_meta(abs_path: Path) -> dict[str, Any]:
         try:
             text = abs_path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
@@ -64,7 +63,7 @@ class NotesAPI:
             mtime = 0
         return {"total_lines": len(lines), "heading_h1": heading, "updated_at": mtime}
 
-    def _resolve_note_id(self, note_index, rel_path: str, abs_path: Path) -> Optional[int]:
+    def _resolve_note_id(self, note_index, rel_path: str, abs_path: Path) -> int | None:
         """尽力解析 note_id，失败返回 None（文件尚未索引）。"""
         try:
             domain = note_index.domain_for_path(abs_path, self._get_raw_dir())
@@ -84,7 +83,7 @@ class NotesAPI:
         preview: str = "",
         score: float = 0.0,
         domain: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         raw_dir = self._get_raw_dir()
         abs_path = (raw_dir / source_file_path.replace("/", os.sep))
         meta = self._file_meta(abs_path) if abs_path.exists() else {
@@ -135,7 +134,7 @@ class NotesAPI:
                     max_results=search_limit,
                     domains=None,
                 )
-                grouped: Dict[str, Dict[str, Any]] = {}
+                grouped: dict[str, dict[str, Any]] = {}
                 for row in results:
                     metadata = row.get("metadata", {}) or {}
                     path = str(metadata.get("source_file_path") or "")
@@ -176,7 +175,7 @@ class NotesAPI:
         raw_dir = self._get_raw_dir()
         if not raw_dir.exists():
             return jsonify({"items": [], "total": 0, "page": page, "page_size": page_size})
-        all_files: List[str] = []
+        all_files: list[str] = []
         for root, _, filenames in os.walk(str(raw_dir)):
             for name in filenames:
                 if name.endswith((".md", ".txt")):

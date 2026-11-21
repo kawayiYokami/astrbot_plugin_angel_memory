@@ -9,31 +9,32 @@ DeepMind潜意识核心模块
 """
 
 import asyncio
+import json
 import re
 import time
-import json
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
-from astrbot.api.event import AstrMessageEvent
-from astrbot.api.provider import ProviderRequest
-from .soul.soul_state import SoulState
-from .utils.memory_id_resolver import MemoryIDResolver
-from ..llm_memory.utils.json_parser import JsonParser
-from .session_memory import SessionMemoryManager
-from .memory_runtime import MemoryRuntime
-from .utils import SmallModelPromptBuilder, MemoryInjector
-from .utils.query_processor import get_query_processor
-from .services.retrieval_service import DeepMindRetrievalService
-from .services.injection_service import DeepMindInjectionService
-from .services.sleep_service import DeepMindSleepService
-from .services.user_profile_service import UserProfileService
-from .utils.feedback_queue import get_feedback_queue
-from .reflection_trace import ReflectionTraceBuffer
-from .sleep_schedule import seconds_until_next_sleep, should_run_sleep, today_key
-from .trace_store import TraceStore
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.provider import ProviderRequest
+
+from ..llm_memory.utils.json_parser import JsonParser
+from .memory_runtime import MemoryRuntime
+from .reflection_trace import ReflectionTraceBuffer
+from .services.injection_service import DeepMindInjectionService
+from .services.retrieval_service import DeepMindRetrievalService
+from .services.sleep_service import DeepMindSleepService
+from .services.user_profile_service import UserProfileService
+from .session_memory import SessionMemoryManager
+from .sleep_schedule import seconds_until_next_sleep, should_run_sleep, today_key
+from .soul.soul_state import SoulState
+from .trace_store import TraceStore
+from .utils import MemoryInjector, SmallModelPromptBuilder
+from .utils.feedback_queue import get_feedback_queue
+from .utils.memory_id_resolver import MemoryIDResolver
+from .utils.query_processor import get_query_processor
 
 # 框架识别图片失败时塞进内容块的原文，反思时靠它认出「有图但没识别出来」
 _IMAGE_CAPTION_FAILED = "[Image Captioning Failed]"
@@ -48,9 +49,9 @@ class ReflectionInput:
     persona_name: str
     latest_user_text: str
     latest_assistant_text: str
-    secretary_decision: Dict[str, Any] = field(default_factory=dict)
-    chat_records: List[Dict[str, Any]] = field(default_factory=list)
-    memory_context: Dict[str, Any] = field(default_factory=dict)
+    secretary_decision: dict[str, Any] = field(default_factory=dict)
+    chat_records: list[dict[str, Any]] = field(default_factory=list)
+    memory_context: dict[str, Any] = field(default_factory=dict)
 
 
 class DeepMind:
@@ -113,7 +114,7 @@ class DeepMind:
         )
 
         # 睡眠调度状态：每天 04:00 一次，按运行环境本地时间，不做启动补偿
-        self._sleep_tick_task: Optional[asyncio.Task] = None
+        self._sleep_tick_task: asyncio.Task | None = None
         self._sleep_stop_event = asyncio.Event()
         self._last_sleep_day = ""
 
@@ -129,8 +130,8 @@ class DeepMind:
         )
         self.sleep_service = DeepMindSleepService(self)
         self._reflection_state_lock = asyncio.Lock()
-        self._reflection_states: Dict[str, Dict[str, Any]] = {}
-        self._reflection_tick_task: Optional[asyncio.Task] = None
+        self._reflection_states: dict[str, dict[str, Any]] = {}
+        self._reflection_tick_task: asyncio.Task | None = None
         self._reflection_stop_event = asyncio.Event()
         # 反思调度三项参数同样现读，见下方 _reflection_turn_threshold 等属性
 
@@ -257,14 +258,11 @@ class DeepMind:
             return False
 
         # 忽略纯指令消息（以/开头）
-        if message_text.startswith("/"):
-            return False
-
-        return True
+        return not message_text.startswith("/")
 
     def _parse_memory_context(
         self, event: AstrMessageEvent
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         解析事件中的记忆上下文数据
 
@@ -278,7 +276,7 @@ class DeepMind:
 
     async def _retrieve_memories_and_notes(
         self, event: AstrMessageEvent, query: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         检索长期记忆和候选笔记
 
@@ -300,7 +298,7 @@ class DeepMind:
         request: ProviderRequest,
         session_id: str,
         note_context: str,
-        soul_state_values: Optional[Dict[str, Any]] = None,
+        soul_state_values: dict[str, Any] | None = None,
         message_id: str = "",
         message_order=None,
     ) -> list:
@@ -321,9 +319,9 @@ class DeepMind:
             message_order=message_order,
         )
 
-    def _context_user_texts(self, request: ProviderRequest) -> List[str]:
+    def _context_user_texts(self, request: ProviderRequest) -> list[str]:
         """本轮上下文里所有用户消息的纯文本，用来判断记忆的来源消息还在不在。"""
-        texts: List[str] = []
+        texts: list[str] = []
         contexts = getattr(request, "contexts", None) or []
         for block in contexts:
             if not isinstance(block, dict):
@@ -368,8 +366,8 @@ class DeepMind:
         # 1. 从 event.angelheart_context 中获取对话历史
         # 天使之心送来的是「截到秘书判断点为止」的完整快照，里面没有已处理/未处理的分界，
         # 整份记录就是本轮该看的对话，因此不再按 is_processed 过滤。
-        chat_records: List[Dict[str, Any]] = []
-        context_chat_records: List[Dict[str, Any]] = []
+        chat_records: list[dict[str, Any]] = []
+        context_chat_records: list[dict[str, Any]] = []
         secretary_decision = {}
         if hasattr(event, "angelheart_context"):
             try:
@@ -576,7 +574,7 @@ class DeepMind:
         except Exception as e:
             self.logger.error(f"保存原始上下文数据以供异步分析失败: {e}")
 
-    def _extract_message_text(self, event: AstrMessageEvent) -> Optional[str]:
+    def _extract_message_text(self, event: AstrMessageEvent) -> str | None:
         """
         从事件中提取消息文本 (使用标准方法)
 
@@ -608,7 +606,7 @@ class DeepMind:
         return str(getattr(message_obj, "message_id", "") or "").strip()
 
     @staticmethod
-    def _chat_record_message_id(record: Dict[str, Any]) -> str:
+    def _chat_record_message_id(record: dict[str, Any]) -> str:
         """账本记录里带入这条消息的原始消息 ID。"""
         return str(record.get("source_message_id") or "").strip()
 
@@ -625,7 +623,7 @@ class DeepMind:
                 )
         return "", ""
 
-    def _message_order(self, chat_records: List[Dict[str, Any]]) -> List[tuple]:
+    def _message_order(self, chat_records: list[dict[str, Any]]) -> list[tuple]:
         """账本里用户消息的顺序表，元素为 (消息 ID, 消息纯文本)。供挂回历史消息那条路径使用。"""
         plain = self.injection_service._plain_text
         order = []
@@ -678,7 +676,7 @@ class DeepMind:
             )
             raise
 
-    def _memories_to_json(self, memories: List) -> List[Dict[str, Any]]:
+    def _memories_to_json(self, memories: list) -> list[dict[str, Any]]:
         """
         将记忆对象统一转换为JSON格式
 
@@ -741,7 +739,7 @@ class DeepMind:
             try:
                 await asyncio.wait_for(self._sleep_stop_event.wait(), timeout=delay)
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             if self._sleep_stop_event.is_set():
                 return
@@ -759,7 +757,7 @@ class DeepMind:
 
     def _complete_reflection_trace(
         self,
-        trace_id: Optional[int],
+        trace_id: int | None,
         *,
         status: str,
         response: str = "",
@@ -907,7 +905,7 @@ class DeepMind:
         latest_user_text = self._request_user_text(turn.get("req"))
         latest_assistant_text = str(turn.get("resp") or "").strip()
 
-        secretary_decision: Dict[str, Any] = {}
+        secretary_decision: dict[str, Any] = {}
         if hasattr(event, "angelheart_context") and getattr(event, "angelheart_context", None):
             try:
                 angelheart_data = json.loads(event.angelheart_context)
@@ -917,7 +915,7 @@ class DeepMind:
             except (json.JSONDecodeError, TypeError, KeyError):
                 secretary_decision = {}
 
-        memory_context: Dict[str, Any] = {}
+        memory_context: dict[str, Any] = {}
         if hasattr(event, "angelmemory_context") and getattr(event, "angelmemory_context", None):
             try:
                 context_data = json.loads(event.angelmemory_context)
@@ -957,7 +955,7 @@ class DeepMind:
         )
 
     @staticmethod
-    def _turn_memories(reflection_input) -> List[Dict[str, Any]]:
+    def _turn_memories(reflection_input) -> list[dict[str, Any]]:
         """取这一轮真正注入给模型的记忆批次。"""
         context_data = getattr(reflection_input, "memory_context", {}) or {}
         if not isinstance(context_data, dict):
@@ -968,13 +966,13 @@ class DeepMind:
         return [memory for memory in candidate if isinstance(memory, dict)]
 
     @staticmethod
-    def _merge_turn_memories(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _merge_turn_memories(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """把多轮检索到的记忆按 id 合并去重，保持首次出现的顺序。
 
         同一份记忆在多个轮次被召回只保留一条；没有 id 的条目用内容指纹兜底，
         避免把它们全折叠成一条。
         """
-        merged: List[Dict[str, Any]] = []
+        merged: list[dict[str, Any]] = []
         seen = set()
         for turn in turns or []:
             if not isinstance(turn, dict):
@@ -1010,7 +1008,7 @@ class DeepMind:
         parts = getattr(request, "extra_user_content_parts", None)
         if not isinstance(parts, list):
             return ""
-        collected: List[str] = []
+        collected: list[str] = []
         for part in parts:
             text = ""
             if isinstance(part, dict):
@@ -1036,7 +1034,7 @@ class DeepMind:
             return ""
         captions = [
             item.strip()
-            for item in re.findall(r"<image_caption>(.*?)</image_caption>", raw, re.S)
+            for item in re.findall(r"<image_caption>(.*?)</image_caption>", raw, re.DOTALL)
             if item.strip()
         ]
         if captions:
@@ -1046,8 +1044,8 @@ class DeepMind:
         return ""
 
     def _turns_to_chat_records(
-        self, turns: List[Dict[str, Any]], persona_name: str = ""
-    ) -> List[Dict[str, Any]]:
+        self, turns: list[dict[str, Any]], persona_name: str = ""
+    ) -> list[dict[str, Any]]:
         """把成对记录摊成 format_chat_records 认得的 chat_records。
 
         一份记录产出「用户 → 我」两条；助理那条加 1 毫秒，
@@ -1057,7 +1055,7 @@ class DeepMind:
         助理回复没有上游前缀，这里补 `[助理: 名字] (时间):` 显式身份，
         免得只能靠「没有群友前缀就是自己」反推。
         """
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         assistant_label = str(persona_name or "").strip() or "助理"
         for turn in turns or []:
             if not isinstance(turn, dict):
@@ -1184,7 +1182,7 @@ class DeepMind:
 
     async def _trigger_reflection_if_needed(self, session_id: str, reason: str) -> bool:
         now = time.time()
-        payload: Dict[str, Any] = {}
+        payload: dict[str, Any] = {}
         async with self._reflection_state_lock:
             state = self._reflection_states.get(session_id)
             if not state:
@@ -1275,7 +1273,7 @@ class DeepMind:
         self,
         reflection_input: ReflectionInput,
         historical_chat_text_override: str = "",
-        raw_memories_override: List[Dict[str, Any]] = None,
+        raw_memories_override: list[dict[str, Any]] | None = None,
     ):
         """
         异步执行的记忆分析任务

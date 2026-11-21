@@ -4,10 +4,10 @@ PluginManager - 插件管理器
 负责插件的业务逻辑处理，集成初始化管理和后台初始化。
 """
 
-from .initialization_manager import InitializationManager
-from .background_initializer import BackgroundInitializer
-
 from astrbot.api import logger
+
+from .background_initializer import BackgroundInitializer
+from .initialization_manager import InitializationManager
 
 
 class PluginManager:
@@ -132,7 +132,7 @@ class PluginManager:
 
         except Exception as e:
             self.logger.error(f"LLM请求处理失败: {e}")
-            return {"status": "error", "message": f"LLM请求处理失败: {str(e)}"}
+            return {"status": "error", "message": f"LLM请求处理失败: {e!s}"}
 
     async def _process_llm_response(self, event, response, event_plugin_context=None):
         """
@@ -174,7 +174,7 @@ class PluginManager:
 
         except Exception as e:
             self.logger.error(f"LLM响应处理失败: {e}")
-            return {"status": "error", "message": f"LLM响应处理失败: {str(e)}"}
+            return {"status": "error", "message": f"LLM响应处理失败: {e!s}"}
 
     async def handle_memory_consolidation(self, event, event_plugin_context=None):
         """
@@ -247,7 +247,7 @@ class PluginManager:
                     self.logger.error(f"解析记忆上下文失败: {e}")
                     return {
                         "status": "error",
-                        "message": f"解析记忆上下文失败: {str(e)}",
+                        "message": f"解析记忆上下文失败: {e!s}",
                     }
             else:
                 self.logger.warning("DeepMind组件尚未初始化完成")
@@ -255,7 +255,7 @@ class PluginManager:
 
         except Exception as e:
             self.logger.error(f"记忆整理失败: {e}")
-            return {"status": "error", "message": f"记忆整理失败: {str(e)}"}
+            return {"status": "error", "message": f"记忆整理失败: {e!s}"}
 
     def get_initialized_components(self):
         """

@@ -27,7 +27,9 @@ if PACKAGE_NAME not in sys.modules:
     package.__path__ = [str(Path(__file__).resolve().parents[1])]
     sys.modules[PACKAGE_NAME] = package
 
-from astrbot_plugin_angel_memory.llm_memory.components.memory_sql_manager import MemorySqlManager
+from astrbot_plugin_angel_memory.llm_memory.components.memory_sql_manager import (
+    MemorySqlManager,
+)
 
 
 def _make_manager() -> MemorySqlManager:

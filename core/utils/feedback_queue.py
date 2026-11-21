@@ -7,12 +7,12 @@
 from __future__ import annotations
 
 import threading  # 单例模式需要锁
-from typing import Any, Callable, Dict, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 from astrbot.api import logger
 
-
-FeedbackTask = Union[Dict[str, Any], None]
+FeedbackTask = dict[str, Any] | None
 
 
 class FeedbackQueue:
@@ -22,15 +22,15 @@ class FeedbackQueue:
         """初始化异步反馈处理器（无后台线程）"""
         logger.debug("反馈处理器已初始化（异步模式，无后台线程）")
 
-    async def submit(self, task: FeedbackTask) -> Optional[Any]:
+    async def submit(self, task: FeedbackTask) -> Any | None:
         """直接异步处理任务（无队列，无缓冲）"""
         if task is None:
             logger.warning("反馈处理器收到空任务，拒绝处理")
             return None
 
-        feedback_fn: Optional[Callable] = task.get("feedback_fn")
+        feedback_fn: Callable | None = task.get("feedback_fn")
         session_id: Any = task.get("session_id", "unknown")
-        payload: Dict[str, Any] = task.get("payload", {})
+        payload: dict[str, Any] = task.get("payload", {})
 
         if not feedback_fn:
             logger.warning(f"反馈任务缺少 feedback_fn - 会话ID: {session_id}")
@@ -57,7 +57,7 @@ class FeedbackQueue:
         logger.debug("反馈处理器已停止（异步模式）")
 
 
-_queue_instance: Optional[FeedbackQueue] = None
+_queue_instance: FeedbackQueue | None = None
 _instance_lock = threading.Lock()
 
 

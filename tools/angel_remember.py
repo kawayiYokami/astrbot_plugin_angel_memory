@@ -1,9 +1,7 @@
-from typing import List, Optional
-from astrbot.api import FunctionTool
-from astrbot.api.event import AstrMessageEvent
 from dataclasses import dataclass, field
 
-from astrbot.api import logger
+from astrbot.api import FunctionTool, logger
+from astrbot.api.event import AstrMessageEvent
 
 
 @dataclass
@@ -83,7 +81,7 @@ class CoreMemoryRememberTool(FunctionTool):
         event: AstrMessageEvent,
         action: str,
         memory: dict,
-        source_memory_ids: Optional[List[str]] = None,
+        source_memory_ids: list[str] | None = None,
     ):
         action = str(action or "").strip().lower()
         source_memory_ids = source_memory_ids or []
@@ -110,12 +108,10 @@ class CoreMemoryRememberTool(FunctionTool):
         # 动作与 source_memory_ids 的约束
         if action == "create" and source_memory_ids:
             return "错误：create 动作不需要 source_memory_ids。"
-        if action == "update":
-            if len(source_memory_ids) != 1:
-                return "错误：update 动作的 source_memory_ids 必须正好 1 个。"
-        if action == "merge":
-            if len(source_memory_ids) < 2:
-                return "错误：merge 动作的 source_memory_ids 至少需要 2 个。"
+        if action == "update" and len(source_memory_ids) != 1:
+            return "错误：update 动作的 source_memory_ids 必须正好 1 个。"
+        if action == "merge" and len(source_memory_ids) < 2:
+            return "错误：merge 动作的 source_memory_ids 至少需要 2 个。"
 
         # --- 获取服务 ---
         if not hasattr(event, "plugin_context") or event.plugin_context is None:
@@ -136,7 +132,7 @@ class CoreMemoryRememberTool(FunctionTool):
             return "错误：无法确定当前会话，记忆写入已拒绝。"
 
         # --- 源记忆 ID 直接就是库内整数 id ---
-        resolved_source_ids: List[str] = [
+        resolved_source_ids: list[str] = [
             str(item).strip() for item in source_memory_ids if str(item).strip()
         ]
 
@@ -198,4 +194,4 @@ class CoreMemoryRememberTool(FunctionTool):
 
         except Exception as e:
             self.logger.error(f"{self.name}: {action} 失败: {e}", exc_info=True)
-            return f"记忆{action}失败：{str(e)}。请稍后再试。"
+            return f"记忆{action}失败：{e!s}。请稍后再试。"

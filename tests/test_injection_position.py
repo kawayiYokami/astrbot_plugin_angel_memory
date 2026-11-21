@@ -3,14 +3,13 @@
 from types import SimpleNamespace
 
 import pytest
+from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
 from astrbot_plugin_angel_memory.core.deepmind import DeepMind
 from astrbot_plugin_angel_memory.core.services.injection_service import (
     DeepMindInjectionService,
 )
 from astrbot_plugin_angel_memory.core.session_memory import SessionMemory
-
-from astrbot.api.provider import ProviderRequest
-from astrbot.core.agent.message import TextPart
 
 
 class _FakeMemoryInjector:

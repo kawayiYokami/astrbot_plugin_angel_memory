@@ -5,11 +5,9 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List
+from typing import Any
 
 from quart import jsonify, request
-
-from astrbot.api import logger
 
 
 def _to_seconds(value: Any) -> float:
@@ -23,13 +21,10 @@ def _to_seconds(value: Any) -> float:
     return number if number > 0 else 0.0
 
 
-def _record_to_item(record: Dict[str, Any]) -> Dict[str, Any]:
+def _record_to_item(record: dict[str, Any]) -> dict[str, Any]:
     state = record.get("state") or {}
     tags = record.get("tags") or []
-    if isinstance(tags, str):
-        tags_text = tags
-    else:
-        tags_text = ", ".join(str(t) for t in tags if str(t).strip())
+    tags_text = tags if isinstance(tags, str) else ", ".join(str(t) for t in tags if str(t).strip())
     created = record.get("created_at_us", record.get("created_at", 0))
     updated = record.get("updated_at_us", record.get("updated_at", created))
     return {
@@ -58,7 +53,7 @@ class MemoryAPI:
 
     async def get_overview(self):
         """总览统计：记忆/标签/scopes 走 p-memory，笔记计数走 note_index。"""
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "provider_id": self.plugin_context.get_embedding_provider_id() or "(未配置)",
             "llm_provider_id": self.plugin_context.get_llm_provider_id() or "(未配置)",
             "has_providers": self.plugin_context.has_providers(),
@@ -121,7 +116,7 @@ class MemoryAPI:
             import asyncio
 
             records = await asyncio.to_thread(store.list_records, None, all_scopes=True)
-            filtered: List[Dict[str, Any]] = []
+            filtered: list[dict[str, Any]] = []
             for record in records:
                 item = _record_to_item(record)
                 if scope and item["memory_scope"] != scope:

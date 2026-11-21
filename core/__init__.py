@@ -4,22 +4,22 @@
 导出核心类供其他模块使用。
 """
 
-from .deepmind import DeepMind
-from .config import MemoryConfig, MemoryConstants
-from .session_memory import SessionMemoryManager, SessionMemory, MemoryItem
-from .initialization_manager import InitializationManager, InitializationState
 from .background_initializer import BackgroundInitializer
+from .config import MemoryConfig, MemoryConstants
+from .deepmind import DeepMind
+from .initialization_manager import InitializationManager, InitializationState
 from .plugin_manager import PluginManager
+from .session_memory import MemoryItem, SessionMemory, SessionMemoryManager
 
 __all__ = [
+    "BackgroundInitializer",
     "DeepMind",
-    "MemoryConfig",
-    "MemoryConstants",
-    "SessionMemoryManager",
-    "SessionMemory",
-    "MemoryItem",
     "InitializationManager",
     "InitializationState",
-    "BackgroundInitializer",
+    "MemoryConfig",
+    "MemoryConstants",
+    "MemoryItem",
     "PluginManager",
+    "SessionMemory",
+    "SessionMemoryManager",
 ]

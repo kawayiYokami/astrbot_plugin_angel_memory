@@ -6,10 +6,12 @@ BackgroundInitializer - 后台初始化器（异步版本）
 """
 
 import asyncio
-from .initialization_manager import InitializationManager
-from .component_factory import ComponentFactory
+import contextlib
 
 from astrbot.api import logger
+
+from .component_factory import ComponentFactory
+from .initialization_manager import InitializationManager
 
 
 class BackgroundInitializer:
@@ -86,10 +88,8 @@ class BackgroundInitializer:
 
         except Exception as e:
             self.logger.error(f"异步后台初始化失败: {e}", exc_info=True)
-            try:
+            with contextlib.suppress(Exception):
                 self.init_manager.mark_failed(str(e))
-            except Exception:
-                pass
 
     async def _perform_initialization_async(self):
         """执行真正的初始化工作（同一事件循环）"""

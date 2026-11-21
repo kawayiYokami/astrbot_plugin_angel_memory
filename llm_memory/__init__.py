@@ -39,16 +39,16 @@ def __getattr__(name):
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 __all__ = [
+    "KNOWLEDGE_CORE_SEPARATOR",
     # 核心接口
     "BaseMemory",
-    "MemoryType",
     # 异常
     "MemoryError",
-    "VectorizationError",
+    "MemorySystemConfig",
+    "MemoryType",
     "StorageError",
     "ValidationError",
+    "VectorizationError",
     # 配置
     "system_config",
-    "MemorySystemConfig",
-    "KNOWLEDGE_CORE_SEPARATOR",
 ]

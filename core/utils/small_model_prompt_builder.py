@@ -4,8 +4,8 @@
 负责构建用于小模型的记忆整理提示词。
 """
 
-from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta, timezone
+
 from ..session_memory import MemoryItem
 from .memory_formatter import MemoryFormatter
 
@@ -36,7 +36,7 @@ class SmallModelPromptBuilder:
         return ""
 
     @staticmethod
-    def format_chat_records(chat_records: List[Dict]) -> Tuple[str, List[Dict]]:
+    def format_chat_records(chat_records: list[dict]) -> tuple[str, list[dict]]:
         """
         把对话记录按时间顺序拼成纯文本，并生成对话参与者清单。
 
@@ -52,7 +52,7 @@ class SmallModelPromptBuilder:
             - 拼接后的对话文本字符串
             - 对话参与者清单（去重后）
         """
-        usable: List[Dict] = []
+        usable: list[dict] = []
         for msg in chat_records or []:
             if not isinstance(msg, dict):
                 continue
@@ -72,8 +72,8 @@ class SmallModelPromptBuilder:
         # 严格按发送时间升序：sorted 是稳定排序，时间戳相同就保持传入顺序
         usable.sort(key=lambda item: float(item.get("timestamp", 0) or 0))
 
-        lines: List[str] = []
-        participants: Dict[str, Dict] = {}
+        lines: list[str] = []
+        participants: dict[str, dict] = {}
         for msg in usable:
             text = SmallModelPromptBuilder.extract_text_from_content(
                 msg.get("content", "")
@@ -117,12 +117,12 @@ class SmallModelPromptBuilder:
     @staticmethod
     def build_memory_prompt(
         formatted_query: str,
-        memories: List[MemoryItem],
-        user_list: List[Dict],
-        candidate_notes: List[Dict] = None,
-        secretary_decision: Dict = None,
-        core_topic: str = None,
-        system_prompt: str = None,
+        memories: list[MemoryItem],
+        user_list: list[dict],
+        candidate_notes: list[dict] | None = None,
+        secretary_decision: dict | None = None,
+        core_topic: str | None = None,
+        system_prompt: str | None = None,
         memory_config=None,
     ) -> str:
         """
@@ -183,7 +183,10 @@ class SmallModelPromptBuilder:
             topic_section = f"\n# 当前对话核心话题\n{core_topic.strip()}\n"
 
         # 5. 组装新的 system_prompt (已移除废弃的笔记清单)
-        final_system_prompt = f"{system_prompt}\n\n{participants_section}{rules_section}{ai_identity_section}{topic_section}"
+        final_system_prompt = (
+            f"{system_prompt}\n\n{participants_section}{rules_section}"
+            f"{ai_identity_section}{topic_section}"
+        )
 
         # 7. 构建完整提示词（简化记忆处理）
         parts = [final_system_prompt]
@@ -200,12 +203,12 @@ class SmallModelPromptBuilder:
     @staticmethod
     def build_post_hoc_analysis_prompts(
         historical_query: str,
-        raw_memories: List,
+        raw_memories: list,
         core_topic: str = "",
-        memory_id_mapping: Dict[str, str] = None,
+        memory_id_mapping: dict[str, str] | None = None,
         config=None,
         persona_name: str = "",
-    ) -> Tuple[str, str]:
+    ) -> tuple[str, str]:
         """
         构建用于事后反思的提示词，返回 (system_prompt, user_prompt)
 

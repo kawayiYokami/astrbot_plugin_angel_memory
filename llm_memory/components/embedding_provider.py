@@ -5,14 +5,14 @@
 通过工厂模式实现降级与配置驱动。
 """
 
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
 import asyncio
 import re
 import sys
 import threading
 import time
+from abc import ABC, abstractmethod
 from collections import OrderedDict
+from typing import Any
 
 # 统一使用 astrbot 提供的 logger
 from astrbot.api import logger
@@ -34,7 +34,7 @@ class EmbeddingCache:
             max_memory_mb: 最大内存占用（MB），默认100MB
             ttl_minutes: 缓存项过期时间（分钟），默认30分钟
         """
-        self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._lock = threading.RLock()
         self._max_memory_bytes = int(max_memory_mb * 1024 * 1024)
         self._current_memory_bytes = 0
@@ -43,7 +43,7 @@ class EmbeddingCache:
         self._ttl_seconds = ttl_minutes * 60  # 转换为秒
         self._cleanup_threshold = 50  # 每次访问50项时执行一次清理检查
 
-    def _estimate_size(self, text: str, embedding: List[float]) -> int:
+    def _estimate_size(self, text: str, embedding: list[float]) -> int:
         """
         估算缓存项的内存大小
 
@@ -62,7 +62,7 @@ class EmbeddingCache:
         metadata_size = 64
         return text_size + embedding_size + metadata_size
 
-    def _is_expired(self, cache_item: Dict[str, Any]) -> bool:
+    def _is_expired(self, cache_item: dict[str, Any]) -> bool:
         """
         检查缓存项是否过期
 
@@ -103,7 +103,7 @@ class EmbeddingCache:
         if expired_keys:
             logger.debug(f"清理了 {len(expired_keys)} 个过期缓存项")
 
-    def get(self, text: str) -> Optional[List[float]]:
+    def get(self, text: str) -> list[float] | None:
         """
         从缓存获取向量
 
@@ -137,7 +137,7 @@ class EmbeddingCache:
                 self._miss_count += 1
                 return None
 
-    def put(self, text: str, embedding: List[float]) -> None:
+    def put(self, text: str, embedding: list[float]) -> None:
         """
         将向量放入缓存
 
@@ -177,8 +177,8 @@ class EmbeddingCache:
             self._current_memory_bytes += new_size
 
     def get_batch(
-        self, texts: List[str]
-    ) -> tuple[List[Optional[List[float]]], List[int]]:
+        self, texts: list[str]
+    ) -> tuple[list[list[float] | None], list[int]]:
         """
         批量获取向量
 
@@ -213,7 +213,7 @@ class EmbeddingCache:
 
         return results, missing_indices
 
-    def put_batch(self, texts: List[str], embeddings: List[List[float]]) -> None:
+    def put_batch(self, texts: list[str], embeddings: list[list[float]]) -> None:
         """
         批量放入缓存
 
@@ -221,7 +221,7 @@ class EmbeddingCache:
             texts: 文本列表
             embeddings: 向量列表
         """
-        for text, embedding in zip(texts, embeddings):
+        for text, embedding in zip(texts, embeddings, strict=False):
             self.put(text, embedding)
 
     def clear(self) -> None:
@@ -232,7 +232,7 @@ class EmbeddingCache:
             self._hit_count = 0
             self._miss_count = 0
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         获取缓存统计信息
 
@@ -270,7 +270,7 @@ class EmbeddingProvider(ABC):
     """嵌入提供商抽象基类"""
 
     @abstractmethod
-    async def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """
         为文档列表生成向量嵌入
 
@@ -280,17 +280,15 @@ class EmbeddingProvider(ABC):
         Returns:
             向量列表，每个向量是一个浮点数列表
         """
-        pass
 
     @abstractmethod
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """
         获取模型信息
 
         Returns:
             包含模型详细信息的字典
         """
-        pass
 
     @abstractmethod
     def is_available(self) -> bool:
@@ -300,7 +298,6 @@ class EmbeddingProvider(ABC):
         Returns:
             是否可用
         """
-        pass
 
     @abstractmethod
     def get_provider_type(self) -> str:
@@ -310,12 +307,10 @@ class EmbeddingProvider(ABC):
         Returns:
             提供商类型标识符
         """
-        pass
 
     @abstractmethod
     def shutdown(self):
         """关闭提供商，释放资源"""
-        pass
 
 
 class APIEmbeddingProvider(EmbeddingProvider):
@@ -525,7 +520,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         except Exception as e:
             raise e
 
-    async def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """异步方法：为文档列表生成向量嵌入（带缓存，批次内去重，自动分批）"""
         if not texts:
             return []
@@ -536,7 +531,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         # 如果缓存已禁用，直接处理（使用局部变量避免并发问题）
         cache = self._cache
         if not self._cache_enabled or not cache:
-            unique_texts, original_to_unique, unique_to_original = self._deduplicate_texts(texts)
+            unique_texts, _original_to_unique, unique_to_original = self._deduplicate_texts(texts)
             unique_embeddings = await self._get_embeddings_with_batch(unique_texts, self.batch_size)
             return self._map_embeddings_back(unique_embeddings, unique_to_original, len(texts))
 
@@ -551,7 +546,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         missing_texts = [texts[i] for i in missing_indices]
 
         # 4. 批次内去重
-        unique_texts, original_to_unique, unique_to_original = self._deduplicate_texts(
+        unique_texts, _original_to_unique, unique_to_original = self._deduplicate_texts(
             missing_texts
         )
         len(missing_texts) - len(unique_texts)
@@ -580,7 +575,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
         return result
 
-    def _deduplicate_texts(self, texts: List[str]) -> tuple:
+    def _deduplicate_texts(self, texts: list[str]) -> tuple:
         """
         文本去重，保持映射关系
 
@@ -614,10 +609,10 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     def _map_embeddings_back(
         self,
-        unique_embeddings: List[List[float]],
-        unique_to_original: List[List[int]],
+        unique_embeddings: list[list[float]],
+        unique_to_original: list[list[int]],
         original_count: int,
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         """
         将去重后的向量回填到原始位置
 
@@ -648,9 +643,9 @@ class APIEmbeddingProvider(EmbeddingProvider):
     async def _get_embeddings_with_retry(
         self,
         provider: Any,
-        texts: List[str],
+        texts: list[str],
         retry_stats: dict | None = None,
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         """获取单个批次的向量嵌入，并在限流时进行指数退避重试。
 
         Args:
@@ -672,7 +667,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
                 except Exception:
                     _to = 60
                 return await asyncio.wait_for(provider.get_embeddings(texts), timeout=_to)
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise TimeoutError(f"向量请求超时 provider_id={self.provider_id} timeout={_to}s") from exc
             except Exception as exc:
                 if self._is_rate_limit_error(exc) and attempt < 3:
@@ -709,8 +704,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
         )
 
     async def _get_embeddings_with_batch(
-        self, texts: List[str], batch_size: int
-    ) -> List[List[float]]:
+        self, texts: list[str], batch_size: int
+    ) -> list[list[float]]:
         """使用指定批量大小获取向量嵌入，遇到413自动减半并在本次生命周期内持久化。
 
         Args:
@@ -777,8 +772,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
                     raise
 
     def _expand_aggregated_embedding(
-        self, embeddings: List[List[float]], texts: List[str]
-    ) -> List[List[float]]:
+        self, embeddings: list[list[float]], texts: list[str]
+    ) -> list[list[float]]:
         """
         兼容上游对多输入返回单个聚合向量的行为。
 
@@ -795,7 +790,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
 
     @staticmethod
     def _is_aggregated_embedding_result(
-        embeddings: List[List[float]], texts: List[str]
+        embeddings: list[list[float]], texts: list[str]
     ) -> bool:
         """判断是否符合“多输入返回单条聚合向量”的结构特征。"""
         return (
@@ -806,7 +801,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         )
 
     def _validate_embedding_count(
-        self, embeddings: List[List[float]], texts: List[str]
+        self, embeddings: list[list[float]], texts: list[str]
     ) -> None:
         """校验上游返回数量，避免不完整向量结果写入索引。"""
         if len(embeddings) == len(texts):
@@ -837,11 +832,10 @@ class APIEmbeddingProvider(EmbeddingProvider):
         if "413" in err_msg and "batch" in err_msg.lower():
             return True
         lowered = err_msg.lower()
-        if "batch size" in lowered and (
-            "should not be larger" in lowered or "batch size is invalid" in lowered
-        ):
-            return True
-        return False
+        return bool(
+            "batch size" in lowered
+            and ("should not be larger" in lowered or "batch size is invalid" in lowered)
+        )
 
     @staticmethod
     def _is_rate_limit_error(e: Exception) -> bool:
@@ -900,7 +894,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         text = re.sub(r"_+", "_", text)
         return text.strip("._ ")
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """获取模型信息"""
         self._refresh_provider_reference()
         if self._model_info is None:
@@ -924,7 +918,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         """获取提供商类型"""
         return "api"
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """获取缓存统计信息"""
         stats = self._cache.get_stats()
         stats["current_batch_size"] = self.batch_size  # 添加当前批量大小信息
@@ -974,7 +968,7 @@ class EmbeddingProviderFactory:
 
     async def create_provider(
         self,
-        provider_id: Optional[str] = None,
+        provider_id: str | None = None,
         batch_size: int | None = None,
         timeout: int | None = None,
     ) -> EmbeddingProvider:
@@ -1014,7 +1008,7 @@ class EmbeddingProviderFactory:
         self.logger.info(f"成功使用API嵌入提供商: {normalized_provider_id}")
         return api_provider
 
-    def get_available_providers(self) -> List[Dict[str, Any]]:
+    def get_available_providers(self) -> list[dict[str, Any]]:
         """
         获取所有可用的提供商信息
 

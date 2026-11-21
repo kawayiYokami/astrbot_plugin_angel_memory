@@ -7,11 +7,10 @@
 """
 
 from __future__ import annotations
-import asyncio
 
+import asyncio
 import json
 import tempfile
-import time
 from pathlib import Path
 
 from astrbot_plugin_angel_memory.core.services.legacy_memory_migration import (
@@ -21,7 +20,6 @@ from astrbot_plugin_angel_memory.llm_memory.components.memory_sql_manager import
     MemorySqlManager,
 )
 from astrbot_plugin_angel_memory.pmemory import MemoryStore, pmemory
-
 from legacy_db_fixture import LegacyDb
 
 
@@ -381,7 +379,7 @@ def test_latest_backup_file_wins():
 
 def test_self_backup_round_trips_inline_tags():
     """p-memory 自己导出的备份（标签内嵌）能被回灌。"""
-    root, store = _setup_env()
+    _root, store = _setup_env()
     store.remember("能回去的记忆", "自备份", ["标签甲", "标签乙"], "知识记忆", "恋爱")
     snapshot = store.export_snapshot()
     pmemory.close()

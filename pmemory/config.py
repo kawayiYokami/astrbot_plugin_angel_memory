@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 SCOPE_PUBLIC = "public"
 
@@ -25,7 +25,7 @@ NAMESPACE_MEMORY = "angel/memory"
 NAMESPACE_KNOWLEDGE_PREFIX = "angel/knowledge"
 
 # 域 → raw/ 下的相对目录。顺序即导入顺序。
-DOMAIN_DIRS: Dict[str, str] = {
+DOMAIN_DIRS: dict[str, str] = {
     "gi": "原神",
     "hsr": "崩坏星穹铁道",
     "zzz": "绝区零",
@@ -41,7 +41,7 @@ def memory_namespace() -> str:
     return NAMESPACE_MEMORY
 
 
-def knowledge_namespace(domain: Optional[str]) -> str:
+def knowledge_namespace(domain: str | None) -> str:
     """知识域 namespace。空 domain 返回知识根。"""
     name = str(domain or "").strip().lower()
     if not name:
@@ -49,7 +49,7 @@ def knowledge_namespace(domain: Optional[str]) -> str:
     return f"{NAMESPACE_KNOWLEDGE_PREFIX}/{name}"
 
 
-def read_scopes(scope: Optional[str]) -> List[str]:
+def read_scopes(scope: str | None) -> list[str]:
     """读过滤口径：自己的 scope 加上 public。
 
     与旧 `MemorySqlManager._scope_sql` 一致——非 public 的会话既能看到自己的
@@ -61,7 +61,7 @@ def read_scopes(scope: Optional[str]) -> List[str]:
     return [name, SCOPE_PUBLIC]
 
 
-def normalize_domain(name: object) -> Optional[str]:
+def normalize_domain(name: object) -> str | None:
     """把域标识或中文目录名规整成域键，非法返回 None。"""
     text = str(name or "").strip()
     if not text:
@@ -72,7 +72,7 @@ def normalize_domain(name: object) -> Optional[str]:
     return _DIR_TO_DOMAIN.get(text)
 
 
-def normalize_mode(value: object) -> Optional[str]:
+def normalize_mode(value: object) -> str | None:
     """把三态值规整成 auto / manual / hidden，非法返回 None。"""
     text = str(value or "").strip().lower()
     return text if text in KNOWLEDGE_MODES else None
@@ -83,18 +83,18 @@ def iter_domains() -> Iterable[str]:
 
 
 def build_knowledge_matrix(
-    knowledge_map: Optional[dict],
-) -> Tuple[Dict[str, Dict[str, str]], List[str]]:
+    knowledge_map: dict | None,
+) -> tuple[dict[str, dict[str, str]], list[str]]:
     """把配置里的可见性表规整成「每个群 × 全部域」的完整矩阵。
 
     规则：
     - 没写的群与域一律 manual；
     - 非法项不落进矩阵，作为错误信息返回给调用方打日志。
     """
-    errors: List[str] = []
-    groups: Dict[str, Dict[str, str]] = {}
+    errors: list[str] = []
+    groups: dict[str, dict[str, str]] = {}
 
-    def _ensure(group_id: str) -> Dict[str, str]:
+    def _ensure(group_id: str) -> dict[str, str]:
         if group_id not in groups:
             groups[group_id] = {domain: DEFAULT_KNOWLEDGE_MODE for domain in DOMAIN_DIRS}
         return groups[group_id]
@@ -122,14 +122,14 @@ def build_knowledge_matrix(
     return groups, errors
 
 
-def auto_domains_from(matrix: Dict[str, Dict[str, str]], group_id: object) -> List[str]:
+def auto_domains_from(matrix: dict[str, dict[str, str]], group_id: object) -> list[str]:
     """矩阵里标记为 auto 的域。"""
     key = str(group_id or "").strip()
     modes = matrix.get(key) or {}
     return [domain for domain, mode in modes.items() if mode == MODE_AUTO]
 
 
-def visible_domains_from(matrix: Dict[str, Dict[str, str]], group_id: object) -> List[str]:
+def visible_domains_from(matrix: dict[str, dict[str, str]], group_id: object) -> list[str]:
     """可主动搜索的域（auto + manual）。私聊没有群号，按全部域可见。"""
     key = str(group_id or "").strip()
     if not key:

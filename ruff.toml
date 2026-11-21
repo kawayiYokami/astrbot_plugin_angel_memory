@@ -1,0 +1,32 @@
+# ruff 配置：项目用 `ruff format .` + `ruff check .` 做格式与静态检查。
+#
+# 之前没有这份配置，跑的是 ruff 默认规则，所以结果既不稳定也不反映项目意图。
+line-length = 120
+target-version = "py310"
+
+[lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "RUF", # ruff 自有规则
+]
+ignore = [
+    # 插件必须兜底：单个组件、单个配置项出错不能拖垮整个机器人。
+    # 这些 `except Exception` 是有意为之——收窄成具体异常后，一个坏掉的配置项
+    # 就会直接崩掉插件，而不是让该功能降级。真要收紧的地方由代码里的注释说明，
+    # 不由这条规则统一施压。
+    "BLE001",
+    # 注释、文档字符串、文案都是中文，全角标点在这里是正常写法。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[lint.per-file-ignores]
+# 测试文件常要先改 sys.path / 注入 stub，再导入被测模块，导入不在顶部是正常的。
+"tests/**" = ["E402"]

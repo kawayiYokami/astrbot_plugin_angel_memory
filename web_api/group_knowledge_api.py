@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
@@ -15,10 +15,12 @@ from astrbot.api.web import error_response, json_response, request
 if TYPE_CHECKING:
     from ..core.plugin_context import PluginContext
 
-_OK = lambda data=None, message="": json_response(
+def _OK(data=None, message=""):
+    return json_response(
     {"status": "ok", "message": message, "data": data}
 )
-_ERR = lambda message, status_code=400: error_response(message, status_code=status_code)
+def _ERR(message, status_code=400):
+    return error_response(message, status_code=status_code)
 
 DOMAIN_LABELS = {
     "gi": "原神",
@@ -32,7 +34,7 @@ DOMAIN_LABELS = {
 class GroupKnowledgeAPI:
     """群聊知识库三态表读写。"""
 
-    def __init__(self, plugin_context: "PluginContext", plugin=None):
+    def __init__(self, plugin_context: PluginContext, plugin=None):
         self._ctx = plugin_context
         self._plugin = plugin
         self._config = plugin_context.config
@@ -62,9 +64,9 @@ class GroupKnowledgeAPI:
             }
         )
 
-    def _known_groups(self) -> List[Dict[str, str]]:
+    def _known_groups(self) -> list[dict[str, str]]:
         """群列表来自群账本，再并上配置里出现过、但账本还没登记的群。"""
-        rows: Dict[str, str] = {}
+        rows: dict[str, str] = {}
         memory_sql_manager = self._ctx.get_component("memory_sql_manager")
         if memory_sql_manager is not None:
             try:
@@ -103,11 +105,11 @@ class GroupKnowledgeAPI:
         return _OK(message="已保存并即时生效")
 
     @staticmethod
-    def normalize_groups(groups: List[Any]) -> tuple[Dict[str, Dict[str, str]], str]:
+    def normalize_groups(groups: list[Any]) -> tuple[dict[str, dict[str, str]], str]:
         """校验并补齐前端提交的三态表；返回 (表, 错误信息)。"""
         from ..pmemory.config import DOMAIN_DIRS, normalize_domain, normalize_mode
 
-        table: Dict[str, Dict[str, str]] = {}
+        table: dict[str, dict[str, str]] = {}
         for item in groups:
             if not isinstance(item, dict):
                 return {}, "groups 的每一项都必须是对象"
@@ -118,7 +120,7 @@ class GroupKnowledgeAPI:
             if not isinstance(raw_modes, dict):
                 return {}, f"{group_id} 的 modes 必须是对象"
 
-            modes: Dict[str, str] = {}
+            modes: dict[str, str] = {}
             for raw_domain, raw_mode in raw_modes.items():
                 domain = normalize_domain(raw_domain)
                 mode = normalize_mode(raw_mode)
@@ -132,4 +134,4 @@ class GroupKnowledgeAPI:
         return table, ""
 
 
-__all__ = ["GroupKnowledgeAPI", "DOMAIN_LABELS"]
+__all__ = ["DOMAIN_LABELS", "GroupKnowledgeAPI"]

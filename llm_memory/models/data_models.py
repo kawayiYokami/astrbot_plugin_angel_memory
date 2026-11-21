@@ -10,14 +10,13 @@ LLM记忆系统的数据模型 - 统一的三元组记忆体系。
 - 情感记忆：存储"AI感觉怎么样"
 """
 
-from enum import Enum
-from typing import List, Optional
-import uuid
-import time
 import json
+import time
+import uuid
+from enum import Enum
+from typing import Optional
 
 from ..config.system_config import KNOWLEDGE_CORE_SEPARATOR
-
 
 # ===== 记忆类型枚举 =====
 
@@ -38,25 +37,21 @@ class MemoryType(Enum):
 class MemoryError(Exception):
     """记忆系统基础异常类"""
 
-    pass
 
 
 class VectorizationError(MemoryError):
     """向量化和嵌入相关异常"""
 
-    pass
 
 
 class StorageError(MemoryError):
     """存储和检索相关异常"""
 
-    pass
 
 
 class ValidationError(MemoryError):
     """数据验证相关异常"""
 
-    pass
 
 
 class BaseMemory:
@@ -71,13 +66,13 @@ class BaseMemory:
         memory_type: MemoryType,
         judgment: str,
         reasoning: str,
-        tags: List[str],
-        id: str = None,
+        tags: list[str],
+        id: str | None = None,
         strength: int = 1,
         is_active: bool = False,
-        created_at: float = None,
-        is_consolidated: bool = None,  # 废弃字段，仅保留兼容性
-        soul_state: dict = None,       # 生成该记忆时的四情绪读数
+        created_at: float | None = None,
+        is_consolidated: bool | None = None,  # 废弃字段，仅保留兼容性
+        soul_state: dict | None = None,       # 生成该记忆时的四情绪读数
         memory_scope: str = "public",  # 记忆分类域，默认公共
         useful_count: int = 0,
         useful_score: float = 0.0,
@@ -139,7 +134,7 @@ class BaseMemory:
             return {}
 
     @staticmethod
-    def _parse_tags(tags_data) -> List[str]:
+    def _parse_tags(tags_data) -> list[str]:
         """解析tags字段（可能是字符串或列表）"""
         if isinstance(tags_data, str):
             return [tag.strip() for tag in tags_data.split(",") if tag.strip()]
@@ -196,8 +191,11 @@ class BaseMemory:
                 last_recalled_at=data.get("last_recalled_at", 0.0),
             )
         except (KeyError, TypeError, ValueError) as e:
-            raise ValidationError(f"从字典创建记忆失败: {str(e)}")
+            raise ValidationError(f"从字典创建记忆失败: {e!s}") from e
 
     def __str__(self) -> str:
         """字符串表示形式，用于调试。"""
-        return f"Memory(type={self.memory_type.value}, id={self.id[:8]}..., judgment='{self.judgment[:30]}...', tags={self.tags})"
+        return (
+            f"Memory(type={self.memory_type.value}, id={self.id[:8]}..., "
+            f"judgment='{self.judgment[:30]}...', tags={self.tags})"
+        )

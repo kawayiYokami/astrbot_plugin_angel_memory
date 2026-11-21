@@ -5,16 +5,16 @@
 让下游服务只需要依赖PluginContext即可获得所有必要资源。
 """
 
-from typing import Any, Dict, Optional, Tuple
-from pathlib import Path
 import inspect
-import re
 import json
+import re
+from pathlib import Path
+from typing import Any
 
 from astrbot.api import logger
 
-from ..llm_memory.utils.path_manager import PathManager
 from ..llm_memory.components.embedding_provider import EmbeddingProvider
+from ..llm_memory.utils.path_manager import PathManager
 
 
 class PluginContext:
@@ -29,7 +29,7 @@ class PluginContext:
     """
 
     def __init__(
-        self, astrbot_context, config: Dict[str, Any], base_data_dir: str = None
+        self, astrbot_context, config: dict[str, Any], base_data_dir: str | None = None
     ):
         """
         初始化插件上下文
@@ -45,15 +45,15 @@ class PluginContext:
         self.logger = logger
 
         # 同步资源
-        self.path_manager: Optional[PathManager] = None
+        self.path_manager: PathManager | None = None
         # 异步资源，由ComponentFactory创建后设置
-        self.embedding_provider: Optional[EmbeddingProvider] = None
+        self.embedding_provider: EmbeddingProvider | None = None
         # ComponentFactory 引用，用于获取组件
         self._component_factory = None
         self._scope_name_pattern = re.compile(r"^[a-zA-Z0-9\u4e00-\u9fff_-]+$")
-        self._conversation_scope_map: Dict[str, str] = {}
+        self._conversation_scope_map: dict[str, str] = {}
         self._conversation_scope_mode: str = "persona"
-        self._group_knowledge_map: Dict[str, Dict[str, str]] = {}
+        self._group_knowledge_map: dict[str, dict[str, str]] = {}
 
         # 初始化插件资源
         self._setup_plugin_resources()
@@ -241,7 +241,7 @@ class PluginContext:
             self._conversation_scope_map = {}
             return
 
-        validated: Dict[str, str] = {}
+        validated: dict[str, str] = {}
         for raw_key, raw_scope in raw_map.items():
             conversation_id = str(raw_key).strip()
             scope_name = str(raw_scope).strip()
@@ -268,7 +268,7 @@ class PluginContext:
 
         self._conversation_scope_map = validated
 
-    def get_conversation_scope_map(self) -> Dict[str, str]:
+    def get_conversation_scope_map(self) -> dict[str, str]:
         """获取已校验的会话映射，始终返回全量（不按分柜方式过滤）。"""
         return self._conversation_scope_map.copy()
 
@@ -307,11 +307,11 @@ class PluginContext:
             return {}
         return raw
 
-    def get_group_knowledge_map(self) -> Dict[str, Dict[str, str]]:
+    def get_group_knowledge_map(self) -> dict[str, dict[str, str]]:
         """获取全部群的三态表（每个群都补齐了全部域）。"""
         return {group: dict(modes) for group, modes in self._group_knowledge_map.items()}
 
-    def list_knowledge_modes(self, group_id: object) -> Dict[str, str]:
+    def list_knowledge_modes(self, group_id: object) -> dict[str, str]:
         """取某个群对全部知识域的可见性，未配置的群一律 manual。"""
         from ..pmemory.config import DEFAULT_KNOWLEDGE_MODE, DOMAIN_DIRS
 
@@ -352,7 +352,7 @@ class PluginContext:
 
     def resolve_memory_scope_with_source(
         self, conversation_id: str, persona_name: str = ""
-    ) -> Tuple[str, str, str]:
+    ) -> tuple[str, str, str]:
         """解析记忆域并返回命中来源：scope, matched_by, matched_key。
 
         conversation_scope_mode 为 persona 时只看人格键，为 group 时只看会话 ID 键，
@@ -468,7 +468,8 @@ class PluginContext:
                 )
         except Exception:
             self.logger.error(
-                "[睡眠] 人格解析异常：resolve_selected_persona失败 umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
+                "[睡眠] 人格解析异常：resolve_selected_persona失败 "
+                "umo=%r manager_is_none=%s has_resolve_selected_persona=%s",
                 umo,
                 persona_manager is None,
                 hasattr(persona_manager, "resolve_selected_persona"),
@@ -485,7 +486,7 @@ class PluginContext:
         """从事件中提取统一会话ID。"""
         if not hasattr(event, "unified_msg_origin"):
             raise ValueError("事件缺少 unified_msg_origin，无法确定会话ID")
-        raw_conversation_id = getattr(event, "unified_msg_origin")
+        raw_conversation_id = event.unified_msg_origin
         if raw_conversation_id is None:
             raise ValueError("事件 unified_msg_origin 为空，无法确定会话ID")
         conversation_id = str(raw_conversation_id).strip()
@@ -502,10 +503,10 @@ class PluginContext:
 
     def get_config(
         self,
-        key: Optional[str] = None,
+        key: str | None = None,
         default: Any = None,
         *,
-        umo: Optional[str] = None,
+        umo: str | None = None,
     ) -> Any:
         """
         获取配置值。
@@ -541,7 +542,7 @@ class PluginContext:
             return self.config.copy()
         return self.config.get(key, default)
 
-    def get_all_config(self) -> Dict[str, Any]:
+    def get_all_config(self) -> dict[str, Any]:
         """获取所有配置"""
         return self.config.copy()
 
@@ -571,7 +572,7 @@ class PluginContext:
         """获取当前供应商ID"""
         return self.path_manager.get_current_provider()
 
-    def get_embedding_provider(self) -> Optional[EmbeddingProvider]:
+    def get_embedding_provider(self) -> EmbeddingProvider | None:
         """获取由ComponentFactory创建的嵌入提供商实例"""
         return self.embedding_provider
 
@@ -612,7 +613,7 @@ class PluginContext:
 
     # === 更新方法 ===
 
-    def update_config(self, new_config: Dict[str, Any]):
+    def update_config(self, new_config: dict[str, Any]):
         """更新配置"""
         self.config.update(new_config)
         self._refresh_scope_map()
@@ -646,7 +647,7 @@ class PluginContextFactory:
 
     @staticmethod
     def create_from_initialization(
-        astrbot_context, config: Dict[str, Any], base_data_dir: str = None
+        astrbot_context, config: dict[str, Any], base_data_dir: str | None = None
     ) -> PluginContext:
         """
         从初始化创建PluginContext
@@ -662,7 +663,7 @@ class PluginContextFactory:
         return PluginContext(astrbot_context, config, base_data_dir)
 
     @staticmethod
-    def create_from_event(event, base_config: Dict[str, Any]) -> PluginContext:
+    def create_from_event(event, base_config: dict[str, Any]) -> PluginContext:
         """
         从事件创建PluginContext
 
@@ -676,7 +677,7 @@ class PluginContextFactory:
         return PluginContext(event.context, base_config)
 
     @staticmethod
-    def create_mock_context(config: Dict[str, Any] = None) -> PluginContext:
+    def create_mock_context(config: dict[str, Any] | None = None) -> PluginContext:
         """
         创建模拟的PluginContext（用于测试）
 

@@ -1,11 +1,7 @@
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
-from astrbot.api import FunctionTool
+from astrbot.api import FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent
-
-from astrbot.api import logger
 
 
 @dataclass
@@ -48,7 +44,7 @@ class NoteRecallTool(FunctionTool):
         event: AstrMessageEvent,
         note_id: int,
         offset: int = 1,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> str:
         if not hasattr(event, "plugin_context") or event.plugin_context is None:
             return "错误：无法获取插件上下文。"

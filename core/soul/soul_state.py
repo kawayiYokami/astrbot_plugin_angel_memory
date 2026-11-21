@@ -1,6 +1,6 @@
 import math
 import threading
-from typing import Dict, List, Optional
+from typing import ClassVar
 
 from astrbot.api import logger
 
@@ -24,7 +24,7 @@ class SoulState:
     """
 
     # 情绪轴，固定顺序，与提示词的 soul_state 字段一一对应
-    AXES = ["joy", "anger", "surprise", "disgust"]
+    AXES: ClassVar[list[str]] = ["joy", "anger", "surprise", "disgust"]
 
     AXIS_MID = 0.5
     AXIS_MIN = 0.0
@@ -45,7 +45,7 @@ class SoulState:
         状态仅存在于内存，重启后回到四轴居中的中性状态。
         """
         self._lock = threading.RLock()
-        self.axes: Dict[str, float] = {axis: self.AXIS_MID for axis in self.AXES}
+        self.axes: dict[str, float] = {axis: self.AXIS_MID for axis in self.AXES}
 
     # ===== 核心算法模块（可独立测试） =====
 
@@ -53,7 +53,7 @@ class SoulState:
         """把数值收进 0~1。"""
         return max(self.AXIS_MIN, min(self.AXIS_MAX, value))
 
-    def _parse_score(self, axis: str, raw) -> Optional[float]:
+    def _parse_score(self, axis: str, raw) -> float | None:
         """把一条读数转成合法分值，非法读数返回 None。"""
         try:
             value = float(raw)
@@ -65,7 +65,7 @@ class SoulState:
             return None
         return self._clamp(value)
 
-    def _apply(self, targets: Dict[str, float], strength: float, mode: str) -> None:
+    def _apply(self, targets: dict[str, float], strength: float, mode: str) -> None:
         """
         把当前状态朝目标读数推进一步。
 
@@ -105,11 +105,11 @@ class SoulState:
 
     # ===== 公共接口 =====
 
-    def reflect(self, scores: Dict[str, float]) -> None:
+    def reflect(self, scores: dict[str, float]) -> None:
         """按本轮情绪读数修正当前状态。"""
         self._apply(scores, self.REFLECT_STRENGTH, "reflect")
 
-    def resonate(self, entries: List[dict]) -> None:
+    def resonate(self, entries: list[dict]) -> None:
         """
         旧记忆的情绪牵引当前状态。
 
@@ -117,8 +117,8 @@ class SoulState:
             entries: 每项形如 {"scores": {轴: 值}, "strength": 记忆强度}
                      记忆强度越大，它的情绪对当前状态影响越大。
         """
-        weighted: Dict[str, float] = {}
-        weights: Dict[str, float] = {}
+        weighted: dict[str, float] = {}
+        weights: dict[str, float] = {}
         for entry in entries or []:
             if not isinstance(entry, dict):
                 continue
@@ -150,7 +150,7 @@ class SoulState:
         logger.debug(f"灵魂共鸣: 由 {len(entries)} 条记忆牵引 {sorted(targets)}")
         self._apply(targets, self.RESONATE_STRENGTH, "resonate")
 
-    def get_scores(self) -> Dict[str, float]:
+    def get_scores(self) -> dict[str, float]:
         """获取四条情绪轴的当前读数，注入与写入记忆都用这份数据。"""
         with self._lock:
             return {axis: round(value, 2) for axis, value in self.axes.items()}

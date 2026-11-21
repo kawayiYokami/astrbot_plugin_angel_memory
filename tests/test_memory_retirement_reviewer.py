@@ -45,7 +45,7 @@ ID_TOKEN = "test"
 
 
 class _FakeProvider:
-    def __init__(self, text: str = "", error: Exception = None, delay: float = 0.0):
+    def __init__(self, text: str = "", error: Exception | None = None, delay: float = 0.0):
         self.text = text
         self.error = error
         self.delay = delay
@@ -53,7 +53,7 @@ class _FakeProvider:
         self.prompts = []
         self.system_prompts = []
 
-    async def text_chat(self, prompt: str, system_prompt: str = None):
+    async def text_chat(self, prompt: str, system_prompt: str | None = None):
         self.calls += 1
         self.prompts.append(prompt)
         self.system_prompts.append(system_prompt)

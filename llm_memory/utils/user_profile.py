@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Sequence
-
+from collections.abc import Iterable, Sequence
 
 PROFILE_ATTRIBUTE_TAGS = {
     "用户别名",
@@ -12,8 +11,8 @@ PROFILE_ATTRIBUTE_TAGS = {
 }
 
 
-def normalize_tags(tags: Iterable[str]) -> List[str]:
-    normalized: List[str] = []
+def normalize_tags(tags: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
     seen = set()
     for tag in tags or []:
         text = str(tag).strip()
@@ -24,7 +23,7 @@ def normalize_tags(tags: Iterable[str]) -> List[str]:
     return normalized
 
 
-def is_user_id_tag(tag: str, known_user_ids: Optional[Sequence[str]] = None) -> bool:
+def is_user_id_tag(tag: str, known_user_ids: Sequence[str] | None = None) -> bool:
     """判断 tag 是否为用户 ID。
 
     两级判定：
@@ -45,15 +44,13 @@ def is_user_id_tag(tag: str, known_user_ids: Optional[Sequence[str]] = None) -> 
         return False
     if any(c.isspace() for c in text):
         return False
-    if text.replace("-", "").replace("_", "").isalpha():
-        return False
-    return True
+    return not text.replace("-", "").replace("_", "").isalpha()
 
 
 def extract_user_ids_from_tags(
     tags: Iterable[str],
-    known_user_ids: Optional[Sequence[str]] = None,
-) -> List[str]:
+    known_user_ids: Sequence[str] | None = None,
+) -> list[str]:
     """从 tags 中提取全部用户 ID。
 
     一个记忆可关联多个用户（如「小明和小红是好友」的关系图谱），
@@ -72,7 +69,7 @@ def extract_user_ids_from_tags(
 
 def extract_user_id_from_tags(
     tags: Iterable[str],
-    known_user_ids: Optional[Sequence[str]] = None,
+    known_user_ids: Sequence[str] | None = None,
 ) -> str:
     """从 tags 中提取用户 ID（单值兼容版）。
 
@@ -92,7 +89,7 @@ def extract_profile_attribute_from_tags(tags: Iterable[str]) -> str:
 
 def extract_user_nickname_from_tags(
     tags: Iterable[str],
-    known_user_ids: Optional[Sequence[str]] = None,
+    known_user_ids: Sequence[str] | None = None,
 ) -> str:
     for tag in normalize_tags(tags):
         if is_user_id_tag(tag, known_user_ids=known_user_ids) or tag in PROFILE_ATTRIBUTE_TAGS:
@@ -103,7 +100,7 @@ def extract_user_nickname_from_tags(
 
 def is_user_profile_tags(
     tags: Iterable[str],
-    known_user_ids: Optional[Sequence[str]] = None,
+    known_user_ids: Sequence[str] | None = None,
 ) -> bool:
     normalized = normalize_tags(tags)
     return bool(extract_user_id_from_tags(normalized, known_user_ids=known_user_ids)) and bool(

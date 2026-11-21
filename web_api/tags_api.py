@@ -4,11 +4,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from quart import jsonify, request
-
-from astrbot.api import logger
 
 
 def _to_seconds(value: Any) -> float:
@@ -21,20 +19,20 @@ def _to_seconds(value: Any) -> float:
     return number if number > 0 else 0.0
 
 
-def _record_tags(record: Dict[str, Any]) -> List[str]:
+def _record_tags(record: dict[str, Any]) -> list[str]:
     tags = record.get("tags") or []
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",")]
     return [str(t).strip() for t in tags if str(t).strip()]
 
 
-def _record_scope(record: Dict[str, Any]) -> str:
+def _record_scope(record: dict[str, Any]) -> str:
     return str(record.get("scope") or "public")
 
 
-def aggregate_tags(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def aggregate_tags(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """按标签名聚合引用计数，引用多者在前，同计数按名字排序。"""
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for record in records or []:
         for tag in _record_tags(record):
             counts[tag] = counts.get(tag, 0) + 1
@@ -46,7 +44,7 @@ def aggregate_tags(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return items
 
 
-def match_tag_names(records: List[Dict[str, Any]], query_text: str) -> List[str]:
+def match_tag_names(records: list[dict[str, Any]], query_text: str) -> list[str]:
     """标签命中：标签名出现在查询文本里即命中（与旧 SQL 版口径一致）。"""
     query = str(query_text or "").strip()
     if not query:
@@ -63,7 +61,7 @@ def _scope_visible(record_scope: str, scope: str) -> bool:
     return record_scope in (scope, "public")
 
 
-def _hit_item(record: Dict[str, Any], hit_count: int) -> Dict[str, Any]:
+def _hit_item(record: dict[str, Any], hit_count: int) -> dict[str, Any]:
     state = record.get("state") or {}
     tags = _record_tags(record)
     created = record.get("created_at_us", record.get("created_at", 0))
@@ -84,11 +82,11 @@ def _hit_item(record: Dict[str, Any], hit_count: int) -> Dict[str, Any]:
 
 
 def search_memories_by_tags(
-    records: List[Dict[str, Any]],
-    matched: List[str],
+    records: list[dict[str, Any]],
+    matched: list[str],
     scope: str = "",
     limit: int = 50,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """含命中标签的记忆，按命中标签数、强度、创建时间排序。"""
     wanted = {str(t) for t in (matched or []) if str(t).strip()}
     if not wanted:
@@ -101,10 +99,12 @@ def search_memories_by_tags(
         hit_count = len(tags & wanted)
         if hit_count:
             hits.append((record, hit_count))
-    state_strength = lambda record: int((record.get("state") or {}).get("strength", 1) or 0)
-    created_ts = lambda record: _to_seconds(
-        record.get("created_at_us", record.get("created_at", 0))
-    )
+    def state_strength(record):
+        return int((record.get("state") or {}).get("strength", 1) or 0)
+    def created_ts(record):
+        return _to_seconds(
+            record.get("created_at_us", record.get("created_at", 0))
+        )
     hits.sort(key=lambda pair: (-pair[1], -state_strength(pair[0]), -created_ts(pair[0])))
     return [_hit_item(record, count) for record, count in hits[:max(1, limit)]]
 

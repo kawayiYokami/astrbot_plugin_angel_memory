@@ -4,9 +4,8 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Any
 from pathlib import Path
-
+from typing import Any
 
 # 记忆系统常量
 KNOWLEDGE_CORE_SEPARATOR = ", "  # 用于连接 judgment 和 tags 的分隔符
@@ -71,7 +70,7 @@ class MemorySystemConfig:
         if self.consolidation_interval_hours < 1:
             raise ValueError("consolidation_interval_hours 必须 >= 1")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "embedding_model": self.embedding_model,
@@ -85,7 +84,7 @@ class MemorySystemConfig:
         }
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "MemorySystemConfig":
+    def from_dict(cls, config_dict: dict[str, Any]) -> "MemorySystemConfig":
         """从字典创建配置"""
         config_dict = dict(config_dict)
         # 兼容历史废弃字段，避免旧配置反序列化时报错

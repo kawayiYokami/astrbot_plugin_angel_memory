@@ -13,12 +13,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from p_memory.errors import EmbedCallbackError
-
-from astrbot.api import logger
 
 _TOO_LARGE_HINTS = ("too large", "too long", "context length", "max tokens", "payload")
 _RATE_LIMIT_HINTS = ("rate limit", "rate_limit", "429", "too many requests")
@@ -42,7 +42,7 @@ class _BackgroundLoop:
         self._thread.start()
         self._closed = False
 
-    def run(self, coro, timeout: Optional[float]):
+    def run(self, coro, timeout: float | None):
         if self._closed:
             raise RuntimeError("回调事件循环已关闭")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -52,18 +52,16 @@ class _BackgroundLoop:
         if self._closed:
             return
         self._closed = True
-        try:
+        with contextlib.suppress(Exception):
             self._loop.call_soon_threadsafe(self._loop.stop)
-        except Exception:
-            pass
         self._thread.join(timeout=2)
 
 
 # 循环 id -> 跑这条循环的线程 id：回调若已在该线程上，不能再投递回去等结果
-_LOOP_THREADS: Dict[int, int] = {}
+_LOOP_THREADS: dict[int, int] = {}
 
 
-def running_loop() -> Optional[asyncio.AbstractEventLoop]:
+def running_loop() -> asyncio.AbstractEventLoop | None:
     """取当前正在运行的循环；没有则为 None。"""
     try:
         loop = asyncio.get_running_loop()
@@ -73,7 +71,7 @@ def running_loop() -> Optional[asyncio.AbstractEventLoop]:
     return loop
 
 
-def loop_thread_ident(loop: Optional[asyncio.AbstractEventLoop]) -> Optional[int]:
+def loop_thread_ident(loop: asyncio.AbstractEventLoop | None) -> int | None:
     """查这条循环跑在哪个线程上；没记录过就返回 None。"""
     if loop is None:
         return None
@@ -89,14 +87,14 @@ class _CallbackRunner:
     才退回自带后台循环（此时可能仍然失败，但不会死锁）。
     """
 
-    def __init__(self, name: str, owner: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    def __init__(self, name: str, owner: asyncio.AbstractEventLoop | None = None) -> None:
         self._name = name
         self._owner = owner
         self._owner_thread = loop_thread_ident(owner)
-        self._fallback: Optional[_BackgroundLoop] = None
+        self._fallback: _BackgroundLoop | None = None
         self._fallback_lock = threading.Lock()
 
-    def run(self, coro, timeout: Optional[float]):
+    def run(self, coro, timeout: float | None):
         owner = self._owner
         if (
             owner is not None
@@ -131,15 +129,15 @@ class EmbeddingBridge:
         self,
         provider: Any,
         timeout: float = 120.0,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
-        should_stop: Optional[Callable[[], bool]] = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> None:
         self._provider = provider
         self._timeout = float(timeout)
         self._runner = _CallbackRunner("pmemory-embed", loop)
         self._should_stop = should_stop
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
+    def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         # 库按 max_batch 分批调这个回调，每批之间都回到 Python 一次。
@@ -152,7 +150,7 @@ class EmbeddingBridge:
             result = self._runner.run(
                 self._provider.embed_documents(list(texts)), self._timeout
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise EmbedCallbackError.other(f"嵌入超时 timeout={self._timeout}s") from exc
         except Exception as exc:  # 提供商异常按类别上报，库据此重试或降级
             raise _classify(str(exc)) from exc
@@ -188,13 +186,13 @@ class RerankBridge:
         self,
         provider: Any,
         timeout: float = 60.0,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
+        loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._provider = provider
         self._timeout = float(timeout)
         self._runner = _CallbackRunner("pmemory-rerank", loop)
 
-    def rerank(self, query: str, documents: Sequence[str]) -> List[float]:
+    def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
         docs = [str(doc or "") for doc in (documents or [])]
         if not docs:
             return []
@@ -202,7 +200,7 @@ class RerankBridge:
             response = self._runner.run(
                 self._provider.rerank(query=query, documents=docs), self._timeout
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise EmbedCallbackError.other(f"重排超时 timeout={self._timeout}s") from exc
         except Exception as exc:
             raise EmbedCallbackError.other(str(exc)) from exc
@@ -216,7 +214,7 @@ class RerankBridge:
         self._runner.close()
 
 
-def _normalize_scores(response: Any, count: int) -> List[float]:
+def _normalize_scores(response: Any, count: int) -> list[float]:
     """把各种重排返回形状归一到「与输入文档等长的分数表」。
 
     支持：`{results: [...]}` / `{data: [...]}` / 字典列表（index + relevance_score|score）

@@ -11,11 +11,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from astrbot.api import logger
 from p_memory import KnowledgeBase
 from p_memory.errors import ClosedError
 
@@ -27,8 +30,6 @@ from .config import (
     memory_namespace,
 )
 from .providers import EmbeddingBridge, RerankBridge, running_loop
-
-from astrbot.api import logger
 
 SPACE_ENCODING = "sq8"
 SCOPES_FILE = "scopes.json"
@@ -123,22 +124,22 @@ class PMemory:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._root: Optional[Path] = None
-        self._raw_dir: Optional[Path] = None
-        self._kb: Optional[KnowledgeBase] = None
+        self._root: Path | None = None
+        self._raw_dir: Path | None = None
+        self._kb: KnowledgeBase | None = None
         self._embedding_provider: Any = None
         self._rerank_provider: Any = None
-        self._rerank_options: Dict[str, int] = {}
-        self._embedding: Optional[EmbeddingBridge] = None
-        self._reranker: Optional[RerankBridge] = None
-        self._space_id: Optional[str] = None
+        self._rerank_options: dict[str, int] = {}
+        self._embedding: EmbeddingBridge | None = None
+        self._reranker: RerankBridge | None = None
+        self._space_id: str | None = None
         self._sync_started = False
-        self._sync_thread: Optional[threading.Thread] = None
+        self._sync_thread: threading.Thread | None = None
         # 关闭后拒绝再打开：close() 之后任何访问都必须失败，否则后台线程会把库
         # 重新打开、把目录锁又拿回去，下次重载必撞锁
         self._closed = False
         # 提供商对象所属的事件循环：回调必须回到这条循环，否则跨 loop 使用会报错
-        self._owner_loop: Optional[Any] = None
+        self._owner_loop: Any | None = None
         # 已知 scope 名单：库不支持「跨全部 scope」的读，生命周期操作只能显式列全
         self._scopes: set[str] = {SCOPE_PUBLIC}
         self._scopes_loaded = False
@@ -151,7 +152,7 @@ class PMemory:
         raw_dir: str | Path | None = None,
         embedding_provider: Any = None,
         rerank_provider: Any = None,
-        rerank_options: Optional[Dict[str, int]] = None,
+        rerank_options: dict[str, int] | None = None,
     ) -> None:
         """设置数据目录与提供商，并在这里完成打开。
 
@@ -198,7 +199,7 @@ class PMemory:
                 self._open()
 
     @property
-    def root(self) -> Optional[Path]:
+    def root(self) -> Path | None:
         return self._root
 
     @property
@@ -219,13 +220,13 @@ class PMemory:
             return self._kb
 
     @property
-    def space_id(self) -> Optional[str]:
+    def space_id(self) -> str | None:
         return self._space_id
 
     # === scope 名单 ===
 
     @property
-    def scopes(self) -> List[str]:
+    def scopes(self) -> list[str]:
         with self._lock:
             if self._root is not None and not self._scopes_loaded:
                 self._load_scopes()
@@ -306,10 +307,8 @@ class PMemory:
                 self._kb = None
             for bridge in (self._embedding, self._reranker):
                 if bridge is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         bridge.close()
-                    except Exception:
-                        pass
             self._embedding = None
             self._reranker = None
             self._space_id = None
@@ -469,7 +468,7 @@ class PMemory:
 
     # === 运维信息 ===
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         try:
             kb = self.kb
             return {

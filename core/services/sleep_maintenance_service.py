@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 class SleepMaintenanceService:
@@ -13,8 +13,8 @@ class SleepMaintenanceService:
         base_dir = plugin_context.get_memory_center_dir() if plugin_context else Path(".")
         self._state_file = Path(base_dir) / "maintenance_state.json"
 
-    def _load_state(self) -> Dict[str, Any]:
-        default_state: Dict[str, Any] = {
+    def _load_state(self) -> dict[str, Any]:
+        default_state: dict[str, Any] = {
             "last_updated_at": 0.0,
             "daily_json_backup_last_day": "",
             "cleanup_last_sleep_at": 0.0,
@@ -35,7 +35,7 @@ class SleepMaintenanceService:
             self.deepmind.logger.warning("读取 maintenance_state.json 失败，已回退默认状态。")
             return default_state
 
-    def _save_state(self, state: Dict[str, Any]) -> None:
+    def _save_state(self, state: dict[str, Any]) -> None:
         state["last_updated_at"] = time.time()
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
         with self._state_file.open("w", encoding="utf-8") as f:
@@ -71,7 +71,7 @@ class SleepMaintenanceService:
         else:
             deepmind.logger.info(f"[睡眠维护] 后置维护完成 成功=0 失败=0 跳过=1 耗时毫秒={cost_ms}")
 
-    async def _task_daily_json_backup(self, state: Dict[str, Any]) -> str:
+    async def _task_daily_json_backup(self, state: dict[str, Any]) -> str:
         deepmind = self.deepmind
         plugin_context = deepmind.plugin_context
         memory_store = plugin_context.get_component("memory_store")

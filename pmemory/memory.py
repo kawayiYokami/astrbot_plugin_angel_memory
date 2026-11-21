@@ -12,14 +12,14 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
+from astrbot.api import logger
 from p_memory.errors import NotFoundError, PMemoryError
 
 from .config import memory_namespace, read_scopes
 from .kb import pmemory
-
-from astrbot.api import logger
 
 SECOND_US = 1_000_000
 
@@ -28,13 +28,13 @@ def _text(value: object) -> str:
     return str(value or "").strip()
 
 
-def _tags(value: object) -> List[str]:
+def _tags(value: object) -> list[str]:
     if not isinstance(value, (list, tuple, set)):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def to_us(seconds: object) -> Optional[int]:
+def to_us(seconds: object) -> int | None:
     """秒 → 微秒。旧库用秒，p-memory 用 UTC 微秒。"""
     try:
         number = float(seconds or 0)
@@ -68,7 +68,7 @@ class MemoryStore:
 
     # === 内部 ===
 
-    def _filter(self, scope: Optional[str], all_scopes: bool = False) -> dict:
+    def _filter(self, scope: str | None, all_scopes: bool = False) -> dict:
         """读过滤。生命周期操作要跨 scope，检索才按会话范围收窄。
 
         库要求至少一个显式 scope，且没有「全部 scope」通配，跨 scope 只能靠登记名单。
@@ -78,11 +78,11 @@ class MemoryStore:
         return {"namespace": memory_namespace(), "scopes": read_scopes(scope)}
 
     @property
-    def space(self) -> Optional[str]:
+    def space(self) -> str | None:
         return self._store.space_id
 
     @property
-    def scopes(self) -> List[str]:
+    def scopes(self) -> list[str]:
         return self._store.scopes
 
     def register_scopes(self, names) -> None:
@@ -96,19 +96,19 @@ class MemoryStore:
         reasoning: str,
         tags: Iterable[str],
         memory_type: str,
-        scope: Optional[str] = None,
+        scope: str | None = None,
         *,
         pinned: bool = False,
-        strength: Optional[int] = None,
-        useful_count: Optional[int] = None,
-        useful_score: Optional[float] = None,
-        last_recalled_at: Optional[float] = None,
-        last_decay_at: Optional[float] = None,
-        metadata: Optional[dict] = None,
-        created_at: Optional[float] = None,
-        updated_at: Optional[float] = None,
+        strength: int | None = None,
+        useful_count: int | None = None,
+        useful_score: float | None = None,
+        last_recalled_at: float | None = None,
+        last_decay_at: float | None = None,
+        metadata: dict | None = None,
+        created_at: float | None = None,
+        updated_at: float | None = None,
     ) -> dict:
-        state: Dict[str, Any] = {"pinned": bool(pinned)}
+        state: dict[str, Any] = {"pinned": bool(pinned)}
         if strength is not None:
             state["strength"] = int(strength)
         if useful_count is not None:
@@ -122,7 +122,7 @@ class MemoryStore:
         if decay_us is not None:
             state["last_decay_at_us"] = decay_us
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "judgment": _text(judgment),
             "reasoning": _text(reasoning),
             "memory_type": _text(memory_type) or "知识记忆",
@@ -153,18 +153,18 @@ class MemoryStore:
         self,
         memory_id: int,
         *,
-        judgment: Optional[str] = None,
-        reasoning: Optional[str] = None,
-        tags: Optional[Iterable[str]] = None,
-        memory_type: Optional[str] = None,
-        scope: Optional[str] = None,
-        metadata: Optional[dict] = None,
+        judgment: str | None = None,
+        reasoning: str | None = None,
+        tags: Iterable[str] | None = None,
+        memory_type: str | None = None,
+        scope: str | None = None,
+        metadata: dict | None = None,
     ) -> dict:
         """原地更新正文。upsert 要求整条记忆，缺的字段从现有记录补。"""
         record = self.get(memory_id, all_scopes=True)
         if not record:
             return {}
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "id": int(memory_id),
             "judgment": _text(judgment if judgment is not None else record.get("judgment")),
             "reasoning": _text(
@@ -184,7 +184,7 @@ class MemoryStore:
         self._store.kb.update_index()
         return (receipt or {}).get("value") or {}
 
-    def pin(self, memory_id: int, scope: Optional[str] = None) -> bool:
+    def pin(self, memory_id: int, scope: str | None = None) -> bool:
         """固定保留：upsert 要求整条记忆，所以先读出原文再连同新状态写回。
 
         固定动作发生在退休裁决里，那时手里只有 id，不知道记忆的 scope，
@@ -198,7 +198,7 @@ class MemoryStore:
         return self._write_state(int(memory_id), record, state)
 
     def _write_state(self, memory_id: int, record: dict, state: dict) -> bool:
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "id": memory_id,
             "judgment": _text(record.get("judgment")),
             "reasoning": _text(record.get("reasoning")),
@@ -229,10 +229,10 @@ class MemoryStore:
     def get(
         self,
         memory_id: object,
-        scope: Optional[str] = None,
+        scope: str | None = None,
         *,
         all_scopes: bool = False,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         try:
             raw_id = int(str(memory_id))
         except (TypeError, ValueError):
@@ -250,13 +250,13 @@ class MemoryStore:
     def search(
         self,
         query: str,
-        scope: Optional[str] = None,
+        scope: str | None = None,
         *,
         limit: int = 10,
-        score_ratio: Optional[float] = None,
-        max_results: Optional[int] = None,
+        score_ratio: float | None = None,
+        max_results: int | None = None,
         rerank: bool = True,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """检索记忆。
 
         分数过滤与条数截断都在拿到结果之后做。
@@ -285,9 +285,9 @@ class MemoryStore:
             logger.exception("[PMEMORY] 记忆检索失败 scope=%s", scope)
             return []
 
-        records: List[dict] = []
-        rerank_scores: List[Optional[float]] = []
-        fused_scores: List[float] = []
+        records: list[dict] = []
+        rerank_scores: list[float | None] = []
+        fused_scores: list[float] = []
         for hit in result.get("hits") or []:
             record = hit.get("record") or {}
             if not record:
@@ -310,7 +310,7 @@ class MemoryStore:
             # 重排分必须为正：负分是供应商吐出来的原始 logit，不做归一化，直接丢掉。
             # 剩下的按最高分的比例留人，负分不参与最高分的计算。
             scored = [
-                (record, score) for record, score in zip(records, scores) if score > 0
+                (record, score) for record, score in zip(records, scores, strict=False) if score > 0
             ]
             if not scored:
                 return []
@@ -320,9 +320,9 @@ class MemoryStore:
         cap = want if max_results is None else min(want, int(max_results))
         return kept[:cap]
 
-    def list_records(self, scope: Optional[str] = None, *, all_scopes: bool = False) -> List[dict]:
+    def list_records(self, scope: str | None = None, *, all_scopes: bool = False) -> list[dict]:
         """按 scope 翻页取全部记忆；`all_scopes=True` 时跨 scope 取。"""
-        records: List[dict] = []
+        records: list[dict] = []
         cursor = None
         while True:
             page = self._store.kb.memories.list(
@@ -341,9 +341,9 @@ class MemoryStore:
         self,
         recalled_ids: Iterable[object] = (),
         useful_ids: Iterable[object] = (),
-        scope: Optional[str] = None,
-        policy: Optional[dict] = None,
-    ) -> List[dict]:
+        scope: str | None = None,
+        policy: dict | None = None,
+    ) -> list[dict]:
         recalled = [int(i) for i in recalled_ids if str(i).strip().isdigit()]
         useful = [int(i) for i in useful_ids if str(i).strip().isdigit()]
         if not recalled and not useful:
@@ -369,7 +369,7 @@ class MemoryStore:
         except PMemoryError:
             logger.exception("[PMEMORY] 记忆反馈失败")
             return []
-        refreshed: List[dict] = []
+        refreshed: list[dict] = []
         for memory_id in dict.fromkeys(visible + useful):
             record = self.get(memory_id, scope)
             if record:
@@ -378,8 +378,8 @@ class MemoryStore:
 
     def decay(
         self,
-        policy: Optional[dict] = None,
-    ) -> Dict[str, Any]:
+        policy: dict | None = None,
+    ) -> dict[str, Any]:
         """时间衰减，只降强度不删；返回降级条数与候选记录。
 
         衰减作用于全部 scope：每个会话的记忆都该随时间淡去，不能只处理 public。
@@ -394,7 +394,7 @@ class MemoryStore:
         report = (receipt or {}).get("value") or {}
         decayed = int(report.get("decayed") or 0)
         keys = report.get("retirement_candidates") or []
-        candidates: List[dict] = []
+        candidates: list[dict] = []
         for key in keys:
             raw_id = key.get("id") if isinstance(key, dict) else key
             record = self.get(raw_id, all_scopes=True)
@@ -402,7 +402,7 @@ class MemoryStore:
                 candidates.append(record)
         return {"decayed": decayed, "candidates": candidates}
 
-    def retirement_policy(self, config: Optional[dict] = None) -> Optional[dict]:
+    def retirement_policy(self, config: dict | None = None) -> dict | None:
         """把插件配置翻译成库的衰减策略参数；没有可用项时返回 None 用库默认。"""
         if not isinstance(config, dict):
             return None
@@ -413,19 +413,19 @@ class MemoryStore:
             "useful_score_boost": "useful_score_boost",
             "strength_boost": "strength_boost",
         }
-        policy: Dict[str, Any] = {}
+        policy: dict[str, Any] = {}
         for source, target in mapping.items():
             if source in config and config[source] is not None:
                 policy[target] = config[source]
         return policy or None
 
-    def export_snapshot(self) -> Dict[str, Any]:
+    def export_snapshot(self) -> dict[str, Any]:
         """导出冷却备份快照：与旧库 export_backup_snapshot 同结构，供失败时回灌。
 
         标签直接内嵌在每条记录里（`tags` 字段），因为库把标签挂在记录上而不走
         关系表；回灌时优先读这个字段。
         """
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for record in self.list_records(all_scopes=True):
             state = record.get("state") or {}
             legacy = (record.get("metadata") or {}).get("legacy") or {}

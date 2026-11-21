@@ -1,7 +1,9 @@
 """p-memory 接线层的最小回归：衰减策略映射、知识域解析、笔记域归属。"""
 
 from astrbot_plugin_angel_memory.core.component_factory import ComponentFactory
-from astrbot_plugin_angel_memory.core.services.note_index_service import NoteIndexService
+from astrbot_plugin_angel_memory.core.services.note_index_service import (
+    NoteIndexService,
+)
 from astrbot_plugin_angel_memory.pmemory.config import (
     normalize_domain,
     read_scopes,

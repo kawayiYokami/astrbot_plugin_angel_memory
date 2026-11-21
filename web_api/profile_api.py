@@ -6,11 +6,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
-from quart import jsonify, request
+from typing import Any
 
 from astrbot.api import logger
+from quart import jsonify, request
 
 from ..llm_memory.utils.user_profile import (
     PROFILE_ATTRIBUTE_TAGS,
@@ -31,14 +30,14 @@ def _to_seconds(value: Any) -> float:
     return number if number > 0 else 0.0
 
 
-def _record_tags(record: Dict[str, Any]) -> List[str]:
+def _record_tags(record: dict[str, Any]) -> list[str]:
     tags = record.get("tags") or []
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",")]
     return [str(t).strip() for t in tags if str(t).strip()]
 
 
-def _record_item(record: Dict[str, Any]) -> Dict[str, Any]:
+def _record_item(record: dict[str, Any]) -> dict[str, Any]:
     state = record.get("state") or {}
     created = record.get("created_at_us", record.get("created_at", 0))
     updated = record.get("updated_at_us", record.get("updated_at", created))
@@ -55,7 +54,7 @@ def _record_item(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def profile_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def profile_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """只留画像属性记忆（标签里带属性词），置顶者在前。"""
     kept = []
     for record in records or []:
@@ -75,12 +74,12 @@ def profile_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def group_users(
-    records: List[Dict[str, Any]],
-    ledger_users: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    records: list[dict[str, Any]],
+    ledger_users: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """把画像记忆按用户 ID 归组，再合并账本里的平台与昵称。"""
     known_user_ids = [u["user_id"] for u in ledger_users or []]
-    user_data: Dict[str, Dict[str, Any]] = {}
+    user_data: dict[str, dict[str, Any]] = {}
 
     for record in records or []:
         tags = _record_tags(record)
@@ -130,9 +129,9 @@ def group_users(
 
 
 def user_profile_memories(
-    records: List[Dict[str, Any]],
+    records: list[dict[str, Any]],
     user_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """某个用户的画像记忆明细。"""
     uid = str(user_id or "").strip()
     if not uid:
@@ -177,8 +176,8 @@ class ProfileAPI:
             import asyncio
 
             records = await asyncio.to_thread(store.list_records, None, all_scopes=True)
-            ledger_users: List[Dict[str, Any]] = []
-            groups: List[Dict[str, Any]] = []
+            ledger_users: list[dict[str, Any]] = []
+            groups: list[dict[str, Any]] = []
             if ledger is not None:
                 ledger_users = await asyncio.to_thread(ledger.list_ledger_users)
                 groups = await asyncio.to_thread(ledger.list_ledger_groups)

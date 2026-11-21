@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from astrbot.api.provider import ProviderRequest
 
@@ -32,7 +32,7 @@ class DeepMindInjectionService:
 
     def create_tendency_bar(self, normalized_value: float) -> str:
         bar_length = 10
-        filled_length = int(round(normalized_value * bar_length))
+        filled_length = round(normalized_value * bar_length)
         return "█" * filled_length + " " * (bar_length - filled_length)
 
     REMINDER_OPEN = "<system_reminder>"
@@ -48,10 +48,7 @@ class DeepMindInjectionService:
         if getattr(request, "_angel_memory_injected", False):
             return True
         for part in request.extra_user_content_parts or []:
-            if isinstance(part, dict):
-                text = part.get("text")
-            else:
-                text = getattr(part, "text", "")
+            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", "")
             if cls._has_reminder(text):
                 return True
         return False
@@ -100,7 +97,7 @@ class DeepMindInjectionService:
         message_order,
         memories_by_message,
         current_message_id: str = "",
-    ) -> List:
+    ) -> list:
         """实验性路径：按消息顺序给历史消息挂记忆块，插在各自那条消息之后。
 
         `message_order` 是 (消息ID, 消息纯文本) 的顺序表，`memories_by_message` 是
@@ -177,7 +174,7 @@ class DeepMindInjectionService:
             )
         return attached
 
-    def group_session_memories_by_message(self, session_id: str) -> List[tuple]:
+    def group_session_memories_by_message(self, session_id: str) -> list[tuple]:
         """按召回来源消息分组短期记忆里的记忆条目，直接取短期记忆里那份内容，不再回查长期库。"""
         items = self.deepmind.session_memory_manager.get_session_memories(session_id)
         groups: dict = {}
@@ -188,7 +185,7 @@ class DeepMindInjectionService:
             groups.setdefault(item.recalled_message_id, []).append(memory)
         return list(groups.items())
 
-    def session_memories(self, session_id: str) -> List:
+    def session_memories(self, session_id: str) -> list:
         """本轮要注入的记忆：短期记忆表里的全部条目，直接取表里那份内容，不回查长期库。"""
         items = self.deepmind.session_memory_manager.get_session_memories(session_id)
         return [
@@ -200,7 +197,7 @@ class DeepMindInjectionService:
         request: ProviderRequest,
         session_id: str,
         note_context: str,
-        soul_state_values: Optional[Dict[str, Any]] = None,
+        soul_state_values: dict[str, Any] | None = None,
         message_id: str = "",
         message_order=None,
     ) -> list:

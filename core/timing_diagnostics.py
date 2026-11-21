@@ -9,8 +9,8 @@ with timing_log("操作名称"):
     pass
 """
 
-import time
 import threading
+import time
 from contextlib import contextmanager
 
 from astrbot.api import logger

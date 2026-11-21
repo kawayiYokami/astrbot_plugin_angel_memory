@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections import defaultdict
 import asyncio
 import time
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 from ...llm_memory.models.data_models import BaseMemory
 from ...llm_memory.utils.user_profile import (
@@ -21,18 +22,18 @@ class UserProfileService:
     def __init__(self, memory_store=None, logger=None):
         self.memory_store = memory_store
         self.logger = logger
-        self._session_user_ids: Dict[str, List[str]] = {}
-        self._session_user_names: Dict[str, Dict[str, str]] = {}
-        self._session_profiles: Dict[str, List[BaseMemory]] = {}
+        self._session_user_ids: dict[str, list[str]] = {}
+        self._session_user_names: dict[str, dict[str, str]] = {}
+        self._session_profiles: dict[str, list[BaseMemory]] = {}
 
     def set_memory_store(self, memory_store) -> None:
         self.memory_store = memory_store
 
     @staticmethod
     def extract_current_user_ids(
-        chat_records: Sequence[Dict[str, Any]] | None,
+        chat_records: Sequence[dict[str, Any]] | None,
         fallback_sender_id: str = "",
-    ) -> List[str]:
+    ) -> list[str]:
         user_ids, _ = UserProfileService.extract_current_users(
             chat_records=chat_records,
             fallback_sender_id=fallback_sender_id,
@@ -41,13 +42,13 @@ class UserProfileService:
 
     @staticmethod
     def extract_current_users(
-        chat_records: Sequence[Dict[str, Any]] | None,
+        chat_records: Sequence[dict[str, Any]] | None,
         fallback_sender_id: str = "",
         fallback_sender_name: str = "",
-    ) -> Tuple[List[str], Dict[str, str]]:
+    ) -> tuple[list[str], dict[str, str]]:
         seen = set()
-        user_ids: List[str] = []
-        user_names: Dict[str, str] = {}
+        user_ids: list[str] = []
+        user_names: dict[str, str] = {}
 
         for msg in chat_records or []:
             if not isinstance(msg, dict):
@@ -84,11 +85,11 @@ class UserProfileService:
     async def refresh_session_profiles(
         self,
         session_id: str,
-        chat_records: Sequence[Dict[str, Any]] | None,
+        chat_records: Sequence[dict[str, Any]] | None,
         fallback_sender_id: str = "",
         fallback_sender_name: str = "",
         memory_scope: str = "public",
-    ) -> List[BaseMemory]:
+    ) -> list[BaseMemory]:
         sid = str(session_id or "").strip()
         if not sid:
             return []
@@ -126,12 +127,12 @@ class UserProfileService:
 
     def _recall_profiles(
         self, user_ids: Sequence[str], memory_scope: str
-    ) -> List[BaseMemory]:
+    ) -> list[BaseMemory]:
         """按标签筛出画像类记忆。库里没有画像索引，只能取回后按 tag 归类。"""
         from ..memory_runtime.pmemory_runtime import to_base_memory
 
         wanted = [str(uid).strip() for uid in user_ids if str(uid or "").strip()]
-        profiles: List[BaseMemory] = []
+        profiles: list[BaseMemory] = []
         for record in self.memory_store.list_records(memory_scope):
             tags = [str(tag) for tag in (record.get("tags") or [])]
             if not any(tag in PROFILE_ATTRIBUTE_TAGS for tag in tags):
@@ -141,10 +142,10 @@ class UserProfileService:
             profiles.append(to_base_memory(record))
         return profiles
 
-    def get_session_profile_memories(self, session_id: str) -> List[BaseMemory]:
+    def get_session_profile_memories(self, session_id: str) -> list[BaseMemory]:
         return list(self._session_profiles.get(str(session_id or "").strip(), []))
 
-    def get_profile_dedupe_keys(self, session_id: str) -> Tuple[set[str], set[str]]:
+    def get_profile_dedupe_keys(self, session_id: str) -> tuple[set[str], set[str]]:
         profile_ids = set()
         judgments = set()
         for memory in self.get_session_profile_memories(session_id):
@@ -158,7 +159,7 @@ class UserProfileService:
 
     def filter_regular_memories(
         self, session_id: str, memories: Iterable[Any]
-    ) -> List[Any]:
+    ) -> list[Any]:
         profile_ids, judgments = self.get_profile_dedupe_keys(session_id)
         if not profile_ids and not judgments:
             return list(memories or [])
@@ -179,7 +180,7 @@ class UserProfileService:
         if not profiles:
             return ""
 
-        grouped: Dict[str, List[BaseMemory]] = defaultdict(list)
+        grouped: dict[str, list[BaseMemory]] = defaultdict(list)
         user_names = self._session_user_names.get(
             str(session_id or "").strip(), {}
         )
@@ -211,10 +212,10 @@ class UserProfileService:
         return "".join(lines)
 
     @staticmethod
-    def _deduplicate_profiles(memories: Iterable[BaseMemory]) -> List[BaseMemory]:
+    def _deduplicate_profiles(memories: Iterable[BaseMemory]) -> list[BaseMemory]:
         seen_ids = set()
         seen_judgments = set()
-        result: List[BaseMemory] = []
+        result: list[BaseMemory] = []
         for memory in memories or []:
             memory_id = str(getattr(memory, "id", "") or "").strip()
             normalized = normalize_judgment(getattr(memory, "judgment", ""))

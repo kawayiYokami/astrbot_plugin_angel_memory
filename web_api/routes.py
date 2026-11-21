@@ -14,15 +14,15 @@ if TYPE_CHECKING:
 PLUGIN_NAME = "astrbot_plugin_angel_memory"
 
 
-def register_all_routes(context: "Context", plugin_context, plugin=None) -> None:
+def register_all_routes(context: Context, plugin_context, plugin=None) -> None:
     """注册所有 WebUI API 路由。"""
+    from .group_knowledge_api import GroupKnowledgeAPI
+    from .maintenance_api import MaintenanceAPI
     from .memory_api import MemoryAPI
     from .notes_api import NotesAPI
-    from .tags_api import TagsAPI
-    from .maintenance_api import MaintenanceAPI
     from .profile_api import ProfileAPI
-    from .group_knowledge_api import GroupKnowledgeAPI
     from .scope_map_api import ScopeMapAPI
+    from .tags_api import TagsAPI
 
     memory_api = MemoryAPI(plugin_context)
     notes_api = NotesAPI(plugin_context)
@@ -82,7 +82,12 @@ def register_all_routes(context: "Context", plugin_context, plugin=None) -> None
         (f"/{PLUGIN_NAME}/trace/delete", trace_api.delete_records, ["POST"], "删除指定的过程记录"),
         # 工具测试（只读，两条链路各自独立触发）
         (f"/{PLUGIN_NAME}/tool-test/auto-rag", tool_test_api.auto_rag, ["POST"], "自动RAG：注入给模型的上下文原文"),
-        (f"/{PLUGIN_NAME}/tool-test/active-recall", tool_test_api.active_recall, ["POST"], "主动搜索：angel_recall 工具原文"),
+        (
+            f"/{PLUGIN_NAME}/tool-test/active-recall",
+            tool_test_api.active_recall,
+            ["POST"],
+            "主动搜索：angel_recall 工具原文",
+        ),
     ]
 
     if plugin is not None:
