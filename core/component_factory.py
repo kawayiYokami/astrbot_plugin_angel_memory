@@ -376,9 +376,12 @@ class ComponentFactory:
                 if inspect.iscoroutinefunction(shutdown_method):
                     await shutdown_method()
                 else:
-                    # 同步关闭方法可能内部 join 线程（笔记扫描是 join(5)），
-                    # 直接压在事件循环上会把整个 AstrBot 冻住，所以放工作线程。
-                    await asyncio.to_thread(shutdown_method)
+                    # 同步关闭方法在事件循环线程上执行：它们只置标志、cancel 任务，
+                    # 很快。会阻塞的（笔记扫描 join）已经自己做成 async 内部 to_thread。
+                    # 不能一律丢工作线程——那样 Task.cancel() 就变成跨线程调用了。
+                    result = shutdown_method()
+                    if inspect.isawaitable(result):
+                        await result
                 self.logger.debug(f"组件 {component_name} 已关闭")
             except Exception as e:
                 self.logger.error(f"关闭组件 {component_name} 失败: {e}", exc_info=True)

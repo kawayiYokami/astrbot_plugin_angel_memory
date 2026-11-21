@@ -40,16 +40,27 @@ REQUIRED_PMEMORY_VERSION = "0.4.0"
 
 
 def _version_tuple(text: str) -> tuple:
-    """把版本串变成可比较的四元组，最后一位标记是否正式版。
+    """把版本串变成可比较的元组，最后一位标记是否正式版。
 
-    预发布（rc / beta / dev）排在**同号正式版之下**：PEP 440 里
-    0.4.0rc1 < 0.4.0，门禁不能把一个还不带共享句柄的 rc 当成 0.4.0 放过去。
+    优先用 packaging（完整 PEP 440 语义：`0.4.0.post1 > 0.4.0 > 0.4.0rc1`，
+    `v0.4.0` 与 `0.4.0` 等价）。拿不到就退回只比数字核——至少不会把 post
+    当成预发布而误杀。
     """
-    core = str(text or "").strip().split("+")[0]
-    prerelease = bool(re.search(r"[A-Za-z]", core))
-    numbers = re.findall(r"\d+", core)[:3]
-    parts = [int(piece) for piece in numbers] + [0] * (3 - len(numbers))
-    return (parts[0], parts[1], parts[2], 0 if prerelease else 1)
+    raw = str(text or "").strip()
+    try:
+        from packaging.version import Version
+
+        parsed = Version(raw)
+        return (
+            parsed.major,
+            parsed.minor,
+            parsed.micro,
+            0 if parsed.is_prerelease else 1,
+        )
+    except Exception:
+        numbers = re.findall(r"\d+", raw)[:3]
+        parts = [int(piece) for piece in numbers] + [0] * (3 - len(numbers))
+        return (parts[0], parts[1], parts[2], 1)
 
 
 def require_pmemory_version() -> None:
@@ -260,17 +271,6 @@ class PMemory:
         except Exception:
             logger.warning("[PMEMORY] 写入 scope 名单失败")
 
-    def request_stop(self) -> None:
-        """通知后台线程停止，但不关库。
-
-        卸载流程开头就调它：向量同步线程在每次访问 kb 前都会检查关闭标志，
-        提前置上之后，它在后续几步（停笔记线程、关各组件）期间就能自然退出，
-        走到 close() 时不必再干等满超时。关闭标志一旦置上就不会再清，
-        所以这之后所有使用接口都按「已关闭」处理——这正是关闭期间要的语义。
-        """
-        with self._lock:
-            self._closed = True
-
     def close(self) -> None:
         """关闭知识库。"""
         # 1) 先置关闭标志并取出同步线程引用。标志必须在锁内先落，
@@ -282,12 +282,17 @@ class PMemory:
             sync_thread = self._sync_thread
 
         # 2) 等同步线程收尾。必须在锁外 join：它内部要拿同一把锁，锁内等会死锁。
-        #    不设超时不是「无限等」：sync 按批调嵌入回调，关闭标志一置上，下一批
-        #    就抛异常中断（实测 0.07 秒退出）；即使正卡在一次嵌入调用里，那一次
-        #    也有超时（provider 60 秒、bridge 120 秒），最坏等一次调用就返回。
-        #    所以这里就等到底——等不到说明中断机制坏了，该暴露而不是靠超时跳过藏起来。
+        #    正常情况下一批嵌入回调就会中断（实测 0.07 秒），这里 30 秒是兜底：
+        #    中断机制自己坏掉时，宁可留一个没关的句柄，也不能让 terminate 永远挂住。
+        #    不关库是安全的——句柄还留在共享表里，重载后新实例照样能拿到它。
         if sync_thread is not None and sync_thread.is_alive():
-            sync_thread.join()
+            sync_thread.join(timeout=30)
+            if sync_thread.is_alive():
+                logger.error(
+                    "[PMEMORY] 向量同步线程 30 秒未退出，本次不关库；"
+                    "句柄留在共享表里，重载后仍可打开，进程退出时释放"
+                )
+                return
 
         # 3) 真正关库与回调线程
         with self._lock:
@@ -443,7 +448,8 @@ class PMemory:
                 if interrupted:
                     # 关闭时由嵌入回调抛异常中断，库把它记在 interrupted 里，
                     # 剩下的记录留到下次启动继续补，不算失败。
-                    logger.debug(
+                    # 用 info：_closed 若被误置，这里就是唯一的痕迹，debug 看不见。
+                    logger.info(
                         "[PMEMORY] 记忆向量同步被中断（%s），剩余记录下次启动补齐",
                         interrupted,
                     )
@@ -464,8 +470,8 @@ class PMemory:
     # === 运维信息 ===
 
     def health(self) -> Dict[str, Any]:
-        kb = self.kb
         try:
+            kb = self.kb
             return {
                 "root": str(self._root or ""),
                 "space": self._space_id,

@@ -513,17 +513,10 @@ class AngelMemoryPlugin(Star):
             note_index = getattr(self, "note_index", None)
             if note_index is not None:
                 try:
-                    await asyncio.to_thread(note_index.stop)
+                    await note_index.stop()
                     self.logger.debug("笔记索引线程已停止")
                 except Exception as e:
                     self.logger.error(f"笔记索引线程停止失败: {e}", exc_info=True)
-
-            # 先给 p-memory 的后台线程发停止信号，但不关库：后面还要停组件，
-            # 这段时间足够向量同步线程自己退出，close() 时就不用干等满超时。
-            try:
-                pmemory.request_stop()
-            except Exception as e:
-                self.logger.error(f"通知 p-memory 停止失败: {e}", exc_info=True)
 
             # 停止核心服务
             if self.plugin_manager:

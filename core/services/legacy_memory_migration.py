@@ -505,7 +505,15 @@ class LegacyMemoryMigration:
                     # 不要让它冒到 shutdown() 外面——那会跳过下面的 executor 关闭。
                     self.logger.warning(f"[旧记忆迁移] 写库线程异常结束: {e}")
         finally:
-            await asyncio.to_thread(self._executor.shutdown, True)
+            # wait=True 无界等会把卸载挂死，给个上限：超时就放弃，线程随进程退出。
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._executor.shutdown, True), timeout=30
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                self.logger.error(
+                    "[旧记忆迁移] 写库线程 30 秒仍未退出，放弃等待，随进程退出"
+                )
 
     def stop(self) -> None:
         """同步版：只发取消信号。关闭流程请用 shutdown()。"""

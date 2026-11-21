@@ -100,7 +100,16 @@ class NoteIndexService:
             self._thread = threading.Thread(target=self._loop, daemon=True, name="pmemory-notes")
             self._thread.start()
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
+        """停止扫描线程。
+
+        join 放到工作线程：扫描线程可能正卡在一次 upsert_file 里，直接在事件
+        循环上等会把它冻住。做成 async 之后，组件关闭链可以统一 await，
+        不必再按「同步方法就丢线程」来猜哪个会阻塞。
+        """
+        await asyncio.to_thread(self._stop_blocking)
+
+    def _stop_blocking(self) -> None:
         with self._lock:
             if self._thread is None:
                 return
