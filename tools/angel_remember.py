@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 
 from astrbot.api import FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent
@@ -74,22 +75,49 @@ class CoreMemoryRememberTool(FunctionTool):
     def __post_init__(self):
         self.logger = logger
 
+    # memory 内部的字段名，与 parameters 里 memory.properties 保持一致
+    _MEMORY_FIELDS = ("judgment", "memory_type", "reasoning", "tags")
+
+    @classmethod
+    def _normalize_memory(cls, memory: Any, extra: dict[str, Any]) -> dict[str, Any]:
+        """把模型摊平的参数掰回嵌套形状。
+
+        长上下文 + 多工具并存的工具循环里，模型偶发把 memory 的子字段提到顶层，
+        并把 memory 写成字符串。框架原样展开 kwargs 调 run()，多出来的键会在
+        参数绑定阶段直接抛 TypeError，记忆静默丢失（#89）。这里统一收口。
+        """
+        if isinstance(memory, str):
+            memory = {"judgment": memory}
+        elif isinstance(memory, dict):
+            memory = dict(memory)
+        else:
+            memory = {}
+
+        for key in cls._MEMORY_FIELDS:
+            if key in extra and not memory.get(key):
+                memory[key] = extra[key]
+        return memory
+
     async def run(
         self,
         event: AstrMessageEvent,
         action: str,
-        memory: dict,
+        memory: dict | str | None = None,
         source_memory_ids: list[str] | None = None,
+        **kwargs,
     ):
         action = str(action or "").strip().lower()
         source_memory_ids = source_memory_ids or []
 
+        # 模型摊平的参数先并回 memory，再做校验；多余键留在 kwargs 里，只记一条调试日志
+        memory = self._normalize_memory(memory, kwargs)
+        unknown_keys = [key for key in kwargs if key not in self._MEMORY_FIELDS]
+        if unknown_keys:
+            self.logger.debug(f"{self.name}: 忽略未知参数 {unknown_keys}")
+
         # --- 参数验证 ---
         if action not in ("create", "update", "merge"):
             return "错误：action 必须是 create、update 或 merge。"
-
-        if not isinstance(memory, dict):
-            return "错误：memory 必须是一个对象。"
 
         judgment = str(memory.get("judgment", "") or "").strip()
         reasoning = str(memory.get("reasoning", "") or "").strip()
