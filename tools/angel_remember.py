@@ -20,9 +20,7 @@ class CoreMemoryRememberTool(FunctionTool):
                     "type": "string",
                     "enum": ["create", "update", "merge"],
                     "description": (
-                        "记忆动作。create=新增一条记忆；"
-                        "update=更新一条已有记忆；"
-                        "merge=把多条旧记忆合并为一条新记忆。"
+                        "记忆动作。create=新增一条记忆；update=更新一条已有记忆；merge=把多条旧记忆合并为一条新记忆。"
                     ),
                 },
                 "memory": {
@@ -132,9 +130,7 @@ class CoreMemoryRememberTool(FunctionTool):
             return "错误：无法确定当前会话，记忆写入已拒绝。"
 
         # --- 源记忆 ID 直接就是库内整数 id ---
-        resolved_source_ids: list[str] = [
-            str(item).strip() for item in source_memory_ids if str(item).strip()
-        ]
+        resolved_source_ids: list[str] = [str(item).strip() for item in source_memory_ids if str(item).strip()]
 
         # --- 执行动作 ---
         try:
@@ -148,9 +144,7 @@ class CoreMemoryRememberTool(FunctionTool):
                     is_active=True,
                     memory_scope=memory_scope,
                 )
-                self.logger.info(
-                    f"{self.name}: create 成功 id={memory_id} judgment=「{judgment[:30]}」"
-                )
+                self.logger.info(f"{self.name}: create 成功 id={memory_id} judgment=「{judgment[:30]}」")
                 return f"已记住：「{judgment}」（ID: {memory_id}）"
 
             elif action in ("update", "merge"):
@@ -187,10 +181,7 @@ class CoreMemoryRememberTool(FunctionTool):
                     f"{self.name}: {action} 成功 sources=[{source_display}] "
                     f"new_id={new_id} judgment=「{judgment[:30]}」"
                 )
-                return (
-                    f"已{verb}记忆 [{source_display}] → 新记忆「{judgment}」"
-                    f"（ID: {new_id or '已生成'}）"
-                )
+                return f"已{verb}记忆 [{source_display}] → 新记忆「{judgment}」（ID: {new_id or '已生成'}）"
 
         except Exception as e:
             self.logger.error(f"{self.name}: {action} 失败: {e}", exc_info=True)

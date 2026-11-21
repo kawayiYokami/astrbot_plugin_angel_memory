@@ -43,9 +43,7 @@ def _install_astrbot_stubs() -> None:
 
     if "astrbot.core.agent.message" not in sys.modules:
         sys.modules.setdefault("astrbot.core", types.ModuleType("astrbot.core"))
-        sys.modules.setdefault(
-            "astrbot.core.agent", types.ModuleType("astrbot.core.agent")
-        )
+        sys.modules.setdefault("astrbot.core.agent", types.ModuleType("astrbot.core.agent"))
         message = types.ModuleType("astrbot.core.agent.message")
 
         class TextPart:
@@ -237,9 +235,7 @@ def test_empty_response_skips_whole_batch():
 
 def test_sleep_records_trace_with_summary():
     memory_system = _FakeMemorySystem([_memory("mem-0")])
-    deepmind = _FakeDeepMind(
-        memory_system, _FakeProvider(_verdict_responder(["delete"]))
-    )
+    deepmind = _FakeDeepMind(memory_system, _FakeProvider(_verdict_responder(["delete"])))
     service = DeepMindSleepService(deepmind)
     result = asyncio.run(service._recycle_memories())
 

@@ -27,10 +27,11 @@ GROUP_MESSAGE_TYPE = "GroupMessage"
 
 PUBLIC_SCOPE = "public"
 
+
 def _OK(data=None, message=""):
-    return json_response(
-    {"status": "ok", "message": message, "data": data}
-)
+    return json_response({"status": "ok", "message": message, "data": data})
+
+
 def _ERR(message, status_code=400):
     return error_response(message, status_code=status_code)
 

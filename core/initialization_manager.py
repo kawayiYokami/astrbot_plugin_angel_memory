@@ -40,9 +40,7 @@ class InitializationManager:
         self.failed_reason = ""
         self.failed_at = None
         self.logger = logger
-        self.logger.debug(
-            "InitializationManager初始化完成 - 专注于状态管理和提供商检测"
-        )
+        self.logger.debug("InitializationManager初始化完成 - 专注于状态管理和提供商检测")
 
     def wait_for_providers_and_initialize(self, check_interval=10):
         """
@@ -90,9 +88,7 @@ class InitializationManager:
                         embedding_ids = [p.meta().id for p in embedding_providers]
                         provider_info.append(f"嵌入: {', '.join(embedding_ids)}")
 
-                    self.logger.info(
-                        f"检测到提供商: {' | '.join(provider_info)}，开始初始化"
-                    )
+                    self.logger.info(f"检测到提供商: {' | '.join(provider_info)}，开始初始化")
                     self.transition_to(InitializationState.INITIALIZING)
                     return True
                 else:
@@ -145,9 +141,7 @@ class InitializationManager:
                         embedding_ids = [p.meta().id for p in embedding_providers]
                         provider_info.append(f"嵌入: {', '.join(embedding_ids)}")
 
-                    self.logger.info(
-                        f"检测到提供商: {' | '.join(provider_info)}，开始初始化"
-                    )
+                    self.logger.info(f"检测到提供商: {' | '.join(provider_info)}，开始初始化")
                     self.transition_to(InitializationState.INITIALIZING)
                     return True
 

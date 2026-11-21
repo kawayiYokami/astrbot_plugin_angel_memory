@@ -5,7 +5,6 @@
 """
 
 
-
 class NoteContextBuilder:
     @staticmethod
     def build_candidate_list_for_prompt(notes: list[dict]) -> str:

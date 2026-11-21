@@ -42,11 +42,13 @@ class MaintenanceAPI:
                     full_path = os.path.join(str(backup_dir), name)
                     if os.path.isfile(full_path):
                         stat = os.stat(full_path)
-                        backups.append({
-                            "name": name,
-                            "size": stat.st_size,
-                            "modified_at": stat.st_mtime,
-                        })
+                        backups.append(
+                            {
+                                "name": name,
+                                "size": stat.st_size,
+                                "modified_at": stat.st_mtime,
+                            }
+                        )
                 result["backups"] = backups[:10]
             except Exception as e:
                 result["backups_error"] = str(e)
@@ -208,11 +210,13 @@ class MaintenanceAPI:
                 except Exception:
                     failed += 1
 
-            return jsonify({
-                "success": True,
-                "inserted": inserted,
-                "skipped": skipped,
-                "failed": failed,
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "inserted": inserted,
+                    "skipped": skipped,
+                    "failed": failed,
+                }
+            )
         except Exception as e:
             return jsonify({"error": str(e)}), 500

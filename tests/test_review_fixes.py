@@ -134,8 +134,11 @@ def test_merge_with_missing_source_creates_nothing(tmp_path):
         runtime = PMemoryMemoryRuntime(store)
         first = asyncio.run(
             runtime.remember(
-                memory_type="knowledge", judgment="第一条",
-                reasoning="", tags=["甲"], memory_scope="public",
+                memory_type="knowledge",
+                judgment="第一条",
+                reasoning="",
+                tags=["甲"],
+                memory_scope="public",
             )
         )
         before = len(store.list_records(all_scopes=True))
@@ -170,14 +173,20 @@ def test_create_same_judgment_twice_keeps_one(tmp_path):
         runtime = PMemoryMemoryRuntime(store)
         first = asyncio.run(
             runtime.remember(
-                memory_type="knowledge", judgment="红豆不吃香菜",
-                reasoning="点菜时说过", tags=["红豆"], memory_scope="public",
+                memory_type="knowledge",
+                judgment="红豆不吃香菜",
+                reasoning="点菜时说过",
+                tags=["红豆"],
+                memory_scope="public",
             )
         )
         second = asyncio.run(
             runtime.remember(
-                memory_type="knowledge", judgment="红豆不吃香菜",
-                reasoning="点菜时说过", tags=["红豆"], memory_scope="public",
+                memory_type="knowledge",
+                judgment="红豆不吃香菜",
+                reasoning="点菜时说过",
+                tags=["红豆"],
+                memory_scope="public",
             )
         )
         assert first == second
@@ -201,12 +210,8 @@ def test_feedback_skips_duplicate_create(tmp_path):
             "action": "create",
             "memory": {"type": "knowledge", "judgment": "红豆养了一只猫", "tags": ["红豆"]},
         }
-        asyncio.run(
-            runtime.feedback(memory_actions=[action, dict(action)], memory_scope="public")
-        )
-        assert [r["judgment"] for r in store.list_records(all_scopes=True)] == [
-            "红豆养了一只猫"
-        ]
+        asyncio.run(runtime.feedback(memory_actions=[action, dict(action)], memory_scope="public"))
+        assert [r["judgment"] for r in store.list_records(all_scopes=True)] == ["红豆养了一只猫"]
     finally:
         pmemory.close()
 
@@ -224,8 +229,11 @@ def test_same_judgment_different_scope_keeps_both(tmp_path):
         for scope in ("public", "恋爱"):
             asyncio.run(
                 runtime.remember(
-                    memory_type="knowledge", judgment="红豆不吃香菜",
-                    reasoning="", tags=["红豆"], memory_scope=scope,
+                    memory_type="knowledge",
+                    judgment="红豆不吃香菜",
+                    reasoning="",
+                    tags=["红豆"],
+                    memory_scope=scope,
                 )
             )
         records = store.list_records(all_scopes=True)

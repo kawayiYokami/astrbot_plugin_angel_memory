@@ -36,10 +36,7 @@ def aggregate_tags(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for record in records or []:
         for tag in _record_tags(record):
             counts[tag] = counts.get(tag, 0) + 1
-    items = [
-        {"id": name, "name": name, "memory_refs": count, "note_refs": 0}
-        for name, count in counts.items()
-    ]
+    items = [{"id": name, "name": name, "memory_refs": count, "note_refs": 0} for name, count in counts.items()]
     items.sort(key=lambda x: (-x["memory_refs"], x["name"]))
     return items
 
@@ -99,14 +96,15 @@ def search_memories_by_tags(
         hit_count = len(tags & wanted)
         if hit_count:
             hits.append((record, hit_count))
+
     def state_strength(record):
         return int((record.get("state") or {}).get("strength", 1) or 0)
+
     def created_ts(record):
-        return _to_seconds(
-            record.get("created_at_us", record.get("created_at", 0))
-        )
+        return _to_seconds(record.get("created_at_us", record.get("created_at", 0)))
+
     hits.sort(key=lambda pair: (-pair[1], -state_strength(pair[0]), -created_ts(pair[0])))
-    return [_hit_item(record, count) for record, count in hits[:max(1, limit)]]
+    return [_hit_item(record, count) for record, count in hits[: max(1, limit)]]
 
 
 class TagsAPI:
@@ -136,7 +134,7 @@ class TagsAPI:
             items = aggregate_tags(records)
             if keyword:
                 items = [t for t in items if keyword in t["name"]]
-            return jsonify({"tags": items[offset:offset + limit]})
+            return jsonify({"tags": items[offset : offset + limit]})
         except Exception as e:
             return jsonify({"tags": [], "error": str(e)}), 500
 
@@ -162,13 +160,19 @@ class TagsAPI:
             if not matched:
                 return jsonify({"matched_tags": [], "matched_tag_ids": [], "memory_hits": []})
             hits = search_memories_by_tags(records, matched, scope, limit)
-            return jsonify({
-                "matched_tags": matched,
-                "matched_tag_ids": [],
-                "memory_hits": hits,
-            })
+            return jsonify(
+                {
+                    "matched_tags": matched,
+                    "matched_tag_ids": [],
+                    "memory_hits": hits,
+                }
+            )
         except Exception as e:
-            return jsonify({
-                "matched_tags": [], "matched_tag_ids": [],
-                "memory_hits": [], "error": str(e),
-            }), 500
+            return jsonify(
+                {
+                    "matched_tags": [],
+                    "matched_tag_ids": [],
+                    "memory_hits": [],
+                    "error": str(e),
+                }
+            ), 500

@@ -103,14 +103,16 @@ def test_profile_grouping_uses_ledger_and_pmemory():
         profile = profile_api.profile_records(records)
         assert len(profile) == 1
 
-        ledger_users = [{
-            "platform": "aiocqhttp",
-            "user_id": "123456",
-            "nickname": "红豆",
-            "nicknames": ["红豆"],
-            "first_seen_at": 1.0,
-            "last_seen_at": 2.0,
-        }]
+        ledger_users = [
+            {
+                "platform": "aiocqhttp",
+                "user_id": "123456",
+                "nickname": "红豆",
+                "nicknames": ["红豆"],
+                "first_seen_at": 1.0,
+                "last_seen_at": 2.0,
+            }
+        ]
         users = profile_api.group_users(profile, ledger_users)
         assert len(users) == 1
         user = users[0]

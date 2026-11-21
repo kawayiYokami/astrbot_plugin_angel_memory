@@ -16,11 +16,7 @@ class MemorySystemConfig:
     """记忆系统配置类"""
 
     # 嵌入模型
-    embedding_model: str = field(
-        default_factory=lambda: os.getenv(
-            "MEMORY_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"
-        )
-    )
+    embedding_model: str = field(default_factory=lambda: os.getenv("MEMORY_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"))
 
     # 嵌入式模型提供商ID
     astrbot_embedding_provider_id: str = field(
@@ -28,11 +24,7 @@ class MemorySystemConfig:
     )
 
     # 集合名称配置
-    collection_name: str = field(
-        default_factory=lambda: os.getenv(
-            "MEMORY_COLLECTION_NAME", "personal_memory_v1"
-        )
-    )
+    collection_name: str = field(default_factory=lambda: os.getenv("MEMORY_COLLECTION_NAME", "personal_memory_v1"))
 
     # 注意：storage_dir 和 index_dir 应该从 PathManager 实例获取（在设置供应商后）
     # 这里不再设置默认值，由外部传入或通过 PathManager 动态获取
@@ -40,20 +32,14 @@ class MemorySystemConfig:
     index_dir: Path = field(default=None)
 
     # 阈值配置
-    strength_threshold: int = field(
-        default_factory=lambda: int(os.getenv("MEMORY_STRENGTH_THRESHOLD", "2"))
-    )
+    strength_threshold: int = field(default_factory=lambda: int(os.getenv("MEMORY_STRENGTH_THRESHOLD", "2")))
 
     # 检索限制
-    default_recall_limit: int = field(
-        default_factory=lambda: int(os.getenv("MEMORY_DEFAULT_RECALL_LIMIT", "10"))
-    )
+    default_recall_limit: int = field(default_factory=lambda: int(os.getenv("MEMORY_DEFAULT_RECALL_LIMIT", "10")))
 
     # 巩固间隔（小时）
     consolidation_interval_hours: int = field(
-        default_factory=lambda: int(
-            os.getenv("MEMORY_CONSOLIDATION_INTERVAL_HOURS", "24")
-        )
+        default_factory=lambda: int(os.getenv("MEMORY_CONSOLIDATION_INTERVAL_HOURS", "24"))
     )
 
     def __post_init__(self):

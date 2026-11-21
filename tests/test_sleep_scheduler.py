@@ -38,9 +38,7 @@ def test_next_sleep_is_same_day_before_four():
 def test_next_sleep_rolls_to_tomorrow_after_four():
     now = datetime.datetime(2026, 9, 10, 5, 30, 0)
 
-    assert seconds_until_next_sleep(now.timestamp()) == pytest.approx(
-        22.5 * 3600, abs=1
-    )
+    assert seconds_until_next_sleep(now.timestamp()) == pytest.approx(22.5 * 3600, abs=1)
 
 
 def test_next_sleep_at_exact_four_rolls_to_tomorrow():

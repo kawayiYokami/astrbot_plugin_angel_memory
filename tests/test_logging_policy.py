@@ -67,11 +67,7 @@ def test_module_logger_comes_from_astrbot():
             # 允许把 logger 作为依赖参数传入
             continue
 
-        used = {
-            node.id
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
-        }
+        used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
         if "logger" not in used:
             continue
 

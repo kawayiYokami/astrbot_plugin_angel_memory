@@ -78,9 +78,7 @@ class _Req:
 
 def _deepmind(threshold=3):
     deepmind = object.__new__(DeepMind)
-    deepmind.plugin_context = _StubPluginContext(
-        {"memory_behavior": {"reflection_turn_threshold": threshold}}
-    )
+    deepmind.plugin_context = _StubPluginContext({"memory_behavior": {"reflection_turn_threshold": threshold}})
     deepmind.config = SimpleNamespace()
     deepmind.logger = logging.getLogger("reflection-turn-test")
     deepmind._provider_id_fallback = ""
@@ -129,6 +127,7 @@ def _record(
 
 # ---------- 一、成对记录 ----------
 
+
 def test_turn_is_recorded_as_pair():
     """一次请求写一份记录，req 与 resp 一起存。"""
     deepmind = _deepmind()
@@ -171,6 +170,7 @@ def test_turn_with_neither_side_is_not_recorded():
 
 # ---------- 二、取最近 N 份 ----------
 
+
 def test_reflection_takes_latest_n_turns_in_order():
     """只取最后 N 份，且保持写入顺序（按时间升序）。"""
     queue = _FakeQueue()
@@ -201,6 +201,7 @@ def test_reflection_takes_latest_n_turns_in_order():
 
 # ---------- 三、用户输入取法 ----------
 
+
 def test_user_text_prefers_prompt():
     deepmind = _deepmind()
     req = _Req("prompt 里的原话", [{"role": "user", "content": "contexts 里的话"}])
@@ -229,9 +230,7 @@ def test_user_text_accepts_content_part_objects():
     deepmind = _deepmind()
     req = _Req(
         "",
-        extra_user_content_parts=[
-            SimpleNamespace(type="text", text="<image_caption>对象式描述</image_caption>")
-        ],
+        extra_user_content_parts=[SimpleNamespace(type="text", text="<image_caption>对象式描述</image_caption>")],
     )
 
     assert deepmind._request_user_text(req) == "对象式描述"
@@ -302,16 +301,27 @@ def test_user_text_is_empty_without_request():
 
 # ---------- 三之二、摊平后保留发送者 ----------
 
+
 def test_different_senders_keep_their_own_identity():
     """同一会话里两个不同发送者，摊平后各自带身份，不能都变成「群友」。"""
     deepmind = _deepmind(threshold=2)
     _record(
-        deepmind, "s1", req=_Req("我先说"), resp="答一", when=1000.0,
-        sender_id="1", sender_name="甲",
+        deepmind,
+        "s1",
+        req=_Req("我先说"),
+        resp="答一",
+        when=1000.0,
+        sender_id="1",
+        sender_name="甲",
     )
     _record(
-        deepmind, "s1", req=_Req("我后说"), resp="答二", when=1001.0,
-        sender_id="2", sender_name="乙",
+        deepmind,
+        "s1",
+        req=_Req("我后说"),
+        resp="答二",
+        when=1001.0,
+        sender_id="2",
+        sender_name="乙",
     )
 
     records = deepmind._turns_to_chat_records(deepmind._reflection_states["s1"]["turns"])
@@ -350,15 +360,13 @@ def test_turn_without_user_text_only_emits_assistant():
 
 # ---------- 四、回复文本取法 ----------
 
+
 def test_response_prefers_completion_text():
-    run_context = SimpleNamespace(
-        messages=[SimpleNamespace(role="assistant", content="messages 里的兜底")]
-    )
+    run_context = SimpleNamespace(messages=[SimpleNamespace(role="assistant", content="messages 里的兜底")])
     response = SimpleNamespace(completion_text="completion_text 里的回复")
 
     assert (
-        plugin_main.AngelMemoryPlugin._resolve_agent_response_text(run_context, response)
-        == "completion_text 里的回复"
+        plugin_main.AngelMemoryPlugin._resolve_agent_response_text(run_context, response) == "completion_text 里的回复"
     )
 
 
@@ -373,10 +381,7 @@ def test_response_falls_back_to_run_context_messages():
     )
     response = SimpleNamespace(completion_text="")
 
-    assert (
-        plugin_main.AngelMemoryPlugin._resolve_agent_response_text(run_context, response)
-        == "最后一条回复"
-    )
+    assert plugin_main.AngelMemoryPlugin._resolve_agent_response_text(run_context, response) == "最后一条回复"
 
 
 def test_response_is_empty_when_both_sides_missing():
@@ -386,6 +391,7 @@ def test_response_is_empty_when_both_sides_missing():
 
 
 # ---------- 五、请求快照复制 ----------
+
 
 def test_provider_request_snapshot_copies_contexts_list():
     """快照必须复制顶层 list：contexts 是共享对象，后续轮次还会往里 append。"""
@@ -405,6 +411,7 @@ def test_provider_request_snapshot_copies_contexts_list():
 
 
 # ---------- 六、窗口上限 ----------
+
 
 def test_window_limit_has_floor_and_scales_with_threshold():
     assert _deepmind(threshold=3)._reflection_window_limit() == 20
@@ -433,6 +440,7 @@ def test_window_truncates_to_limit():
 
 # ---------- 七、天使之心快照不再进反思 ----------
 
+
 def test_reflection_text_ignores_angelheart_snapshot():
     queue = _FakeQueue()
     origin = deepmind_module.get_feedback_queue
@@ -445,9 +453,7 @@ def test_reflection_text_ignores_angelheart_snapshot():
             req=_Req("只有这一句"),
             resp="只有这一答",
             when=1000.0,
-            angelheart_context=json.dumps(
-                {"chat_records": [{"role": "user", "content": "天使之心快照里的话"}]}
-            ),
+            angelheart_context=json.dumps({"chat_records": [{"role": "user", "content": "天使之心快照里的话"}]}),
         )
 
         assert asyncio.run(deepmind._trigger_reflection_if_needed("s1", "count")) is True
@@ -479,9 +485,7 @@ def test_turn_records_that_round_memories():
         req=_Req("问1"),
         resp="答1",
         when=1000.0,
-        angelmemory_context=_memories_json(
-            {"id": "m1", "judgment": "甲"}, {"id": "m2", "judgment": "乙"}
-        ),
+        angelmemory_context=_memories_json({"id": "m1", "judgment": "甲"}, {"id": "m2", "judgment": "乙"}),
     )
 
     turn = deepmind._reflection_states["s1"]["turns"][0]
@@ -498,9 +502,7 @@ def test_memories_merged_by_id_across_turns():
         req=_Req("问1"),
         resp="答1",
         when=1000.0,
-        angelmemory_context=_memories_json(
-            {"id": "m1", "judgment": "甲"}, {"id": "m2", "judgment": "乙"}
-        ),
+        angelmemory_context=_memories_json({"id": "m1", "judgment": "甲"}, {"id": "m2", "judgment": "乙"}),
     )
     _record(
         deepmind,
@@ -508,9 +510,7 @@ def test_memories_merged_by_id_across_turns():
         req=_Req("问2"),
         resp="答2",
         when=1001.0,
-        angelmemory_context=_memories_json(
-            {"id": "m2", "judgment": "乙"}, {"id": "m3", "judgment": "丙"}
-        ),
+        angelmemory_context=_memories_json({"id": "m2", "judgment": "乙"}, {"id": "m3", "judgment": "丙"}),
     )
 
     merged = deepmind._merge_turn_memories(deepmind._reflection_states["s1"]["turns"])
@@ -552,12 +552,11 @@ def test_reflection_payload_carries_merged_memories_not_last_turn_only():
 
 # ---------- 十、记忆列表带创建时间 ----------
 
+
 def test_memory_created_at_formats_to_minute():
     stamp = datetime(2026, 11, 7, 14, 7, 33, tzinfo=TZ).timestamp()
 
-    assert (
-        SmallModelPromptBuilder._format_memory_created_at(stamp) == "2026-11-07 14:07"
-    ), "精确到分钟，秒要截掉"
+    assert SmallModelPromptBuilder._format_memory_created_at(stamp) == "2026-11-07 14:07", "精确到分钟，秒要截掉"
 
 
 def test_memory_created_at_keeps_year_across_new_year():
@@ -576,9 +575,7 @@ def test_memory_list_line_carries_created_at():
     stamp = datetime(2026, 11, 7, 14, 7, tzinfo=TZ).timestamp()
     _, user_prompt = SmallModelPromptBuilder.build_post_hoc_analysis_prompts(
         historical_query="历史",
-        raw_memories=[
-            SimpleNamespace(id="1265468", judgment="喜欢喝豆浆", created_at=stamp)
-        ],
+        raw_memories=[SimpleNamespace(id="1265468", judgment="喜欢喝豆浆", created_at=stamp)],
     )
 
     assert "id:1265468 2026-11-07 14:07 - 喜欢喝豆浆" in user_prompt

@@ -17,8 +17,7 @@ class MemoryRuntime(Protocol):
         is_active: bool = False,
         strength: int | None = None,
         memory_scope: str = "public",
-    ) -> str:
-        ...
+    ) -> str: ...
 
     async def comprehensive_recall(
         self,
@@ -27,8 +26,7 @@ class MemoryRuntime(Protocol):
         event: Any = None,
         vector: list[float] | None = None,
         memory_scope: str = "public",
-    ) -> list[BaseMemory]:
-        ...
+    ) -> list[BaseMemory]: ...
 
     async def chained_recall(
         self,
@@ -37,15 +35,13 @@ class MemoryRuntime(Protocol):
         vector: list[float] | None = None,
         event: Any = None,
         memory_scope: str = "public",
-    ) -> list[BaseMemory]:
-        ...
+    ) -> list[BaseMemory]: ...
 
     async def get_memories_by_ids(
         self,
         memory_ids: list[str],
         memory_scope: str | None = None,
-    ) -> list[BaseMemory]:
-        ...
+    ) -> list[BaseMemory]: ...
 
     async def feedback(
         self,
@@ -53,8 +49,7 @@ class MemoryRuntime(Protocol):
         recalled_memory_ids: list[str] | None = None,
         memory_actions: list[dict] | None = None,
         memory_scope: str = "public",
-    ) -> list[BaseMemory]:
-        ...
+    ) -> list[BaseMemory]: ...
 
     async def decay_tier0_memories(self) -> int:
         """睡眠第一步：T0 时间衰减，只降强度，不删除。"""

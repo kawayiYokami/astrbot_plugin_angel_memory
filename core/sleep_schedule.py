@@ -15,12 +15,8 @@ SLEEP_MINUTE = 0
 
 def seconds_until_next_sleep(now: float | None = None) -> float:
     """距下一个 04:00 的秒数。"""
-    current = datetime.datetime.fromtimestamp(
-        time.time() if now is None else float(now)
-    )
-    target = current.replace(
-        hour=SLEEP_HOUR, minute=SLEEP_MINUTE, second=0, microsecond=0
-    )
+    current = datetime.datetime.fromtimestamp(time.time() if now is None else float(now))
+    target = current.replace(hour=SLEEP_HOUR, minute=SLEEP_MINUTE, second=0, microsecond=0)
     if target <= current:
         target += datetime.timedelta(days=1)
     return max(1.0, (target - current).total_seconds())
@@ -28,9 +24,7 @@ def seconds_until_next_sleep(now: float | None = None) -> float:
 
 def today_key(now: float | None = None) -> str:
     """当前日期键，用于「同一天只跑一次」判定。"""
-    return time.strftime(
-        "%Y-%m-%d", time.localtime(time.time() if now is None else float(now))
-    )
+    return time.strftime("%Y-%m-%d", time.localtime(time.time() if now is None else float(now)))
 
 
 def should_run_sleep(last_sleep_day: str, now: float | None = None) -> bool:

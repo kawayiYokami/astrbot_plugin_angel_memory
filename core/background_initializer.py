@@ -17,9 +17,7 @@ from .initialization_manager import InitializationManager
 class BackgroundInitializer:
     """后台初始化器 - 使用 asyncio 异步初始化"""
 
-    def __init__(
-        self, init_manager: InitializationManager, config: dict, plugin_context
-    ):
+    def __init__(self, init_manager: InitializationManager, config: dict, plugin_context):
         """
         初始化后台初始化器
 
@@ -38,14 +36,10 @@ class BackgroundInitializer:
         self._shutdown_started = False
 
         self.logger.debug(f"后台初始化器接收配置: {list(self.config.keys())}")
-        self.logger.debug(
-            f"后台初始化器使用数据目录: {plugin_context.get_index_dir()}"
-        )
+        self.logger.debug(f"后台初始化器使用数据目录: {plugin_context.get_index_dir()}")
 
         # 直接使用主线程的PluginContext创建ComponentFactory
-        self.component_factory = ComponentFactory(
-            self.plugin_context, init_manager=self.init_manager
-        )
+        self.component_factory = ComponentFactory(self.plugin_context, init_manager=self.init_manager)
         self.plugin_context.set_component_factory(self.component_factory)
         self.logger.debug("BackgroundInitializer初始化完成 - 共享主线程PluginContext")
 
@@ -73,9 +67,7 @@ class BackgroundInitializer:
             self.logger.debug("启动异步后台初始化...")
 
             # 异步等待提供商就绪（不阻塞事件循环）
-            should_initialize = (
-                await self.init_manager.wait_for_providers_and_initialize_async()
-            )
+            should_initialize = await self.init_manager.wait_for_providers_and_initialize_async()
 
             if should_initialize:
                 # 在当前事件循环中创建所有组件
@@ -103,7 +95,7 @@ class BackgroundInitializer:
             self.logger.debug("所有组件在当前事件循环中创建完成")
 
             embedding_provider = components.get("embedding_provider")
-            if embedding_provider and hasattr(embedding_provider, 'clear_and_disable_cache'):
+            if embedding_provider and hasattr(embedding_provider, "clear_and_disable_cache"):
                 embedding_provider.clear_and_disable_cache()
                 self.logger.debug("嵌入缓存已清理并禁用（节省内存）")
 

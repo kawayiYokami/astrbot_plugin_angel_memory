@@ -148,8 +148,7 @@ class TraceStore:
             "status": str(source.pop("status", "") or "success"),
         }
         entry["time"] = str(
-            source.pop("time", "")
-            or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry["timestamp"]))
+            source.pop("time", "") or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry["timestamp"]))
         )
         for field_name in COMPRESSED_FIELDS:
             entry[field_name] = _encode_field(source.pop(field_name, ""))

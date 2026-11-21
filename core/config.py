@@ -21,22 +21,16 @@ class ConfigValidator:
         return value
 
     @staticmethod
-    def validate_non_negative_int(
-        value: Any, field_name: str, max_value: int | None = None
-    ) -> int:
+    def validate_non_negative_int(value: Any, field_name: str, max_value: int | None = None) -> int:
         """验证非负整数"""
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise ValueError(
-                f"{field_name} must be a non-negative integer, got: {value}"
-            )
+            raise ValueError(f"{field_name} must be a non-negative integer, got: {value}")
         if max_value is not None and value > max_value:
             raise ValueError(f"{field_name} too large (max {max_value}), got: {value}")
         return value
 
     @staticmethod
-    def validate_positive_number(
-        value: Any, field_name: str, max_value: float | None = None
-    ) -> float:
+    def validate_positive_number(value: Any, field_name: str, max_value: float | None = None) -> float:
         """验证正数（整数或浮点数）"""
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
             raise ValueError(f"{field_name} must be a positive number, got: {value}")
@@ -48,9 +42,7 @@ class ConfigValidator:
     def validate_bool(value: Any, field_name: str) -> bool:
         """验证布尔值"""
         if not isinstance(value, bool):
-            raise ValueError(
-                f"{field_name} must be a boolean, got: {type(value).__name__}"
-            )
+            raise ValueError(f"{field_name} must be a boolean, got: {type(value).__name__}")
         return value
 
     @staticmethod
@@ -148,9 +140,8 @@ class MemoryConfig:
         )
 
         self._short_term_memory_capacity = ConfigValidator.validate_positive_number(
-            memory_behavior.get("short_term_memory_capacity") or config_get(
-                "short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY
-            ),
+            memory_behavior.get("short_term_memory_capacity")
+            or config_get("short_term_memory_capacity", MemoryConstants.SHORT_TERM_MEMORY_CAPACITY),
             "short_term_memory_capacity",
             max_value=10.0,
         )
@@ -161,9 +152,7 @@ class MemoryConfig:
         if not isinstance(retrieval, dict):
             retrieval = {}
         self._rerank_provider_id = str(
-            retrieval.get("rerank_provider_id")
-            or config_get("rerank_provider_id", "")
-            or ""
+            retrieval.get("rerank_provider_id") or config_get("rerank_provider_id", "") or ""
         )
 
         # 向量请求参数（retrieval 下，兼容顶层旧字段）
@@ -235,8 +224,7 @@ class MemoryConfig:
             self._enable_soul_system = soul_system_config
         else:
             self._enable_soul_system = ConfigValidator.validate_bool(
-                soul_system_config.get("enabled", True),
-                "enable_soul_system.enabled"
+                soul_system_config.get("enabled", True), "enable_soul_system.enabled"
             )
 
     @property
@@ -293,10 +281,12 @@ class MemoryConfig:
     def note_inject_top_k(self) -> int:
         """获取注入笔记数量上限"""
         return self._note_inject_top_k
+
     @property
     def note_top_k(self) -> int:
         """获取统一注入Top-K配置值"""
         return self._note_top_k
+
     @property
     def conversation_scope_map(self) -> dict[str, Any]:
         """会话ID到记忆分类域的映射表（原始值，校验由PluginContext负责）。"""

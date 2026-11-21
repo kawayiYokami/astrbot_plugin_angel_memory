@@ -213,10 +213,7 @@ class PMemory:
             if self._closed:
                 raise ClosedError("p-memory 知识库已关闭，不再接受访问")
             if self._kb is None:
-                raise ClosedError(
-                    "p-memory 知识库尚未打开：打开只发生在 configure()，"
-                    "调用方不应依赖首次访问触发"
-                )
+                raise ClosedError("p-memory 知识库尚未打开：打开只发生在 configure()，调用方不应依赖首次访问触发")
             return self._kb
 
     @property
@@ -237,11 +234,7 @@ class PMemory:
         with self._lock:
             if self._root is not None:
                 self._load_scopes()
-            new_names = {
-                str(name).strip()
-                for name in (names or [])
-                if str(name or "").strip()
-            }
+            new_names = {str(name).strip() for name in (names or []) if str(name or "").strip()}
             if not new_names - self._scopes:
                 return
             self._scopes |= new_names
@@ -290,8 +283,7 @@ class PMemory:
             sync_thread.join(timeout=30)
             if sync_thread.is_alive():
                 logger.error(
-                    "[PMEMORY] 向量同步线程 30 秒未退出，本次不关库；"
-                    "句柄留在共享表里，重载后仍可打开，进程退出时释放"
+                    "[PMEMORY] 向量同步线程 30 秒未退出，本次不关库；句柄留在共享表里，重载后仍可打开，进程退出时释放"
                 )
                 return
 
@@ -453,9 +445,7 @@ class PMemory:
                         interrupted,
                     )
                 else:
-                    logger.info(
-                        "[PMEMORY] 记忆向量同步完成 空间=%s 结果=%s", space_id, report
-                    )
+                    logger.info("[PMEMORY] 记忆向量同步完成 空间=%s 结果=%s", space_id, report)
             except ClosedError:
                 # close() 期间访问 kb 会抛这个，属正常收尾，不记异常
                 logger.debug("[PMEMORY] 记忆向量同步在关闭过程中中断")

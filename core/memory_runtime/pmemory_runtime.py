@@ -138,8 +138,7 @@ class PMemoryMemoryRuntime(MemoryRuntime):
     ) -> list[BaseMemory]:
         del vector, event
         merged = " ".join(
-            [str(query or "").strip()]
-            + [str(entity).strip() for entity in (entities or []) if str(entity).strip()]
+            [str(query or "").strip()] + [str(entity).strip() for entity in (entities or []) if str(entity).strip()]
         ).strip()
         # 不设调用方可调的条数：候选、门槛、最终条数都是固定口径
         records = await asyncio.to_thread(
@@ -191,9 +190,7 @@ class PMemoryMemoryRuntime(MemoryRuntime):
 
         existing = await asyncio.to_thread(self._judgment_index, memory_scope)
         for action in memory_actions or []:
-            record = await asyncio.to_thread(
-                self._apply_action, action, memory_scope, existing
-            )
+            record = await asyncio.to_thread(self._apply_action, action, memory_scope, existing)
             if record:
                 refreshed.append(record)
         return [to_base_memory(record) for record in refreshed]
@@ -212,9 +209,7 @@ class PMemoryMemoryRuntime(MemoryRuntime):
             index.setdefault(key, record)
         return index
 
-    def _apply_action(
-        self, action: dict, scope: str, existing: dict[tuple, dict] | None = None
-    ) -> dict | None:
+    def _apply_action(self, action: dict, scope: str, existing: dict[tuple, dict] | None = None) -> dict | None:
         """update 原地更新；merge 新建后删除源记忆；create 同正文同柜子只留一条。
 
         删除有意不看 scope：合并允许跨会话收拢记忆，删的是全局 id。
@@ -293,11 +288,7 @@ class PMemoryMemoryRuntime(MemoryRuntime):
     async def list_retirement_candidates(self) -> list[BaseMemory]:
         # 衰减引擎不认 pinned：判过 keep 的记忆强度照样归零、照样被返回。
         # 这里必须再筛一遍，否则 keep 只是面板上的一个勾，下一轮又会被送审。
-        records = [
-            record
-            for record in self._decay_candidates
-            if not (record.get("state") or {}).get("pinned", False)
-        ]
+        records = [record for record in self._decay_candidates if not (record.get("state") or {}).get("pinned", False)]
         return [to_base_memory(record) for record in records]
 
     async def apply_retirement_decisions(

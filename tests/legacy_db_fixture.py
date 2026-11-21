@@ -101,11 +101,18 @@ class LegacyDb:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    mid, str(memory_type), str(judgment), str(reasoning),
-                    int(strength), 1 if is_active else 0,
-                    int(useful_count), float(useful_score),
-                    float(last_recalled_at), float(last_decay_at),
-                    str(memory_scope), created,
+                    mid,
+                    str(memory_type),
+                    str(judgment),
+                    str(reasoning),
+                    int(strength),
+                    1 if is_active else 0,
+                    int(useful_count),
+                    float(useful_score),
+                    float(last_recalled_at),
+                    float(last_decay_at),
+                    str(memory_scope),
+                    created,
                     float(updated_at if updated_at is not None else now),
                 ),
             )

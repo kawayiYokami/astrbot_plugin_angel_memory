@@ -38,20 +38,16 @@ class MemoryError(Exception):
     """记忆系统基础异常类"""
 
 
-
 class VectorizationError(MemoryError):
     """向量化和嵌入相关异常"""
-
 
 
 class StorageError(MemoryError):
     """存储和检索相关异常"""
 
 
-
 class ValidationError(MemoryError):
     """数据验证相关异常"""
-
 
 
 class BaseMemory:
@@ -72,7 +68,7 @@ class BaseMemory:
         is_active: bool = False,
         created_at: float | None = None,
         is_consolidated: bool | None = None,  # 废弃字段，仅保留兼容性
-        soul_state: dict | None = None,       # 生成该记忆时的四情绪读数
+        soul_state: dict | None = None,  # 生成该记忆时的四情绪读数
         memory_scope: str = "public",  # 记忆分类域，默认公共
         useful_count: int = 0,
         useful_score: float = 0.0,
@@ -167,12 +163,8 @@ class BaseMemory:
         tags = cls._parse_tags(data.get("tags", []))
 
         # 兼容旧字段名
-        judgment = data.get(
-            "judgment", data.get("content", data.get("emotion_type", ""))
-        )
-        reasoning = data.get(
-            "reasoning", data.get("context", data.get("trigger_event", ""))
-        )
+        judgment = data.get("judgment", data.get("content", data.get("emotion_type", "")))
+        reasoning = data.get("reasoning", data.get("context", data.get("trigger_event", "")))
 
         try:
             return cls(

@@ -113,9 +113,7 @@ def build_knowledge_matrix(
                 domain = normalize_domain(raw_domain)
                 mode = normalize_mode(raw_mode)
                 if not domain or mode is None:
-                    errors.append(
-                        f"group_knowledge_map[{group_id}] 非法项: {raw_domain}={raw_mode}"
-                    )
+                    errors.append(f"group_knowledge_map[{group_id}] 非法项: {raw_domain}={raw_mode}")
                     continue
                 modes[domain] = mode
 

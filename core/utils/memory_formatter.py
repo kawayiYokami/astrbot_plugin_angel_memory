@@ -44,9 +44,7 @@ class MemoryFormatter:
         created_at = getattr(memory, "created_at", 0.0)
         if created_at and created_at > 0:
             try:
-                time_text = time.strftime(
-                    "%Y-%m-%d %H:%M", time.localtime(float(created_at))
-                )
+                time_text = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(created_at)))
             except (ValueError, OSError, OverflowError):
                 time_text = ""
 
@@ -76,18 +74,10 @@ class MemoryFormatter:
         grouped_memories = {}
         for memory in memories:
             # 处理 MemoryItem 对象的 memory_type 属性
-            type_value = (
-                memory.memory_type.value
-                if hasattr(memory.memory_type, "value")
-                else memory.memory_type
-            )
-            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(
-                type_value, str(type_value or "").lower()
-            )
+            type_value = memory.memory_type.value if hasattr(memory.memory_type, "value") else memory.memory_type
+            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(type_value, str(type_value or "").lower())
             type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
-            grouped_memories.setdefault(type_name, []).append(
-                MemoryFormatter.format_single_memory(memory)
-            )
+            grouped_memories.setdefault(type_name, []).append(MemoryFormatter.format_single_memory(memory))
         return grouped_memories
 
     @staticmethod
@@ -116,9 +106,7 @@ class MemoryFormatter:
 
         # 添加有用的历史记忆（使用列表推导式）
         if useful_memory_ids:
-            memories_to_format.extend(
-                memory_map[mid] for mid in useful_memory_ids if mid in memory_map
-            )
+            memories_to_format.extend(memory_map[mid] for mid in useful_memory_ids if mid in memory_map)
 
         # 添加新记忆（使用列表推导式）
         if action_memories:
@@ -145,9 +133,7 @@ class MemoryFormatter:
         formatted_lines = ["[相关记忆]"]
         for memory_type, formatted_memories in grouped_memories.items():
             formatted_lines.append(f"\n[{memory_type}]")
-            formatted_lines.extend(
-                f"\n{memory_text}" for memory_text in formatted_memories
-            )
+            formatted_lines.extend(f"\n{memory_text}" for memory_text in formatted_memories)
 
         return "".join(formatted_lines)
 
@@ -195,14 +181,8 @@ class MemoryFormatter:
         # 按类型分组（保留原始对象以便获取 ID）
         grouped = {}
         for memory in deduplicated_memories:
-            type_value = (
-                memory.memory_type.value
-                if hasattr(memory.memory_type, "value")
-                else memory.memory_type
-            )
-            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(
-                type_value, str(type_value or "").lower()
-            )
+            type_value = memory.memory_type.value if hasattr(memory.memory_type, "value") else memory.memory_type
+            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(type_value, str(type_value or "").lower())
             type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
             grouped.setdefault(type_name, []).append(memory)
 
@@ -216,13 +196,9 @@ class MemoryFormatter:
                     mem_id = str(getattr(memory, "id", "") or "").strip()
                     if mem_id:
                         short_id = short_id_registry.get_short_id(mem_id)
-                formatted_lines.append(
-                    f"\n{MemoryFormatter.format_single_memory(memory, short_id=short_id)}"
-                )
+                formatted_lines.append(f"\n{MemoryFormatter.format_single_memory(memory, short_id=short_id)}")
 
         return "".join(formatted_lines)
-
-
 
     @staticmethod
     def format_memories_for_display(memories: list[MemoryItem]) -> str:
@@ -242,14 +218,8 @@ class MemoryFormatter:
         grouped = {}
         for memory in memories:
             # 处理 MemoryItem 对象的 memory_type 属性
-            type_value = (
-                memory.memory_type.value
-                if hasattr(memory.memory_type, "value")
-                else memory.memory_type
-            )
-            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(
-                type_value, str(type_value or "").lower()
-            )
+            type_value = memory.memory_type.value if hasattr(memory.memory_type, "value") else memory.memory_type
+            type_value = MemoryConstants.MEMORY_TYPE_MAPPING.get(type_value, str(type_value or "").lower())
             type_name = MemoryFormatter.MEMORY_TYPE_NAMES.get(type_value, type_value)
             grouped.setdefault(type_name, []).append(memory)
 

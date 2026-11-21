@@ -33,7 +33,7 @@ from .tools.angel_remember import CoreMemoryRememberTool
     "kawayiYokami",
     "天使的记忆，让astrbot拥有记忆维护系统和开箱即用的知识库检索",
     PLUGIN_VERSION,
-    "https://github.com/kawayiYokami/astrbot_plugin_angel_memory"
+    "https://github.com/kawayiYokami/astrbot_plugin_angel_memory",
 )
 class AngelMemoryPlugin(Star):
     """天使记忆插件主类
@@ -61,9 +61,7 @@ class AngelMemoryPlugin(Star):
         self.logger.debug(f"获取到插件数据目录: {data_dir}")
 
         # 2. 创建统一的PluginContext，包含所有必要资源
-        self.plugin_context = PluginContextFactory.create_from_initialization(
-            context, config or {}, data_dir
-        )
+        self.plugin_context = PluginContextFactory.create_from_initialization(context, config or {}, data_dir)
 
         # 2. 核心实例占位符（将在后台初始化完成后通过ComponentFactory创建）
         self.deepmind = None
@@ -106,9 +104,7 @@ class AngelMemoryPlugin(Star):
             self.llm_tools_enabled = False
             self.logger.error(f"注册LLM工具时发生异常: {e}", exc_info=True)
             self.logger.warning("LLM工具功能已禁用，插件将继续以基础模式运行")
-        self.logger.debug(
-            f"天使记忆数据路径设置为: {self.plugin_context.get_index_dir().resolve()}"
-        )
+        self.logger.debug(f"天使记忆数据路径设置为: {self.plugin_context.get_index_dir().resolve()}")
         self.logger.debug(
             f"天使记忆实例创建完成 数据目录={self.plugin_context.get_index_dir().resolve()} "
             f"提供商={self.plugin_context.get_current_provider()} "
@@ -118,6 +114,7 @@ class AngelMemoryPlugin(Star):
         # 6. 注册 WebUI API 路由
         try:
             from .web_api import register_all_routes
+
             register_all_routes(self.context, self.plugin_context, plugin=self)
             self.logger.debug("已注册 WebUI API 路由（Plugin Pages）")
         except Exception as e:
@@ -163,17 +160,13 @@ class AngelMemoryPlugin(Star):
             if embedding_provider_id:
                 self.logger.debug(f"检测到嵌入提供商配置: {embedding_provider_id}")
             else:
-                self.logger.debug(
-                    "未配置嵌入提供商ID，将按能力自动降级为 BM25-only（向量非必须）"
-                )
+                self.logger.debug("未配置嵌入提供商ID，将按能力自动降级为 BM25-only（向量非必须）")
 
             llm_provider_id = self.plugin_context.get_llm_provider_id()
             if llm_provider_id:
                 self.logger.debug(f"检测到LLM提供商配置: {llm_provider_id}")
             else:
-                self.logger.debug(
-                    "未配置LLM提供商ID (provider_id)，将使用基础记忆功能"
-                )
+                self.logger.debug("未配置LLM提供商ID (provider_id)，将使用基础记忆功能")
 
             # 检查提供商可用性
             if self.plugin_context.has_providers():
@@ -188,9 +181,7 @@ class AngelMemoryPlugin(Star):
         """更新组件引用（在初始化完成后调用）"""
         if self.plugin_manager:
             # 从后台初始化器获取组件工厂
-            component_factory = (
-                self.plugin_manager.background_initializer.get_component_factory()
-            )
+            component_factory = self.plugin_manager.background_initializer.get_component_factory()
 
             # 设置ComponentFactory引用到PluginContext
             self.plugin_context.set_component_factory(component_factory)
@@ -236,9 +227,7 @@ class AngelMemoryPlugin(Star):
             self.logger.debug("组件引用已更新")
 
             # 使用共享的PluginContext处理请求
-            result = await self.plugin_manager.handle_llm_request(
-                event, request, self.plugin_context
-            )
+            result = await self.plugin_manager.handle_llm_request(event, request, self.plugin_context)
             self.logger.debug(f"handle_llm_request 返回结果: {result}")
 
             if result["status"] == "waiting":
@@ -247,9 +236,7 @@ class AngelMemoryPlugin(Star):
             elif result["status"] == "success":
                 self.logger.debug("LLM请求处理完成")
             else:
-                self.logger.error(
-                    f"LLM请求处理失败: {result.get('message', '未知错误')}"
-                )
+                self.logger.error(f"LLM请求处理失败: {result.get('message', '未知错误')}")
 
             # 注入完成后的请求才是模型真正看到的那一份，在这里存快照供反思配对
             self._remember_provider_request(event, request)
@@ -262,9 +249,7 @@ class AngelMemoryPlugin(Star):
         try:
             conversation_id = str(getattr(event, "unified_msg_origin", "") or "").strip()
             persona_name = await self.plugin_context.get_event_persona_name(event)
-            self.logger.debug(
-                f"[事件人格] 会话ID={conversation_id or '(空)'} 当前人格={persona_name or '(空)'}"
-            )
+            self.logger.debug(f"[事件人格] 会话ID={conversation_id or '(空)'} 当前人格={persona_name or '(空)'}")
         except Exception as e:
             self.logger.debug(f"事件人格日志记录失败（已忽略）: {e}")
 
@@ -279,10 +264,8 @@ class AngelMemoryPlugin(Star):
 
             self._conversation_id_logged_once.add(conversation_id)
             persona_name = await self.plugin_context.get_event_persona_name(event)
-            resolved_scope, matched_by, matched_key = (
-                self.plugin_context.resolve_memory_scope_with_source(
-                    conversation_id, persona_name=persona_name
-                )
+            resolved_scope, matched_by, matched_key = self.plugin_context.resolve_memory_scope_with_source(
+                conversation_id, persona_name=persona_name
             )
             scope_mode = self.plugin_context.get_conversation_scope_mode()
             match_desc = {
@@ -331,9 +314,7 @@ class AngelMemoryPlugin(Star):
                 except (json.JSONDecodeError, AttributeError, TypeError) as e:
                     self.logger.warning(f"存储响应数据失败: {e}")
 
-            request = event.get_extra("angel_provider_request") or event.get_extra(
-                "provider_request"
-            )
+            request = event.get_extra("angel_provider_request") or event.get_extra("provider_request")
             sender_id, sender_name = self._event_sender_identity(event)
             event.set_extra(
                 "angel_reflection_turn",
@@ -346,8 +327,7 @@ class AngelMemoryPlugin(Star):
                 },
             )
             self.logger.debug(
-                f"[反思调度] 本轮请求与回复已配对 req={'有' if request is not None else '无'} "
-                f"resp_len={len(resp_text)}"
+                f"[反思调度] 本轮请求与回复已配对 req={'有' if request is not None else '无'} resp_len={len(resp_text)}"
             )
         except Exception as e:
             self.logger.error(f"Agent 完成钩子异常: {e}", exc_info=True)
@@ -461,11 +441,7 @@ class AngelMemoryPlugin(Star):
                 return
 
             # 将记忆整理任务提交到事件循环，但不等待其完成，以避免阻塞主事件流程
-            task = asyncio.create_task(
-                self.plugin_manager.handle_memory_consolidation(
-                    event, self.plugin_context
-                )
-            )
+            task = asyncio.create_task(self.plugin_manager.handle_memory_consolidation(event, self.plugin_context))
             self._track_background_task(task)
             self.logger.debug("记忆整理任务已提交至后台，不等待完成。")
 
@@ -520,14 +496,8 @@ class AngelMemoryPlugin(Star):
                 await self.plugin_manager.shutdown()
 
             # 获取最终状态
-            status = (
-                self.plugin_manager.get_status()
-                if self.plugin_manager
-                else {"state": "unknown"}
-            )
-            self.logger.info(
-                f"Angel Memory Plugin 已关闭，最终状态: {status.get('state', 'unknown')}"
-            )
+            status = self.plugin_manager.get_status() if self.plugin_manager else {"state": "unknown"}
+            self.logger.info(f"Angel Memory Plugin 已关闭，最终状态: {status.get('state', 'unknown')}")
 
         except Exception as e:
             self.logger.error(f"Angel Memory Plugin: 插件卸载清理失败: {e}", exc_info=True)
@@ -588,4 +558,4 @@ class AngelMemoryPlugin(Star):
         Returns:
             bool: 如果LLM工具已启用返回True，否则返回False
         """
-        return getattr(self, 'llm_tools_enabled', False)
+        return getattr(self, "llm_tools_enabled", False)

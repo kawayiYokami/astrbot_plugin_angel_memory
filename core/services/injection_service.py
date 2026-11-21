@@ -85,9 +85,7 @@ class DeepMindInjectionService:
         if not isinstance(contexts, list):
             contexts = []
             request.contexts = contexts
-        contexts.append(
-            {"role": "user", "content": self._render_block(parts), "_no_save": True}
-        )
+        contexts.append({"role": "user", "content": self._render_block(parts), "_no_save": True})
         request._angel_memory_injected = True
         return True
 
@@ -131,9 +129,7 @@ class DeepMindInjectionService:
         snapshot_index = len(snapshot_messages) - 1
         context_index = len(context_users) - 1
         while snapshot_index >= 0 and context_index >= 0:
-            pairs.append(
-                (snapshot_messages[snapshot_index], context_users[context_index])
-            )
+            pairs.append((snapshot_messages[snapshot_index], context_users[context_index]))
             snapshot_index -= 1
             context_index -= 1
         pairs.reverse()
@@ -148,9 +144,7 @@ class DeepMindInjectionService:
                 continue
             # 锚点后面已经是提醒块，说明这条消息挂过了
             neighbour = contexts[anchor + 1] if anchor + 1 < len(contexts) else None
-            if isinstance(neighbour, dict) and self._has_reminder(
-                neighbour.get("content")
-            ):
+            if isinstance(neighbour, dict) and self._has_reminder(neighbour.get("content")):
                 continue
             memory_context = self.deepmind.memory_injector.format_session_memories_for_prompt(
                 memories, short_id_registry=None
@@ -160,9 +154,7 @@ class DeepMindInjectionService:
             pending.append(
                 (
                     anchor,
-                    self._render_block(
-                        [f"<memories>\n{memory_context}\n</memories>"]
-                    ),
+                    self._render_block([f"<memories>\n{memory_context}\n</memories>"]),
                 )
             )
             attached.extend(memories)
@@ -188,9 +180,7 @@ class DeepMindInjectionService:
     def session_memories(self, session_id: str) -> list:
         """本轮要注入的记忆：短期记忆表里的全部条目，直接取表里那份内容，不回查长期库。"""
         items = self.deepmind.session_memory_manager.get_session_memories(session_id)
-        return [
-            item.memory for item in items if getattr(item, "memory", None) is not None
-        ]
+        return [item.memory for item in items if getattr(item, "memory", None) is not None]
 
     async def inject_memories_to_request(
         self,
@@ -241,11 +231,7 @@ class DeepMindInjectionService:
             if message_id:
                 current_memories = list(memories_by_message.get(message_id) or [])
             else:
-                current_memories = [
-                    memory
-                    for memories in memories_by_message.values()
-                    for memory in memories
-                ]
+                current_memories = [memory for memories in memories_by_message.values() for memory in memories]
         else:
             current_memories = self.session_memories(session_id)
             attached = []
@@ -256,9 +242,7 @@ class DeepMindInjectionService:
                 session_id,
                 short_id_registry=None,
             )
-            current_memories = deepmind.user_profile_service.filter_regular_memories(
-                session_id, current_memories
-            )
+            current_memories = deepmind.user_profile_service.filter_regular_memories(session_id, current_memories)
 
         memory_context = deepmind.memory_injector.format_session_memories_for_prompt(
             current_memories,
@@ -291,7 +275,5 @@ class DeepMindInjectionService:
             "- 想起的内容自然融入当前回答，对话焦点始终跟随用户"
         )
         addition = f"{self.BEHAVIOR_RULES}\n\n{memory_guide}"
-        request.system_prompt = (
-            f"{request.system_prompt}\n\n{addition}" if request.system_prompt else addition
-        )
+        request.system_prompt = f"{request.system_prompt}\n\n{addition}" if request.system_prompt else addition
         return attached

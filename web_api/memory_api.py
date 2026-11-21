@@ -127,16 +127,18 @@ class MemoryAPI:
                         continue
                 filtered.append(item)
 
-            filtered.sort(key=lambda x: (x["created_at"] or 0), reverse=True)
+            filtered.sort(key=lambda x: x["created_at"] or 0, reverse=True)
             total = len(filtered)
-            page_items = filtered[offset:offset + page_size]
-            return jsonify({
-                "items": page_items,
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-                "total_pages": math.ceil(total / page_size) if total > 0 else 1,
-            })
+            page_items = filtered[offset : offset + page_size]
+            return jsonify(
+                {
+                    "items": page_items,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": math.ceil(total / page_size) if total > 0 else 1,
+                }
+            )
         except Exception as e:
             return jsonify({"error": str(e), "items": [], "total": 0}), 500
 

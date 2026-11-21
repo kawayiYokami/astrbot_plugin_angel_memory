@@ -28,9 +28,7 @@ class PluginContext:
     - 供应商信息
     """
 
-    def __init__(
-        self, astrbot_context, config: dict[str, Any], base_data_dir: str | None = None
-    ):
+    def __init__(self, astrbot_context, config: dict[str, Any], base_data_dir: str | None = None):
         """
         初始化插件上下文
 
@@ -60,9 +58,7 @@ class PluginContext:
         self._refresh_scope_map()
         self._refresh_domain_map()
 
-        self.logger.debug(
-            f"PluginContext初始化完成 (提供商: {self.get_embedding_provider_id()})"
-        )
+        self.logger.debug(f"PluginContext初始化完成 (提供商: {self.get_embedding_provider_id()})")
 
     def _setup_plugin_resources(self):
         """初始化插件专用资源"""
@@ -77,9 +73,7 @@ class PluginContext:
             self.path_manager = PathManager()
             self.path_manager.set_provider(embedding_provider_id, base_data_dir)
 
-            self.logger.debug(
-                f"插件资源初始化完成: 提供商={embedding_provider_id}, 数据目录={base_data_dir}"
-            )
+            self.logger.debug(f"插件资源初始化完成: 提供商={embedding_provider_id}, 数据目录={base_data_dir}")
 
         except Exception as e:
             self.logger.error(f"插件资源初始化失败: {e}")
@@ -208,9 +202,7 @@ class PluginContext:
         raw_mode = self.config.get("conversation_scope_mode", "persona")
         mode = str(raw_mode if raw_mode is not None else "").strip().lower()
         if mode not in ("persona", "group"):
-            self.logger.warning(
-                f"conversation_scope_mode 取值非法: {raw_mode!r}，已回落为 persona。"
-            )
+            self.logger.warning(f"conversation_scope_mode 取值非法: {raw_mode!r}，已回落为 persona。")
             mode = "persona"
         self._conversation_scope_mode = mode
         return mode
@@ -230,14 +222,10 @@ class PluginContext:
                 try:
                     raw_map = json.loads(raw_text)
                 except Exception:
-                    self.logger.warning(
-                        "conversation_scope_map JSON 解析失败，已忽略并回退为空。"
-                    )
+                    self.logger.warning("conversation_scope_map JSON 解析失败，已忽略并回退为空。")
                     raw_map = {}
         if not isinstance(raw_map, dict):
-            self.logger.warning(
-                "conversation_scope_map 配置类型非法（需为 object），已忽略并回退为空。"
-            )
+            self.logger.warning("conversation_scope_map 配置类型非法（需为 object），已忽略并回退为空。")
             self._conversation_scope_map = {}
             return
 
@@ -247,15 +235,11 @@ class PluginContext:
             scope_name = str(raw_scope).strip()
 
             if not conversation_id:
-                self.logger.warning(
-                    "conversation_scope_map 存在空会话ID键，已忽略该映射。"
-                )
+                self.logger.warning("conversation_scope_map 存在空会话ID键，已忽略该映射。")
                 continue
 
             if not scope_name:
-                self.logger.warning(
-                    f"conversation_scope_map[{conversation_id}] 为空，已忽略该映射。"
-                )
+                self.logger.warning(f"conversation_scope_map[{conversation_id}] 为空，已忽略该映射。")
                 continue
 
             if not self._scope_name_pattern.fullmatch(scope_name):
@@ -345,14 +329,10 @@ class PluginContext:
 
     def resolve_memory_scope(self, conversation_id: str, persona_name: str = "") -> str:
         """解析当前记忆域：按分柜方式只匹配对应一类键，未命中返回 public。"""
-        scope, _, _ = self.resolve_memory_scope_with_source(
-            conversation_id, persona_name=persona_name
-        )
+        scope, _, _ = self.resolve_memory_scope_with_source(conversation_id, persona_name=persona_name)
         return scope
 
-    def resolve_memory_scope_with_source(
-        self, conversation_id: str, persona_name: str = ""
-    ) -> tuple[str, str, str]:
+    def resolve_memory_scope_with_source(self, conversation_id: str, persona_name: str = "") -> tuple[str, str, str]:
         """解析记忆域并返回命中来源：scope, matched_by, matched_key。
 
         conversation_scope_mode 为 persona 时只看人格键，为 group 时只看会话 ID 键，
@@ -443,28 +423,22 @@ class PluginContext:
         #   4.29 及更早：umo / conversation_persona_id / platform_name / provider_settings，返回四元组
         #   4.30+     ：umo / platform_name，返回三元组
         try:
-            _sig_params = inspect.signature(
-                persona_manager.resolve_selected_persona
-            ).parameters
+            _sig_params = inspect.signature(persona_manager.resolve_selected_persona).parameters
         except (TypeError, ValueError):
             _sig_params = {}
 
         try:
             if "conversation_persona_id" in _sig_params:
-                persona_id, _persona, *_rest = (
-                    await persona_manager.resolve_selected_persona(
-                        umo=umo,
-                        conversation_persona_id=conversation_persona_id,
-                        platform_name=platform_name,
-                        provider_settings=provider_settings,
-                    )
+                persona_id, _persona, *_rest = await persona_manager.resolve_selected_persona(
+                    umo=umo,
+                    conversation_persona_id=conversation_persona_id,
+                    platform_name=platform_name,
+                    provider_settings=provider_settings,
                 )
             else:
-                persona_id, _persona, *_rest = (
-                    await persona_manager.resolve_selected_persona(
-                        umo=umo,
-                        platform_name=platform_name,
-                    )
+                persona_id, _persona, *_rest = await persona_manager.resolve_selected_persona(
+                    umo=umo,
+                    platform_name=platform_name,
                 )
         except Exception:
             self.logger.error(

@@ -96,11 +96,7 @@ class _CallbackRunner:
 
     def run(self, coro, timeout: float | None):
         owner = self._owner
-        if (
-            owner is not None
-            and owner.is_running()
-            and threading.get_ident() != self._owner_thread
-        ):
+        if owner is not None and owner.is_running() and threading.get_ident() != self._owner_thread:
             return asyncio.run_coroutine_threadsafe(coro, owner).result(timeout=timeout)
         return self._fallback_loop().run(coro, timeout)
 
@@ -147,9 +143,7 @@ class EmbeddingBridge:
         if self._should_stop is not None and self._should_stop():
             raise RuntimeError("知识库正在关闭，停止向量同步")
         try:
-            result = self._runner.run(
-                self._provider.embed_documents(list(texts)), self._timeout
-            )
+            result = self._runner.run(self._provider.embed_documents(list(texts)), self._timeout)
         except TimeoutError as exc:
             raise EmbedCallbackError.other(f"嵌入超时 timeout={self._timeout}s") from exc
         except Exception as exc:  # 提供商异常按类别上报，库据此重试或降级
@@ -197,9 +191,7 @@ class RerankBridge:
         if not docs:
             return []
         try:
-            response = self._runner.run(
-                self._provider.rerank(query=query, documents=docs), self._timeout
-            )
+            response = self._runner.run(self._provider.rerank(query=query, documents=docs), self._timeout)
         except TimeoutError as exc:
             raise EmbedCallbackError.other(f"重排超时 timeout={self._timeout}s") from exc
         except Exception as exc:

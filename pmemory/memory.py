@@ -167,18 +167,13 @@ class MemoryStore:
         payload: dict[str, Any] = {
             "id": int(memory_id),
             "judgment": _text(judgment if judgment is not None else record.get("judgment")),
-            "reasoning": _text(
-                reasoning if reasoning is not None else record.get("reasoning")
-            ),
-            "memory_type": _text(memory_type or record.get("memory_type"))
-            or "知识记忆",
+            "reasoning": _text(reasoning if reasoning is not None else record.get("reasoning")),
+            "memory_type": _text(memory_type or record.get("memory_type")) or "知识记忆",
             "tags": _tags(tags if tags is not None else record.get("tags")),
             "namespace": _text(record.get("namespace")) or memory_namespace(),
             "scope": _text(scope or record.get("scope")) or "public",
             "state": None,
-            "metadata": dict(
-                metadata if metadata is not None else record.get("metadata") or {}
-            ),
+            "metadata": dict(metadata if metadata is not None else record.get("metadata") or {}),
         }
         receipt = self._store.kb.memories.upsert(payload)
         self._store.kb.update_index()
@@ -238,9 +233,7 @@ class MemoryStore:
         except (TypeError, ValueError):
             return None
         try:
-            return self._store.kb.memories.get(
-                raw_id, filter=self._filter(scope, all_scopes=all_scopes)
-            )
+            return self._store.kb.memories.get(raw_id, filter=self._filter(scope, all_scopes=all_scopes))
         except NotFoundError:
             return None
         except PMemoryError:
@@ -309,9 +302,7 @@ class MemoryStore:
                 scores = fused_scores
             # 重排分必须为正：负分是供应商吐出来的原始 logit，不做归一化，直接丢掉。
             # 剩下的按最高分的比例留人，负分不参与最高分的计算。
-            scored = [
-                (record, score) for record, score in zip(records, scores, strict=False) if score > 0
-            ]
+            scored = [(record, score) for record, score in zip(records, scores, strict=False) if score > 0]
             if not scored:
                 return []
             threshold = max(score for _, score in scored) * float(score_ratio)
@@ -385,9 +376,7 @@ class MemoryStore:
         衰减作用于全部 scope：每个会话的记忆都该随时间淡去，不能只处理 public。
         """
         try:
-            receipt = self._store.kb.memories.decay(
-                filter=self._filter(None, all_scopes=True), policy=policy or None
-            )
+            receipt = self._store.kb.memories.decay(filter=self._filter(None, all_scopes=True), policy=policy or None)
         except PMemoryError:
             logger.exception("[PMEMORY] 时间衰减失败")
             return {"decayed": 0, "candidates": []}

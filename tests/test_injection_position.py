@@ -31,9 +31,7 @@ class _FakeSessionMemoryManager:
     def prune_departed_from_session(self, session_id, alive_texts):
         alive = {str(text).strip() for text in (alive_texts or [])}
         departed = [
-            item
-            for item in self.items
-            if item.recalled_message_text and item.recalled_message_text not in alive
+            item for item in self.items if item.recalled_message_text and item.recalled_message_text not in alive
         ]
         departed_ids = {item.id for item in departed}
         self.items = [item for item in self.items if item.id not in departed_ids]
@@ -151,9 +149,7 @@ async def test_memories_come_before_soul_state():
     text = _text_of(request)
     assert text.index("<memories>") < text.index("<soul_state>")
     # 状态是最后一块，紧挨着收尾标签
-    assert text.index("</soul_state>") + len("</soul_state>\n") == text.index(
-        "</system_reminder>"
-    )
+    assert text.index("</soul_state>") + len("</soul_state>\n") == text.index("</system_reminder>")
 
 
 @pytest.mark.asyncio
@@ -198,9 +194,7 @@ async def test_inject_returns_every_memory_it_rendered():
 
 def test_context_user_texts_reads_user_blocks_only():
     deepmind = object.__new__(DeepMind)
-    deepmind.injection_service = SimpleNamespace(
-        _plain_text=DeepMindInjectionService._plain_text
-    )
+    deepmind.injection_service = SimpleNamespace(_plain_text=DeepMindInjectionService._plain_text)
     request = ProviderRequest(
         contexts=[
             {"role": "user", "content": "第一句"},
@@ -215,16 +209,14 @@ def test_context_user_texts_reads_user_blocks_only():
 
 def test_departed_message_takes_the_memory_with_it():
     deepmind = object.__new__(DeepMind)
-    deepmind.injection_service = SimpleNamespace(
-        _plain_text=DeepMindInjectionService._plain_text
-    )
+    deepmind.injection_service = SimpleNamespace(_plain_text=DeepMindInjectionService._plain_text)
     session = SessionMemory("sess")
     session.add_memories([_base_memory("a")], recalled_message_text="第一句")
     session.add_memories([_base_memory("b")], recalled_message_text="第二句")
 
-    departed = session.prune_departed(deepmind._context_user_texts(
-        ProviderRequest(contexts=[{"role": "user", "content": "第二句"}])
-    ))
+    departed = session.prune_departed(
+        deepmind._context_user_texts(ProviderRequest(contexts=[{"role": "user", "content": "第二句"}]))
+    )
 
     assert [item.id for item in departed] == ["a"]
     assert [item.recalled_message_text for item in departed] == ["第一句"]
@@ -234,9 +226,7 @@ def test_departed_message_takes_the_memory_with_it():
 def test_reflection_entry_binds_the_message_text_too():
     """反思入仓必须连正文一起绑定，反思时才有对话可看。"""
     deepmind = object.__new__(DeepMind)
-    deepmind.injection_service = SimpleNamespace(
-        _plain_text=DeepMindInjectionService._plain_text
-    )
+    deepmind.injection_service = SimpleNamespace(_plain_text=DeepMindInjectionService._plain_text)
 
     message_id, text = deepmind._latest_user_message(
         {
@@ -254,9 +244,7 @@ def test_reflection_entry_binds_the_message_text_too():
 
 def test_reflection_entry_falls_back_when_no_user_message():
     deepmind = object.__new__(DeepMind)
-    deepmind.injection_service = SimpleNamespace(
-        _plain_text=DeepMindInjectionService._plain_text
-    )
+    deepmind.injection_service = SimpleNamespace(_plain_text=DeepMindInjectionService._plain_text)
 
     assert deepmind._latest_user_message({"raw_chat_records": []}) == ("", "")
 
@@ -369,14 +357,10 @@ async def test_history_path_is_off_by_default():
 def test_bound_text_comes_from_request_prompt():
     """当前发言取请求体里那份，跟上下文同一个口径。"""
     deepmind = object.__new__(DeepMind)
-    deepmind.injection_service = SimpleNamespace(
-        _plain_text=DeepMindInjectionService._plain_text
-    )
+    deepmind.injection_service = SimpleNamespace(_plain_text=DeepMindInjectionService._plain_text)
     request = ProviderRequest(prompt="[群友: 红豆 (ID: 289104862)] (2026-11-09 09:03): 在吗")
 
-    assert deepmind._request_prompt_text(request) == (
-        "[群友: 红豆 (ID: 289104862)] (2026-11-09 09:03): 在吗"
-    )
+    assert deepmind._request_prompt_text(request) == ("[群友: 红豆 (ID: 289104862)] (2026-11-09 09:03): 在吗")
 
 
 def test_bound_text_leaves_when_context_no_longer_contains_it():

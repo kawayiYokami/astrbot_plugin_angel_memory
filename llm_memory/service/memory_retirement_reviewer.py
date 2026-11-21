@@ -74,9 +74,7 @@ class MemoryRetirementReviewer:
         system_prompt = self.build_system_prompt()
         user_prompt = self.build_user_prompt(candidate_list, short_ids)
 
-        provider = (
-            self.context.get_provider_by_id(self.provider_id) if self.context else None
-        )
+        provider = self.context.get_provider_by_id(self.provider_id) if self.context else None
         if provider is None:
             raise RetirementReviewError(
                 f"找不到提供者: {self.provider_id}",
@@ -143,11 +141,7 @@ class MemoryRetirementReviewer:
     ) -> str:
         """本次候选清单与输出要求。"""
         listing = self._build_listing(candidates, short_ids)
-        return (
-            "# 记忆清单\n\n"
-            f"{listing}\n\n"
-            "请按以上规则逐条裁决，仅输出 JSON。\n"
-        )
+        return f"# 记忆清单\n\n{listing}\n\n请按以上规则逐条裁决，仅输出 JSON。\n"
 
     def _build_listing(
         self,
@@ -162,9 +156,7 @@ class MemoryRetirementReviewer:
             time_text = ""
             if created_at and created_at > 0:
                 try:
-                    time_text = time.strftime(
-                        "%Y-%m-%d %H:%M", time.localtime(float(created_at))
-                    )
+                    time_text = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(created_at)))
                 except (ValueError, OSError, OverflowError):
                     time_text = ""
 
@@ -195,9 +187,7 @@ class MemoryRetirementReviewer:
         if not isinstance(raw_decisions, list):
             raise ValueError("审查返回缺少 decisions 列表")
 
-        short_id_map = {
-            str(short_ids[index]): str(mem.id) for index, mem in enumerate(candidates)
-        }
+        short_id_map = {str(short_ids[index]): str(mem.id) for index, mem in enumerate(candidates)}
         decisions: dict[str, str] = {}
         for item in raw_decisions:
             if not isinstance(item, dict):

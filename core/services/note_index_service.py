@@ -173,9 +173,7 @@ class NoteIndexService:
 
     # === 读 ===
 
-    def find_note(
-        self, note_id: int, domains: list[str] | None = None
-    ) -> tuple[str | None, dict | None]:
+    def find_note(self, note_id: int, domains: list[str] | None = None) -> tuple[str | None, dict | None]:
         """按 id 定位笔记。给 domains 时只查白名单内的域，hidden 域碰都不碰。"""
         if domains is not None:
             wanted = [str(name).strip().lower() for name in domains if str(name).strip()]

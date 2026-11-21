@@ -48,9 +48,7 @@ def test_invalid_entries_are_reported_not_stored():
 
 
 def test_hidden_domain_is_not_searchable_but_auto_and_manual_are():
-    matrix, _ = build_knowledge_matrix(
-        {"42": {"gi": "auto", "hsr": "manual", "zzz": "hidden"}}
-    )
+    matrix, _ = build_knowledge_matrix({"42": {"gi": "auto", "hsr": "manual", "zzz": "hidden"}})
     assert auto_domains_from(matrix, "42") == ["gi"]
     visible = visible_domains_from(matrix, "42")
     assert "zzz" not in visible
@@ -151,16 +149,12 @@ def test_normalize_groups_fills_missing_domains_and_rejects_bad_values():
         GroupKnowledgeAPI,
     )
 
-    table, error = GroupKnowledgeAPI.normalize_groups(
-        [{"group_id": "9", "modes": {"gi": "auto"}}]
-    )
+    table, error = GroupKnowledgeAPI.normalize_groups([{"group_id": "9", "modes": {"gi": "auto"}}])
     assert error == ""
     assert table["9"]["gi"] == "auto"
     assert table["9"]["zzz"] == "manual"
 
-    _, error = GroupKnowledgeAPI.normalize_groups(
-        [{"group_id": "9", "modes": {"gi": "visible"}}]
-    )
+    _, error = GroupKnowledgeAPI.normalize_groups([{"group_id": "9", "modes": {"gi": "visible"}}])
     assert "非法项" in error
 
     _, error = GroupKnowledgeAPI.normalize_groups([{"modes": {"gi": "auto"}}])

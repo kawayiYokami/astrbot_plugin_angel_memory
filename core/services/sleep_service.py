@@ -44,18 +44,14 @@ class DeepMindSleepService:
 
             cleanup_completed_at = time.time()
             deepmind.logger.debug("[睡眠] 阶段=后置维护 开始")
-            await self.maintenance_service.run_post_consolidate(
-                cleanup_completed_at=cleanup_completed_at
-            )
+            await self.maintenance_service.run_post_consolidate(cleanup_completed_at=cleanup_completed_at)
             deepmind.logger.debug("[睡眠] 阶段=后置维护 完成")
 
             await self._record_sleep_trace(recycle_result, start_time)
             return True
         except Exception as e:
             elapsed_time = time.time() - start_time
-            deepmind.logger.error(
-                f"记忆巩固失败（耗时 {elapsed_time:.2f} 秒）: {e}", exc_info=True
-            )
+            deepmind.logger.error(f"记忆巩固失败（耗时 {elapsed_time:.2f} 秒）: {e}", exc_info=True)
             return False
 
     async def _recycle_memories(self) -> dict[str, Any]:
@@ -75,8 +71,7 @@ class DeepMindSleepService:
         except RetirementReviewError as e:
             cost_ms = int((time.time() - review_start) * 1000)
             deepmind.logger.error(
-                f"[淘汰审查] 失败 候选数={len(candidates)} "
-                f"本次整批跳过，不删除任何记忆 耗时毫秒={cost_ms} 异常={e}",
+                f"[淘汰审查] 失败 候选数={len(candidates)} 本次整批跳过，不删除任何记忆 耗时毫秒={cost_ms} 异常={e}",
                 exc_info=True,
             )
             return {
@@ -92,12 +87,8 @@ class DeepMindSleepService:
                 "error": str(e),
             }
 
-        delete_ids, keep_ids, undecided = self._split_decisions(
-            candidates, outcome.decisions
-        )
-        result = await deepmind.memory_system.apply_retirement_decisions(
-            delete_ids, keep_ids
-        )
+        delete_ids, keep_ids, undecided = self._split_decisions(candidates, outcome.decisions)
+        result = await deepmind.memory_system.apply_retirement_decisions(delete_ids, keep_ids)
         cost_ms = int((time.time() - review_start) * 1000)
         deepmind.logger.info(
             f"[淘汰审查] 完成 候选数={len(candidates)} 判删={len(delete_ids)} "

@@ -16,6 +16,7 @@ import math
 _ASCII_TOKENS = 0.25
 _NON_ASCII_TOKENS = 0.48
 
+
 def count_tokens(text: str) -> int:
     """
     计算文本的 token 数量（基于字符规则估算）

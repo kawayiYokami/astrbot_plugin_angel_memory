@@ -15,12 +15,14 @@ from astrbot.api.web import error_response, json_response, request
 if TYPE_CHECKING:
     from ..core.plugin_context import PluginContext
 
+
 def _OK(data=None, message=""):
-    return json_response(
-    {"status": "ok", "message": message, "data": data}
-)
+    return json_response({"status": "ok", "message": message, "data": data})
+
+
 def _ERR(message, status_code=400):
     return error_response(message, status_code=status_code)
+
 
 DOMAIN_LABELS = {
     "gi": "原神",
@@ -56,9 +58,7 @@ class GroupKnowledgeAPI:
             )
         return _OK(
             {
-                "domains": [
-                    {"key": key, "label": label} for key, label in DOMAIN_LABELS.items()
-                ],
+                "domains": [{"key": key, "label": label} for key, label in DOMAIN_LABELS.items()],
                 "modes": ["auto", "manual", "hidden"],
                 "groups": payload,
             }
@@ -79,9 +79,7 @@ class GroupKnowledgeAPI:
             rows.setdefault(group_id, "")
 
         ordered = sorted(rows.items(), key=lambda item: (item[1] or "", item[0]))
-        return [
-            {"group_id": group_id, "group_name": name} for group_id, name in ordered
-        ]
+        return [{"group_id": group_id, "group_name": name} for group_id, name in ordered]
 
     # === 写 ===
 

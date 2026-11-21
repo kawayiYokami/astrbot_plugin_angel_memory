@@ -31,12 +31,12 @@ class SoulState:
     AXIS_MAX = 1.0
 
     # 弹性参数
-    ELASTICITY_FACTOR = 4.0   # 离中线越远，可移动幅度衰减越快
-    REGRESSION_FACTOR = 0.1   # 自然回归中线的力度
+    ELASTICITY_FACTOR = 4.0  # 离中线越远，可移动幅度衰减越快
+    REGRESSION_FACTOR = 0.1  # 自然回归中线的力度
 
     # 强度参数
-    REFLECT_STRENGTH = 1.0    # 主动反思强度
-    RESONATE_STRENGTH = 0.3   # 被动共鸣强度
+    REFLECT_STRENGTH = 1.0  # 主动反思强度
+    RESONATE_STRENGTH = 0.3  # 被动共鸣强度
 
     def __init__(self, config=None):
         """
@@ -83,9 +83,7 @@ class SoulState:
                 if target is None:
                     continue
                 current = self.axes[axis]
-                elasticity = math.exp(
-                    -self.ELASTICITY_FACTOR * abs(current - self.AXIS_MID)
-                )
+                elasticity = math.exp(-self.ELASTICITY_FACTOR * abs(current - self.AXIS_MID))
                 updated = current + (target - current) * strength * elasticity
                 updated += (self.AXIS_MID - updated) * self.REGRESSION_FACTOR
                 updated = self._clamp(updated)
@@ -97,8 +95,7 @@ class SoulState:
                 unknown = sorted(str(key) for key in targets if key not in self.AXES)
                 if unknown:
                     logger.warning(
-                        f"灵魂调整 [{mode}] 未命中任何情绪轴，已跳过；"
-                        f"收到的键={unknown}，可用键={self.AXES}"
+                        f"灵魂调整 [{mode}] 未命中任何情绪轴，已跳过；收到的键={unknown}，可用键={self.AXES}"
                     )
                 else:
                     logger.warning(f"灵魂调整 [{mode}] 所有读数均无效，已跳过")

@@ -85,10 +85,16 @@ class NotesAPI:
         domain: str = "",
     ) -> dict[str, Any]:
         raw_dir = self._get_raw_dir()
-        abs_path = (raw_dir / source_file_path.replace("/", os.sep))
-        meta = self._file_meta(abs_path) if abs_path.exists() else {
-            "total_lines": 0, "heading_h1": "", "updated_at": 0,
-        }
+        abs_path = raw_dir / source_file_path.replace("/", os.sep)
+        meta = (
+            self._file_meta(abs_path)
+            if abs_path.exists()
+            else {
+                "total_lines": 0,
+                "heading_h1": "",
+                "updated_at": 0,
+            }
+        )
         return {
             "source_id": "",
             "note_id": int(note_id),
@@ -118,8 +124,9 @@ class NotesAPI:
 
         note_index = self._note_index()
         if note_index is None:
-            return jsonify({"items": [], "total": 0, "page": page, "page_size": page_size,
-                            "error": "笔记索引服务不可用"}), 503
+            return jsonify(
+                {"items": [], "total": 0, "page": page, "page_size": page_size, "error": "笔记索引服务不可用"}
+            ), 503
 
         # 有关键词：走 p-memory 索引，按文件聚合后分页
         if keyword.strip():
@@ -149,27 +156,25 @@ class NotesAPI:
                     }
                 files = list(grouped.values())
                 total = len(files)
-                paged = files[offset:offset + page_size]
+                paged = files[offset : offset + page_size]
                 items = [
-                    self._item_for_file(
-                        f["path"], f["note_id"], f["preview"], f["score"], f["domain"]
-                    )
-                    for f in paged
+                    self._item_for_file(f["path"], f["note_id"], f["preview"], f["score"], f["domain"]) for f in paged
                 ]
-                return jsonify({
-                    "items": items,
-                    "total": total,
-                    "page": page,
-                    "page_size": page_size,
-                    "total_pages": math.ceil(total / page_size) if total > 0 else 1,
-                    "search_mode": "note_index",
-                    "has_more": False,
-                    "total_is_estimated": False,
-                })
+                return jsonify(
+                    {
+                        "items": items,
+                        "total": total,
+                        "page": page,
+                        "page_size": page_size,
+                        "total_pages": math.ceil(total / page_size) if total > 0 else 1,
+                        "search_mode": "note_index",
+                        "has_more": False,
+                        "total_is_estimated": False,
+                    }
+                )
             except Exception as e:
                 logger.warning(f"笔记索引搜索失败: {e}")
-                return jsonify({"items": [], "total": 0, "page": page,
-                                "page_size": page_size, "error": str(e)}), 500
+                return jsonify({"items": [], "total": 0, "page": page, "page_size": page_size, "error": str(e)}), 500
 
         # 无关键词：漫步 raw/ 文件，尽力补 note_id
         raw_dir = self._get_raw_dir()
@@ -184,25 +189,25 @@ class NotesAPI:
                     all_files.append(rel_path)
         all_files.sort()
         total = len(all_files)
-        paged_paths = all_files[offset:offset + page_size]
+        paged_paths = all_files[offset : offset + page_size]
         items = []
         for idx, rel_path in enumerate(paged_paths):
             abs_path = raw_dir / rel_path.replace("/", os.sep)
-            note_id = await asyncio.to_thread(
-                self._resolve_note_id, note_index, rel_path, abs_path
-            )
+            note_id = await asyncio.to_thread(self._resolve_note_id, note_index, rel_path, abs_path)
             # 尚未索引的文件给唯一的负数占位，保证表格 row-key 不重复；
             # 这类 id 调 recall 会 404，索引追平后自动变成正数实 id。
             if note_id is None:
                 note_id = -(offset + idx + 1)
             items.append(self._item_for_file(rel_path, int(note_id)))
-        return jsonify({
-            "items": items,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": math.ceil(total / page_size) if total > 0 else 1,
-        })
+        return jsonify(
+            {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": math.ceil(total / page_size) if total > 0 else 1,
+            }
+        )
 
     async def recall_note(self):
         """模拟 angel_note_read：兼容 note_id / note_short_id 两种参数名。"""
@@ -247,17 +252,19 @@ class NotesAPI:
 
         actual_start = min(max(1, offset), total_lines) if total_lines > 0 else 0
         actual_end = min(actual_start + max(1, limit) - 1, total_lines) if total_lines > 0 else 0
-        content = "\n".join(lines[actual_start - 1:actual_end]) if total_lines > 0 else ""
+        content = "\n".join(lines[actual_start - 1 : actual_end]) if total_lines > 0 else ""
 
-        return jsonify({
-            "content": content,
-            "note_id": note_id,
-            "note_short_id": note_id,
-            "source_file_path": rel_path,
-            "total_lines": total_lines,
-            "actual_start_line": actual_start,
-            "actual_end_line": actual_end,
-        })
+        return jsonify(
+            {
+                "content": content,
+                "note_id": note_id,
+                "note_short_id": note_id,
+                "source_file_path": rel_path,
+                "total_lines": total_lines,
+                "actual_start_line": actual_start,
+                "actual_end_line": actual_end,
+            }
+        )
 
     async def list_note_files(self):
         """列出笔记文件"""
@@ -310,23 +317,23 @@ class NotesAPI:
             return jsonify({"error": "笔记索引服务不可用"}), 503
 
         try:
-            results = await note_index.search_notes_async(
-                query=query, max_results=limit, domains=None
-            )
+            results = await note_index.search_notes_async(query=query, max_results=limit, domains=None)
             items = []
             for r in results:
                 metadata = r.get("metadata", {}) or {}
-                items.append({
-                    "source_file_path": metadata.get("source_file_path", ""),
-                    "file_id": "",
-                    "note_id": int(metadata.get("note_id", 0) or 0),
-                    "chunk_index": 0,
-                    "line_start": int(metadata.get("line_start", 0) or 0),
-                    "line_end": int(metadata.get("line_end", 0) or 0),
-                    "content": str(r.get("content") or ""),
-                    "score": float(r.get("similarity", 0.0) or 0.0),
-                    "domain": str(metadata.get("domain") or ""),
-                })
+                items.append(
+                    {
+                        "source_file_path": metadata.get("source_file_path", ""),
+                        "file_id": "",
+                        "note_id": int(metadata.get("note_id", 0) or 0),
+                        "chunk_index": 0,
+                        "line_start": int(metadata.get("line_start", 0) or 0),
+                        "line_end": int(metadata.get("line_end", 0) or 0),
+                        "content": str(r.get("content") or ""),
+                        "score": float(r.get("similarity", 0.0) or 0.0),
+                        "domain": str(metadata.get("domain") or ""),
+                    }
+                )
             return jsonify({"items": items, "total": len(items), "query": query})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -335,21 +342,25 @@ class NotesAPI:
         """索引统计（走 note_index，旧切片库已下线）。"""
         note_index = self._note_index()
         if note_index is None:
-            return jsonify({
-                "search_engine_available": False,
-                "chunk_store_available": False,
-                "chunk_count": 0,
-                "file_count": 0,
-            })
+            return jsonify(
+                {
+                    "search_engine_available": False,
+                    "chunk_store_available": False,
+                    "chunk_count": 0,
+                    "file_count": 0,
+                }
+            )
         try:
             status = note_index.get_status()
         except Exception:
             status = {}
-        return jsonify({
-            "search_engine_available": True,
-            "chunk_store_available": False,
-            "chunk_count": 0,
-            "file_count": int(status.get("tracked_files", 0) or 0),
-            "domains": status.get("domains", []),
-            "raw_dir": str(status.get("raw_dir", "")),
-        })
+        return jsonify(
+            {
+                "search_engine_available": True,
+                "chunk_store_available": False,
+                "chunk_count": 0,
+                "file_count": int(status.get("tracked_files", 0) or 0),
+                "domains": status.get("domains", []),
+                "raw_dir": str(status.get("raw_dir", "")),
+            }
+        )

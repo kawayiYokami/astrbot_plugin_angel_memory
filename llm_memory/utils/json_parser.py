@@ -106,21 +106,15 @@ class JsonParser:
             if isinstance(feedback_data, str):
                 try:
                     feedback_data = json.loads(feedback_data)
-                    self.logger.debug(
-                        "JsonParser: feedback_data 是字符串，已重新解析为字典"
-                    )
+                    self.logger.debug("JsonParser: feedback_data 是字符串，已重新解析为字典")
                 except json.JSONDecodeError:
-                    self.logger.warning(
-                        "JsonParser: feedback_data 是字符串但无法解析为 JSON"
-                    )
+                    self.logger.warning("JsonParser: feedback_data 是字符串但无法解析为 JSON")
                     return None
 
             return feedback_data
         else:
             # 如果没有 feedback_data 包装，直接返回整个 JSON
-            self.logger.debug(
-                "JsonParser: JSON 中未找到 'feedback_data' 字段，返回整个 JSON"
-            )
+            self.logger.debug("JsonParser: JSON 中未找到 'feedback_data' 字段，返回整个 JSON")
             return json_data
 
     def extract_json(
@@ -151,9 +145,7 @@ class JsonParser:
         :return: 最符合条件的JSON对象（字典），如果找不到则返回None。
         """
         if not isinstance(text, str):
-            self.logger.warning(
-                f"JsonParser: 输入不是字符串，而是 {type(text)} 类型，无法解析"
-            )
+            self.logger.warning(f"JsonParser: 输入不是字符串，而是 {type(text)} 类型，无法解析")
             return None
 
         if not text.strip():
@@ -190,9 +182,7 @@ class JsonParser:
 
                 # 硬性条件：检查必须字段
                 if required_fields and not all(field in parsed_json for field in required_fields):
-                    self.logger.debug(
-                        f"候选JSON缺少必须字段，跳过: {candidate_str[:100]}..."
-                    )
+                    self.logger.debug(f"候选JSON缺少必须字段，跳过: {candidate_str[:100]}...")
                     continue
 
                 # 计算分数
@@ -215,7 +205,5 @@ class JsonParser:
         qualified_jsons.sort(key=lambda x: x["score"])
         best_json_item = qualified_jsons[-1]
 
-        self.logger.debug(
-            f"JsonParser: 提取成功，选择了得分最高的JSON（得分: {best_json_item['score']}）。"
-        )
+        self.logger.debug(f"JsonParser: 提取成功，选择了得分最高的JSON（得分: {best_json_item['score']}）。")
         return best_json_item["json"]

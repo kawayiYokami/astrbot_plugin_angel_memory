@@ -87,13 +87,9 @@ class MemorySqlManager:
                 """
             )
             # 兼容迁移：若旧表 memory_tags 存在，则迁移到 global_tags
-            has_legacy = cur.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_tags'"
-            ).fetchone()
+            has_legacy = cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_tags'").fetchone()
             if has_legacy:
-                cur.execute(
-                    "INSERT OR IGNORE INTO global_tags(name) SELECT name FROM memory_tags"
-                )
+                cur.execute("INSERT OR IGNORE INTO global_tags(name) SELECT name FROM memory_tags")
             conn.commit()
 
     # ===== 全局短 ID 注册表（内存态） =====
@@ -105,9 +101,7 @@ class MemorySqlManager:
         self._next_short_id: int = 10000
 
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id FROM memory_records ORDER BY created_at ASC"
-            ).fetchall()
+            rows = conn.execute("SELECT id FROM memory_records ORDER BY created_at ASC").fetchall()
 
         for row in rows:
             full_id = str(row["id"]).strip()
@@ -117,10 +111,7 @@ class MemorySqlManager:
                 self._full_to_short[full_id] = short_id
                 self._next_short_id += 1
 
-        self.logger.debug(
-            f"[短ID注册表] 初始化完成 记忆数={len(self._full_to_short)} "
-            f"下一个短ID={self._next_short_id}"
-        )
+        self.logger.debug(f"[短ID注册表] 初始化完成 记忆数={len(self._full_to_short)} 下一个短ID={self._next_short_id}")
 
     def register_short_id(self, full_id: str) -> str:
         """为新记忆分配短 ID 并注册。如果已存在则直接返回。"""
@@ -190,8 +181,7 @@ class MemorySqlManager:
             if name and name not in names:
                 names.append(name)
             conn.execute(
-                "UPDATE user_ledger SET user_names = ?, last_seen_at = ? "
-                "WHERE platform = ? AND user_id = ?",
+                "UPDATE user_ledger SET user_names = ?, last_seen_at = ? WHERE platform = ? AND user_id = ?",
                 (json.dumps(names, ensure_ascii=False), now, plat, uid),
             )
 
@@ -256,8 +246,7 @@ class MemorySqlManager:
             ).fetchone()
             if row is None:
                 conn.execute(
-                    "INSERT INTO group_ledger (group_id, group_name, first_seen_at, last_seen_at) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO group_ledger (group_id, group_name, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
                     (gid, gname, now, now),
                 )
                 return
@@ -311,34 +300,37 @@ class MemorySqlManager:
                 names = []
             if not isinstance(names, list):
                 names = []
-            users.append({
-                "platform": platform,
-                "user_id": user_id,
-                "nickname": names[-1] if names else "",
-                "nicknames": names,
-                "first_seen_at": row["first_seen_at"],
-                "last_seen_at": row["last_seen_at"],
-            })
+            users.append(
+                {
+                    "platform": platform,
+                    "user_id": user_id,
+                    "nickname": names[-1] if names else "",
+                    "nicknames": names,
+                    "first_seen_at": row["first_seen_at"],
+                    "last_seen_at": row["last_seen_at"],
+                }
+            )
         return users
 
     def list_ledger_groups(self) -> list[dict[str, Any]]:
         """返回账本全部群，最近活跃在前。"""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT group_id, group_name, first_seen_at, last_seen_at "
-                "FROM group_ledger ORDER BY last_seen_at DESC"
+                "SELECT group_id, group_name, first_seen_at, last_seen_at FROM group_ledger ORDER BY last_seen_at DESC"
             ).fetchall()
         groups: list[dict[str, Any]] = []
         for row in rows:
             group_id = str(row["group_id"] or "").strip()
             if not group_id:
                 continue
-            groups.append({
-                "group_id": group_id,
-                "group_name": str(row["group_name"] or "").strip(),
-                "first_seen_at": row["first_seen_at"],
-                "last_seen_at": row["last_seen_at"],
-            })
+            groups.append(
+                {
+                    "group_id": group_id,
+                    "group_name": str(row["group_name"] or "").strip(),
+                    "first_seen_at": row["first_seen_at"],
+                    "last_seen_at": row["last_seen_at"],
+                }
+            )
         return groups
 
     # ===== 旧库迁移源（只读） =====
@@ -358,12 +350,8 @@ class MemorySqlManager:
                 ORDER BY created_at DESC
                 """
             ).fetchall()
-            tags_rows = conn.execute(
-                "SELECT id, name FROM global_tags ORDER BY id ASC"
-            ).fetchall()
-            rel_rows = conn.execute(
-                "SELECT memory_id, tag_id FROM memory_tag_rel"
-            ).fetchall()
+            tags_rows = conn.execute("SELECT id, name FROM global_tags ORDER BY id ASC").fetchall()
+            rel_rows = conn.execute("SELECT memory_id, tag_id FROM memory_tag_rel").fetchall()
 
         records = [dict(row) for row in records_rows]
         tags = [dict(row) for row in tags_rows]

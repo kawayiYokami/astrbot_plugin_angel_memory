@@ -233,9 +233,7 @@ def test_model_dependent_steps_skipped_without_provider():
     deepmind._record_reflection_turn = _fake_buffer
     deepmind._trigger_reflection_if_needed = _fake_trigger
 
-    asyncio.run(
-        deepmind.async_analyze_and_update_memory(event, SimpleNamespace(completion_text=""))
-    )
+    asyncio.run(deepmind.async_analyze_and_update_memory(event, SimpleNamespace(completion_text="")))
     assert not buffered, "没配模型时不该进入记忆整理链"
 
 
@@ -266,9 +264,7 @@ def test_behaviour_unchanged_with_provider():
     deepmind._trigger_reflection_if_needed = _fake_trigger
     deepmind._ensure_reflection_tick_task = _fake_tick_task
 
-    asyncio.run(
-        deepmind.async_analyze_and_update_memory(event, SimpleNamespace(completion_text=""))
-    )
+    asyncio.run(deepmind.async_analyze_and_update_memory(event, SimpleNamespace(completion_text="")))
     assert buffered == ["buffer", "trigger"], "配了模型时整理链照常执行"
 
 

@@ -202,10 +202,12 @@ class ProfileAPI:
             import asyncio
 
             records = await asyncio.to_thread(store.list_records, None, all_scopes=True)
-            return jsonify({
-                "user_id": user_id,
-                "memories": user_profile_memories(records, user_id),
-            })
+            return jsonify(
+                {
+                    "user_id": user_id,
+                    "memories": user_profile_memories(records, user_id),
+                }
+            )
         except Exception as e:
             logger.error(f"[WebUI] 用户画像详情查询失败: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500

@@ -33,11 +33,7 @@ def _ok(text: str, errors: list[str] | None = None):
 def _format_error(exc: BaseException) -> str:
     """异常带上出错位置，排障时能直接定位。"""
     text = f"{type(exc).__name__}: {exc}"
-    lines = [
-        line.strip()
-        for line in traceback.format_exc().splitlines()
-        if line.strip().startswith("File ")
-    ]
+    lines = [line.strip() for line in traceback.format_exc().splitlines() if line.strip().startswith("File ")]
     return f"{text}（{lines[-1]}）" if lines else text
 
 
@@ -116,9 +112,7 @@ class ToolTestAPI:
 
         return _ok(text, errors)
 
-    async def _inject_preview(
-        self, deepmind, event: PreviewEvent, retrieval: dict[str, Any], query: str = ""
-    ) -> str:
+    async def _inject_preview(self, deepmind, event: PreviewEvent, retrieval: dict[str, Any], query: str = "") -> str:
         """跑真实注入流程，返回最终会交给模型的那段上下文。"""
         from astrbot.api.provider import ProviderRequest
 

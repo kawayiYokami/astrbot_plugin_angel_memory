@@ -226,9 +226,7 @@ async def test_close_interrupts_real_vector_sync():
     kb = pm._kb
     space_id = pm._space_id
     sync_thread = threading.Thread(
-        target=lambda: kb.embeddings.sync(
-            space_id, batch=1, namespace=memory_namespace()
-        ),
+        target=lambda: kb.embeddings.sync(space_id, batch=1, namespace=memory_namespace()),
         daemon=True,
         name="pmemory-sync-test",
     )
@@ -305,9 +303,7 @@ async def test_configure_does_not_block_event_loop():
     try:
         # 第二次 configure：内部先 close，正是以前会冻住循环的那条路径。
         # 加 wait_for：真退化成同步 close 时这里会死锁，让它明确失败而不是挂住。
-        await asyncio.wait_for(
-            pm.configure(root, None, provider, None, None), timeout=10
-        )
+        await asyncio.wait_for(pm.configure(root, None, provider, None, None), timeout=10)
     finally:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

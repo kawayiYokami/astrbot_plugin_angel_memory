@@ -22,9 +22,7 @@ def test_part_object_text_is_picked():
 
 def test_dict_and_object_forms_agree():
     """同一条消息两种形态必须归一到同一个结果，否则配对会误判不一致。"""
-    assert plain([TextPart(text="同一句话")]) == plain(
-        [{"type": "text", "text": "同一句话"}]
-    )
+    assert plain([TextPart(text="同一句话")]) == plain([{"type": "text", "text": "同一句话"}])
 
 
 def test_mixed_forms_are_joined_in_order():

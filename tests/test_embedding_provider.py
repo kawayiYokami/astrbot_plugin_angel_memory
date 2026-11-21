@@ -190,6 +190,7 @@ class FlakyClosedClientEmbeddingProvider(OpenAIStyleEmbeddingProvider):
 
 def test_api_embedding_provider_rejects_short_batch_results():
     """嵌入提供商返回数量不足时，应抛出数量不匹配异常。"""
+
     async def run():
         """运行异步测试逻辑。"""
         provider = APIEmbeddingProvider(ShortEmbeddingProvider(), "short_provider")
@@ -208,6 +209,7 @@ def test_api_embedding_provider_rejects_short_batch_results():
 
 def test_api_embedding_provider_refreshes_provider_reference_before_batch_request():
     """批量请求前应刷新 provider 引用。"""
+
     async def run():
         """运行异步测试逻辑。"""
         replacement = MetaEmbeddingProvider({"model": "BAAI/bge-m3"})
@@ -229,6 +231,7 @@ def test_api_embedding_provider_refreshes_provider_reference_before_batch_reques
 
 def test_api_embedding_provider_uses_one_provider_reference_per_batch_attempt():
     """每个批次尝试应使用同一个 provider 引用。"""
+
     async def run():
         """运行异步测试逻辑。"""
         first = RecordingEmbeddingProvider()
@@ -256,6 +259,7 @@ def test_api_embedding_provider_uses_one_provider_reference_per_batch_attempt():
 
 def test_api_embedding_provider_rebuilds_closed_openai_client_before_request():
     """上游 client 已关闭时，应在请求前重建。"""
+
     async def run():
         """运行异步测试逻辑。"""
         upstream = OpenAIStyleEmbeddingProvider()
@@ -274,6 +278,7 @@ def test_api_embedding_provider_rebuilds_closed_openai_client_before_request():
 
 def test_api_embedding_provider_rebuilds_and_retries_after_closed_client_error():
     """client 关闭错误后应重建并重试成功。"""
+
     async def run():
         """运行异步测试逻辑。"""
         upstream = FlakyClosedClientEmbeddingProvider()
@@ -347,6 +352,7 @@ def test_api_embedding_provider_exposes_clean_model_name_from_nested_meta():
 
 def test_api_embedding_provider_expands_aggregated_embedding():
     """聚合嵌入结果应扩展为批次内所有文本的向量。"""
+
     async def run():
         """运行异步测试逻辑。"""
         provider = APIEmbeddingProvider(AggregatingEmbeddingProvider(), "aggregating_provider")
@@ -373,22 +379,16 @@ def test_is_batch_too_large_error_detects_dashscope_batch_limit():
 
 def test_is_rate_limit_error_detects_http_429_and_throttling():
     """应能识别 HTTP 429 与限流文本错误。"""
+
     class _RateLimitError(Exception):
         status_code = 429
 
     assert APIEmbeddingProvider._is_rate_limit_error(_RateLimitError("rate limited")) is True
     assert (
-        APIEmbeddingProvider._is_rate_limit_error(
-            Exception("Throttling.RateQuota - Requests rate limit exceeded")
-        )
+        APIEmbeddingProvider._is_rate_limit_error(Exception("Throttling.RateQuota - Requests rate limit exceeded"))
         is True
     )
-    assert (
-        APIEmbeddingProvider._is_rate_limit_error(
-            Exception("some other invalid parameter")
-        )
-        is False
-    )
+    assert APIEmbeddingProvider._is_rate_limit_error(Exception("some other invalid parameter")) is False
 
 
 def test_api_embedding_provider_retries_single_batch_on_rate_limit():

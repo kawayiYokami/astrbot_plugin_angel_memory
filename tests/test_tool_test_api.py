@@ -143,11 +143,7 @@ class _FakeSessionMemory:
     def prune_departed_from_session(self, session_id, alive_texts):
         alive = {str(text).strip() for text in (alive_texts or [])}
         items = self.store.get(session_id, [])
-        departed = [
-            item
-            for item in items
-            if item.recalled_message_text and item.recalled_message_text not in alive
-        ]
+        departed = [item for item in items if item.recalled_message_text and item.recalled_message_text not in alive]
         departed_ids = {id(item) for item in departed}
         self.store[session_id] = [item for item in items if id(item) not in departed_ids]
         return departed
@@ -181,10 +177,7 @@ class _FakeInjectionService:
         if self.boom:
             raise RuntimeError("注入炸了")
         parts = ["<instruction>固定说明</instruction>"]
-        memories = [
-            item.memory
-            for item in self.deepmind.session_memory_manager.get_session_memories(session_id)
-        ]
+        memories = [item.memory for item in self.deepmind.session_memory_manager.get_session_memories(session_id)]
         memory_text = self.deepmind.memory_injector.format_session_memories_for_prompt(memories)
         if memory_text:
             parts.append(f"<memories>\n{memory_text}\n</memories>")
@@ -194,9 +187,7 @@ class _FakeInjectionService:
         if not isinstance(contexts, list):
             contexts = []
             request.contexts = contexts
-        contexts.append(
-            {"role": "user", "content": "\n\n".join(parts), "_no_save": True}
-        )
+        contexts.append({"role": "user", "content": "\n\n".join(parts), "_no_save": True})
 
 
 class _FakeDeepmind:

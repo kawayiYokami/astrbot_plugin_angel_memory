@@ -67,9 +67,7 @@ class LegacyMemoryMigration:
         self._task: asyncio.Task | None = None
         # 自管单线程 executor：asyncio.to_thread 走默认池，拿不到底层线程，
         # 取消协程时写库线程仍在跑。自管才能保证 shutdown 等到它真正结束。
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="legacy-migration"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="legacy-migration")
         self._migrate_future = None
 
     def _already_done(self) -> bool:
@@ -97,9 +95,7 @@ class LegacyMemoryMigration:
             "done_at": int(time.time()),
         }
         try:
-            self._state_file.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            self._state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             self.logger.warning(f"[记忆迁移] 写入完成标记失败 错误={e}")
 
@@ -129,25 +125,18 @@ class LegacyMemoryMigration:
             if sql_records:
                 records, tags, source_text = list(sql_records), sql_tags, "旧SQL"
             else:
-                backup_records, backup_tags, backup_file = await asyncio.to_thread(
-                    self._read_latest_backup
-                )
+                backup_records, backup_tags, backup_file = await asyncio.to_thread(self._read_latest_backup)
                 records = list(backup_records)
                 tags = backup_tags
                 source_text = f"JSON备份({backup_file})" if backup_records else "无"
                 if sql_error and backup_records:
-                    self.logger.warning(
-                        f"[记忆迁移] 旧SQL不可用，改用 JSON 备份 错误={sql_error}"
-                    )
+                    self.logger.warning(f"[记忆迁移] 旧SQL不可用，改用 JSON 备份 错误={sql_error}")
 
             if not records:
                 if sql_error:
                     # 读失败不等于没数据：这时候写完成标记会让旧记忆永久迁不进来，
                     # 所以只记失败、不写标记，下次启动继续尝试。
-                    self.logger.warning(
-                        f"[记忆迁移] 失败 旧SQL读取失败且没有可用备份，本次不迁移 "
-                        f"错误={sql_error}"
-                    )
+                    self.logger.warning(f"[记忆迁移] 失败 旧SQL读取失败且没有可用备份，本次不迁移 错误={sql_error}")
                     return {"status": "failed", "written": 0, "source": source_text}
                 self.logger.info("[记忆迁移] 跳过 旧库与备份都没有记忆")
                 self._mark_done(0, source_text)
@@ -155,47 +144,37 @@ class LegacyMemoryMigration:
 
             # 第一步：导出成 JSON，落盘才算数
             try:
-                export_path = await asyncio.to_thread(
-                    self._export_to_json, records, tags
-                )
+                export_path = await asyncio.to_thread(self._export_to_json, records, tags)
             except Exception as e:
                 cost_ms = int((time.time() - started) * 1000)
                 self.logger.error(
-                    f"[记忆迁移] 导出失败 来源={source_text} 候选={len(records)} "
-                    f"耗时毫秒={cost_ms} 错误={e}",
+                    f"[记忆迁移] 导出失败 来源={source_text} 候选={len(records)} 耗时毫秒={cost_ms} 错误={e}",
                     exc_info=True,
                 )
                 return {"status": "failed", "written": 0, "source": source_text}
 
             # 第二步：只从这份导出文件导入
             try:
-                import_records, import_tags = await asyncio.to_thread(
-                    self._read_export_file, export_path
-                )
+                import_records, import_tags = await asyncio.to_thread(self._read_export_file, export_path)
             except Exception as e:
                 cost_ms = int((time.time() - started) * 1000)
                 self.logger.error(
-                    f"[记忆迁移] 读取导出文件失败 文件={export_path.name} "
-                    f"耗时毫秒={cost_ms} 错误={e}",
+                    f"[记忆迁移] 读取导出文件失败 文件={export_path.name} 耗时毫秒={cost_ms} 错误={e}",
                     exc_info=True,
                 )
                 return {"status": "failed", "written": 0, "source": source_text}
 
             self.logger.debug(
-                f"[记忆迁移] 开始 来源={source_text} 导出={export_path.name} "
-                f"待迁移候选={len(import_records)}"
+                f"[记忆迁移] 开始 来源={source_text} 导出={export_path.name} 待迁移候选={len(import_records)}"
             )
             try:
-                future = self._executor.submit(
-                    self._migrate, import_records, import_tags
-                )
+                future = self._executor.submit(self._migrate, import_records, import_tags)
                 self._migrate_future = future
                 result = await asyncio.wrap_future(future)
             except Exception as e:
                 cost_ms = int((time.time() - started) * 1000)
                 self.logger.error(
-                    f"[记忆迁移] 失败 来源={source_text} 候选={len(import_records)} "
-                    f"耗时毫秒={cost_ms} 错误={e}",
+                    f"[记忆迁移] 失败 来源={source_text} 候选={len(import_records)} 耗时毫秒={cost_ms} 错误={e}",
                     exc_info=True,
                 )
                 return {"status": "failed", "written": 0, "source": source_text}
@@ -244,10 +223,7 @@ class LegacyMemoryMigration:
                 }
             if not written:
                 self._mark_done(0, source_text)
-                self.logger.info(
-                    f"[记忆迁移] 跳过 导出与新库已对齐 来源={source_text} "
-                    f"已存在={skipped}"
-                )
+                self.logger.info(f"[记忆迁移] 跳过 导出与新库已对齐 来源={source_text} 已存在={skipped}")
                 return {
                     "status": "skipped",
                     "written": 0,
@@ -272,9 +248,7 @@ class LegacyMemoryMigration:
 
     # === 导出 / 导入 ===
 
-    def _export_to_json(
-        self, records: list[dict], tag_index: dict[str, list[str]]
-    ) -> Path:
+    def _export_to_json(self, records: list[dict], tag_index: dict[str, list[str]]) -> Path:
         """合并后的记录连同标签一起落盘，返回导出文件路径。"""
         export_records: list[dict] = []
         for row in records:
@@ -302,9 +276,7 @@ class LegacyMemoryMigration:
     def _read_export_file(self, path: Path) -> tuple[list[dict], dict[str, list[str]]]:
         with Path(path).open("r", encoding="utf-8") as f:
             snapshot = json.load(f)
-        if not isinstance(snapshot, dict) or not isinstance(
-            snapshot.get("records"), list
-        ):
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("records"), list):
             raise ValueError("导出文件结构不符")
         records = [row for row in snapshot["records"] if isinstance(row, dict)]
         return records, self._tag_index(snapshot)
@@ -367,9 +339,7 @@ class LegacyMemoryMigration:
                 continue
             content_key = (str(row.get("memory_scope") or "public"), judgment)
             if legacy_id in existing or content_key in existing_content:
-                self.logger.debug(
-                    f"[记忆迁移] 跳过重复 legacy_id={legacy_id} judgment=「{judgment[:20]}」"
-                )
+                self.logger.debug(f"[记忆迁移] 跳过重复 legacy_id={legacy_id} judgment=「{judgment[:20]}」")
                 skipped += 1
                 continue
 
@@ -382,9 +352,7 @@ class LegacyMemoryMigration:
                 useful_score = float(row.get("useful_score") or 0.0)
             except (ValueError, TypeError, OverflowError) as e:
                 failed_data += 1
-                self.logger.warning(
-                    f"[记忆迁移] 字段格式非法，跳过 legacy_id={legacy_id} 错误={e}"
-                )
+                self.logger.warning(f"[记忆迁移] 字段格式非法，跳过 legacy_id={legacy_id} 错误={e}")
                 continue
 
             try:
@@ -406,9 +374,7 @@ class LegacyMemoryMigration:
                 )
             except Exception as e:
                 failed_env += 1
-                self.logger.warning(
-                    f"[记忆迁移] 写入失败 legacy_id={legacy_id} 错误={e}"
-                )
+                self.logger.warning(f"[记忆迁移] 写入失败 legacy_id={legacy_id} 错误={e}")
                 continue
             existing.add(legacy_id)
             existing_content.add(content_key)
@@ -497,9 +463,7 @@ class LegacyMemoryMigration:
                     # 超时后必须报出来，否则后面的 shutdown(wait=True) 会等很久。
                     # 两个类型都接：Python 3.11 之前 concurrent.futures.TimeoutError
                     # 还不是内建 TimeoutError 的别名。
-                    self.logger.warning(
-                        "[旧记忆迁移] 写库线程 30 秒未结束，卸载将等待它退出（可能较久）"
-                    )
+                    self.logger.warning("[旧记忆迁移] 写库线程 30 秒未结束，卸载将等待它退出（可能较久）")
                 except Exception as e:
                     # 迁移线程已抛错结束，线程本身已经退了；记一条即可，
                     # 不要让它冒到 shutdown() 外面——那会跳过下面的 executor 关闭。
@@ -507,13 +471,9 @@ class LegacyMemoryMigration:
         finally:
             # wait=True 无界等会把卸载挂死，给个上限：超时就放弃，线程随进程退出。
             try:
-                await asyncio.wait_for(
-                    asyncio.to_thread(self._executor.shutdown, True), timeout=30
-                )
+                await asyncio.wait_for(asyncio.to_thread(self._executor.shutdown, True), timeout=30)
             except TimeoutError:
-                self.logger.error(
-                    "[旧记忆迁移] 写库线程 30 秒仍未退出，放弃等待，随进程退出"
-                )
+                self.logger.error("[旧记忆迁移] 写库线程 30 秒仍未退出，放弃等待，随进程退出")
 
     def stop(self) -> None:
         """同步版：只发取消信号。关闭流程请用 shutdown()。"""

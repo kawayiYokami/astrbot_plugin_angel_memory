@@ -19,10 +19,11 @@ if TYPE_CHECKING:
 # schema type -> 校验/转换规则；bool 必须先于 int 判断（bool 是 int 子类）
 _SCHEMA_TYPES = {"string", "text", "int", "float", "bool", "list", "object"}
 
+
 def _OK(data=None, message=""):
-    return json_response(
-    {"status": "ok", "message": message, "data": data}
-)
+    return json_response({"status": "ok", "message": message, "data": data})
+
+
 def _ERR(message, status_code=400):
     return error_response(message, status_code=status_code)
 

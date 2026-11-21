@@ -15,6 +15,7 @@ class _Provider:
     def __init__(self, provider_id, supports_rerank=False):
         self._id = provider_id
         if supports_rerank:
+
             def rerank(*args, **kwargs):
                 return []
 
@@ -40,9 +41,7 @@ class _Host:
 
 def _handler(providers, embedding=()):
     handler = api.PluginConfigAPI.__new__(api.PluginConfigAPI)
-    handler._ctx = SimpleNamespace(
-        astrbot_context=_Host(providers, embedding), config={}
-    )
+    handler._ctx = SimpleNamespace(astrbot_context=_Host(providers, embedding), config={})
     handler._plugin = None
     handler._config = {}
     handler._schema = {}
@@ -97,9 +96,7 @@ def test_rerank_candidates_survive_host_without_rerank_getter():
 
 def test_embedding_candidates_still_come_from_embedding_getter():
     """嵌入候选仍走 get_all_embedding_providers，不被本次改动影响。"""
-    providers = _providers_payload(
-        _handler([_Provider("chat-a")], embedding=[_Provider("bge-m3")])
-    )
+    providers = _providers_payload(_handler([_Provider("chat-a")], embedding=[_Provider("bge-m3")]))
 
     assert providers["embedding"] == ["bge-m3"]
     assert providers["rerank"] == []

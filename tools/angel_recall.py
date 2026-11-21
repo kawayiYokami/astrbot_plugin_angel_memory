@@ -81,9 +81,7 @@ class CoreMemoryRecallTool(FunctionTool):
                         mem_id = str(getattr(mem, "id", "") or "").strip()
                         if mem_id:
                             short_id_registry.register_short_id(mem_id)
-                memory_text = MemoryFormatter.format_session_memories(
-                    all_active, short_id_registry=short_id_registry
-                )
+                memory_text = MemoryFormatter.format_session_memories(all_active, short_id_registry=short_id_registry)
                 parts.append(f"[记忆检索结果 ({len(all_active)}条)]\n{memory_text}")
             else:
                 parts.append("[记忆检索结果]\n无相关记忆。")
@@ -97,9 +95,7 @@ class CoreMemoryRecallTool(FunctionTool):
             if note_service:
                 visible = plugin_context.visible_domains(self._group_id(event))
                 if visible:
-                    note_results = await note_service.search_notes_async(
-                        query=query, max_results=50, domains=visible
-                    )
+                    note_results = await note_service.search_notes_async(query=query, max_results=50, domains=visible)
                 else:
                     note_results = []
                 # 精准过滤：content 必须包含原始查询词
@@ -121,8 +117,7 @@ class CoreMemoryRecallTool(FunctionTool):
                         note_lines.append(header + "\n" + "\n".join(chunk_previews))
                     parts.append(
                         f"[笔记检索结果 ({len(aggregated)}个文件)]\n"
-                        "[展开正文: angel_note_read(note_id, offset, limit)]\n\n"
-                        + "\n\n".join(note_lines)
+                        "[展开正文: angel_note_read(note_id, offset, limit)]\n\n" + "\n\n".join(note_lines)
                     )
                 else:
                     parts.append("[笔记检索结果]\n无相关笔记。")
@@ -148,6 +143,7 @@ class CoreMemoryRecallTool(FunctionTool):
     def _aggregate_by_file(note_results: list[dict]) -> list[dict]:
         """将切片搜索结果按文件聚合"""
         from collections import OrderedDict
+
         file_map: OrderedDict = OrderedDict()
         for note in note_results:
             metadata = note.get("metadata", {})
@@ -160,17 +156,20 @@ class CoreMemoryRecallTool(FunctionTool):
                     "note_id": int(metadata.get("note_id", -1)),
                     "chunks": [],
                 }
-            file_map[path]["chunks"].append({
-                "line_start": int(metadata.get("line_start", 0)),
-                "line_end": int(metadata.get("line_end", 0)),
-                "content": str(note.get("content") or "").replace("\n", " "),
-            })
+            file_map[path]["chunks"].append(
+                {
+                    "line_start": int(metadata.get("line_start", 0)),
+                    "line_end": int(metadata.get("line_end", 0)),
+                    "content": str(note.get("content") or "").replace("\n", " "),
+                }
+            )
         return list(file_map.values())
 
     @staticmethod
     def _precise_filter(note_results: list[dict], query: str) -> list[dict]:
         """精准过滤：content 必须包含原始查询词（按空格/|拆词，至少命中一个完整词）"""
         import re
+
         normalized = query.strip().lower()
         terms = [t.strip() for t in re.split(r"\s*\|\s*|\s+", normalized) if t.strip()]
         if not terms:

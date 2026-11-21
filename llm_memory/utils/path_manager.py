@@ -59,9 +59,7 @@ class PathManager:
 
         # 强制要求传入数据目录
         if not base_data_dir:
-            raise ValueError(
-                "必须提供 base_data_dir 参数！数据目录应由外部传入，不应自动推测。"
-            )
+            raise ValueError("必须提供 base_data_dir 参数！数据目录应由外部传入，不应自动推测。")
 
         # 使用过滤后的安全ID（仅用于文件名）
         safe_provider_id = re.sub(r'[<>:"/\\|?*]', "_", provider_id.strip())
@@ -76,9 +74,7 @@ class PathManager:
         self._ensure_provider_directories_exist()
         self._ensure_central_directories_exist()
 
-        logger.debug(
-            f"PathManager供应商设置完成: {provider_id} -> {safe_provider_id}, 基础目录: {self._base_dir}"
-        )
+        logger.debug(f"PathManager供应商设置完成: {provider_id} -> {safe_provider_id}, 基础目录: {self._base_dir}")
 
     def get_current_provider(self) -> str:
         """获取当前供应商ID"""
@@ -168,12 +164,7 @@ class PathManager:
     @classmethod
     def get_prompt_retirement_review_path(cls) -> Path:
         """获取记忆淘汰审查提示词文件。"""
-        return (
-            cls._get_plugin_root()
-            / "llm_memory"
-            / "prompts"
-            / "memory_retirement_review.md"
-        )
+        return cls._get_plugin_root() / "llm_memory" / "prompts" / "memory_retirement_review.md"
 
     # === 便捷方法 ===
 

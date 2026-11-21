@@ -117,10 +117,7 @@ def test_is_user_id_tag_ledger_hit_wins_over_shape_guess():
 
 def test_extract_user_id_with_ledger_prefers_known_id():
     # issue #73 复现场景：排除法已不把 Test-Bot 当 ID，无账本也能提取
-    assert (
-        extract_user_id_from_tags(["Test-Bot", "1023456789", "事实属性"])
-        == "1023456789"
-    )
+    assert extract_user_id_from_tags(["Test-Bot", "1023456789", "事实属性"]) == "1023456789"
     # 账本命中优先：即使形态上像伪 ID 的 tag，账本有即认定
     assert (
         extract_user_id_from_tags(
@@ -165,9 +162,7 @@ def test_extract_user_ids_from_tags_returns_all_matched_ids():
         known_user_ids=["1023456789", "654321"],
     ) == ["1023456789", "654321"]
     # 无账本时形态兜底同样返回全部疑似 ID
-    assert extract_user_ids_from_tags(
-        ["1023456789", "654321", "事实属性"]
-    ) == ["1023456789", "654321"]
+    assert extract_user_ids_from_tags(["1023456789", "654321", "事实属性"]) == ["1023456789", "654321"]
     # 单值兼容版返回第一个
     assert (
         extract_user_id_from_tags(

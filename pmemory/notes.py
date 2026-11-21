@@ -48,7 +48,7 @@ class NotesStore:
         if not text or root is None:
             return text
         prefix = str(root).replace("\\", "/").rstrip("/") + "/"
-        return text[len(prefix):] if text.startswith(prefix) else text.rsplit("/", 1)[-1]
+        return text[len(prefix) :] if text.startswith(prefix) else text.rsplit("/", 1)[-1]
 
     def _filter(self, domain: str, note_ids: list[int] | None = None) -> dict:
         flt: dict[str, Any] = {

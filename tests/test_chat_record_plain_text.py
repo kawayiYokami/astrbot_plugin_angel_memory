@@ -37,6 +37,7 @@ def fmt(records) -> str:
 
 # ---------- 一、原文照搬 ----------
 
+
 def test_angelheart_prefix_is_kept_verbatim():
     """天使之心加的前缀原样保留，不再叠一层署名。"""
     raw = "[红豆泥 (ID: 289104862)] (2026-11-07 15:09): 机械键盘的客制化是什么意思？"
@@ -96,6 +97,7 @@ def test_no_markdown_decorations_added():
 
 # ---------- 二、排序 ----------
 
+
 def test_records_are_sorted_by_timestamp():
     text = fmt(
         [
@@ -119,6 +121,7 @@ def test_same_timestamp_keeps_input_order():
 
 
 # ---------- 三、过滤 ----------
+
 
 def test_empty_content_is_skipped():
     text = fmt(
@@ -152,6 +155,7 @@ def test_toolcall_keyword_content_is_skipped():
 
 # ---------- 四、参与者 ----------
 
+
 def test_participants_are_deduped_by_sender_id():
     _, users = SmallModelPromptBuilder.format_chat_records(
         [
@@ -176,16 +180,12 @@ def test_assistant_is_not_a_participant():
 
 
 def test_unknown_sender_id_is_not_collected():
-    _, users = SmallModelPromptBuilder.format_chat_records(
-        [user("未知", "unknown", "在吗", 1000.0)]
-    )
+    _, users = SmallModelPromptBuilder.format_chat_records([user("未知", "unknown", "在吗", 1000.0)])
 
     assert users == []
 
 
 def test_missing_sender_name_falls_back_to_group_label():
-    _, users = SmallModelPromptBuilder.format_chat_records(
-        [user("", "42", "在吗", 1000.0)]
-    )
+    _, users = SmallModelPromptBuilder.format_chat_records([user("", "42", "在吗", 1000.0)])
 
     assert users == [{"id": "42", "name": "群友"}]

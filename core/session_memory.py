@@ -136,17 +136,11 @@ class SessionMemory:
     ) -> MemoryItem:
         """创建记忆条目。"""
         raw_memory_type = getattr(memory, "memory_type", "")
-        type_value = (
-            raw_memory_type.value
-            if hasattr(raw_memory_type, "value")
-            else str(raw_memory_type or "")
-        )
+        type_value = raw_memory_type.value if hasattr(raw_memory_type, "value") else str(raw_memory_type or "")
         moment = at or time.time()
         return MemoryItem(
             id=str(getattr(memory, "id", "") or "").strip(),
-            memory_type=MemoryConstants.MEMORY_TYPE_MAPPING.get(
-                type_value, type_value.lower()
-            ),
+            memory_type=MemoryConstants.MEMORY_TYPE_MAPPING.get(type_value, type_value.lower()),
             added_at=moment,
             recalled_at=moment,
             recalled_message_id=recalled_message_id,
@@ -168,17 +162,13 @@ class SessionMemory:
         self.memory_map[memory_item.id] = memory_item
         self._cleanup_by_capacity(memory_item.memory_type, multiplier)
 
-    def _cleanup_by_capacity(
-        self, memory_type: str, multiplier: float
-    ) -> list[MemoryItem]:
+    def _cleanup_by_capacity(self, memory_type: str, multiplier: float) -> list[MemoryItem]:
         """按类型槽位清理：最久没被召回的先走，同分时更早写入的先走。"""
         capacity = self._capacity_of(memory_type, multiplier)
         if capacity <= 0:
             return []
 
-        type_memories = [
-            memory for memory in self.memories if memory.memory_type == memory_type
-        ]
+        type_memories = [memory for memory in self.memories if memory.memory_type == memory_type]
         excess = len(type_memories) - capacity
         if excess <= 0:
             return []
@@ -191,9 +181,7 @@ class SessionMemory:
     def _remove_items(self, items: list[MemoryItem]) -> None:
         """从短期记忆里移除指定条目。"""
         removed_ids = {item.id for item in items}
-        self.memories = [
-            memory for memory in self.memories if memory.id not in removed_ids
-        ]
+        self.memories = [memory for memory in self.memories if memory.id not in removed_ids]
         for memory_id in removed_ids:
             self.memory_map.pop(memory_id, None)
 
@@ -210,8 +198,7 @@ class SessionMemory:
             departed = [
                 memory
                 for memory in self.memories
-                if memory.recalled_message_text
-                and not is_source_alive(memory.recalled_message_text, alive)
+                if memory.recalled_message_text and not is_source_alive(memory.recalled_message_text, alive)
             ]
             if not departed:
                 return []
@@ -291,9 +278,7 @@ class SessionMemoryManager:
         """
         with self.lock:
             if session_id not in self.sessions:
-                self.sessions[session_id] = SessionMemory(
-                    session_id, self.capacity_config, self.capacity_provider
-                )
+                self.sessions[session_id] = SessionMemory(session_id, self.capacity_config, self.capacity_provider)
             return self.sessions[session_id]
 
     def add_memories_to_session(
@@ -315,9 +300,7 @@ class SessionMemoryManager:
         session = self.get_or_create_session(session_id)
         session.add_memories(memories, recalled_message_id, recalled_message_text)
 
-    def prune_departed_from_session(
-        self, session_id: str, alive_texts
-    ) -> list[MemoryItem]:
+    def prune_departed_from_session(self, session_id: str, alive_texts) -> list[MemoryItem]:
         """按本轮上下文清理来源已离场的记忆，返回被移除的记忆条目本身。"""
         with self.lock:
             session = self.sessions.get(session_id)

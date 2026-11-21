@@ -115,9 +115,7 @@ def test_review_parses_keep_and_delete():
 def test_review_omitted_candidate_absent_from_decisions():
     provider = _FakeProvider(text=_response((0, "keep")))
 
-    outcome = asyncio.run(
-        _reviewer(provider).review([_memory("mem-0"), _memory("mem-1")])
-    )
+    outcome = asyncio.run(_reviewer(provider).review([_memory("mem-0"), _memory("mem-1")]))
 
     assert outcome.decisions == {"mem-0": "keep"}
     assert "mem-1" not in outcome.decisions
@@ -137,9 +135,7 @@ def test_review_ignores_unknown_id_and_invalid_verdict():
         )
     )
 
-    outcome = asyncio.run(
-        _reviewer(provider).review([_memory("mem-0"), _memory("mem-1")])
-    )
+    outcome = asyncio.run(_reviewer(provider).review([_memory("mem-0"), _memory("mem-1")]))
 
     assert outcome.decisions == {"mem-1": "delete"}
 
@@ -155,9 +151,7 @@ def test_review_extracts_json_from_wrapped_text():
 def test_prompt_contains_candidate_fields():
     provider = _FakeProvider(text=_response())
 
-    outcome = asyncio.run(
-        _reviewer(provider).review([_memory("mem-0", judgment="我的外貌是银色长发")])
-    )
+    outcome = asyncio.run(_reviewer(provider).review([_memory("mem-0", judgment="我的外貌是银色长发")]))
 
     assert "我的外貌是银色长发" in outcome.prompt
     assert f"`{_short(0)}`" in outcome.prompt
@@ -178,9 +172,7 @@ def test_repeated_example_json_does_not_map_to_real_candidate():
     )
     provider = _FakeProvider(text=f"{example}\n{_response((1, 'delete'))}")
 
-    outcome = asyncio.run(
-        _reviewer(provider).review([_memory("mem-0"), _memory("mem-1")])
-    )
+    outcome = asyncio.run(_reviewer(provider).review([_memory("mem-0"), _memory("mem-1")]))
 
     # 示例编号与本次候选不同域，解析到示例时映射为空，结果是悬而不决而非误删
     assert "mem-1" not in outcome.decisions
@@ -189,9 +181,7 @@ def test_repeated_example_json_does_not_map_to_real_candidate():
 
 def test_short_ids_are_unique_per_run():
     first = _reviewer(_FakeProvider())._build_short_ids(2)
-    second = MemoryRetirementReviewer(
-        context=_FakeContext(None), provider_id="p"
-    )._build_short_ids(2)
+    second = MemoryRetirementReviewer(context=_FakeContext(None), provider_id="p")._build_short_ids(2)
 
     assert first == ["m0-test", "m1-test"]
     assert second[0].startswith("m0-")

@@ -36,9 +36,7 @@ class FeedbackQueue:
             logger.warning(f"反馈任务缺少 feedback_fn - 会话ID: {session_id}")
             return None
 
-        logger.debug(
-            f"[异步反馈] 立即处理任务 - 会话ID: {session_id}, 任务类型: {feedback_fn.__name__}"
-        )
+        logger.debug(f"[异步反馈] 立即处理任务 - 会话ID: {session_id}, 任务类型: {feedback_fn.__name__}")
 
         try:
             # 直接异步调用，无后台线程

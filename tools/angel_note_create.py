@@ -98,6 +98,5 @@ class NoteCreateTool(FunctionTool):
 
         self.logger.info(f"{self.name}: 完成 笔记={filename} 标题={title}")
         return (
-            f"学习笔记《{title}》已保存并归档为 {filename}，"
-            "已纳入知识库索引，之后可通过检索或 angel_note_read 查看。"
+            f"学习笔记《{title}》已保存并归档为 {filename}，已纳入知识库索引，之后可通过检索或 angel_note_read 查看。"
         )

@@ -75,9 +75,7 @@ class SmallModelPromptBuilder:
         lines: list[str] = []
         participants: dict[str, dict] = {}
         for msg in usable:
-            text = SmallModelPromptBuilder.extract_text_from_content(
-                msg.get("content", "")
-            )
+            text = SmallModelPromptBuilder.extract_text_from_content(msg.get("content", ""))
             if not text.strip():
                 continue
             lines.append(text)
@@ -86,11 +84,7 @@ class SmallModelPromptBuilder:
                 continue
             sender_id = str(msg.get("sender_id", "") or "").strip()
             sender_name = str(msg.get("sender_name", "") or "").strip()
-            if (
-                sender_id
-                and sender_id.lower() != "unknown"
-                and sender_id not in participants
-            ):
+            if sender_id and sender_id.lower() != "unknown" and sender_id not in participants:
                 participants[sender_id] = {
                     "id": sender_id,
                     "name": sender_name or "群友",
@@ -149,9 +143,7 @@ class SmallModelPromptBuilder:
 
         # 1. 构建参与者信息（使用列表推导式）
         participants_section = "# 对话参与者\n" + (
-            "\n".join(
-                f"- {p.get('name', '未知')}: {p.get('id', '未知')}" for p in user_list
-            )
+            "\n".join(f"- {p.get('name', '未知')}: {p.get('id', '未知')}" for p in user_list)
             if user_list
             else "暂无详细信息\n"
         )
@@ -173,9 +165,7 @@ class SmallModelPromptBuilder:
                     ai_info_parts.append(f"助理的名字是：{persona_name}")
                 if alias:
                     ai_info_parts.append(f"昵称有：{alias}")
-                ai_identity_section = (
-                    "\n# AI身份信息\n" + "\n".join(ai_info_parts) + "\n"
-                )
+                ai_identity_section = "\n# AI身份信息\n" + "\n".join(ai_info_parts) + "\n"
 
         # 4. 构建核心话题信息
         topic_section = ""
@@ -184,8 +174,7 @@ class SmallModelPromptBuilder:
 
         # 5. 组装新的 system_prompt (已移除废弃的笔记清单)
         final_system_prompt = (
-            f"{system_prompt}\n\n{participants_section}{rules_section}"
-            f"{ai_identity_section}{topic_section}"
+            f"{system_prompt}\n\n{participants_section}{rules_section}{ai_identity_section}{topic_section}"
         )
 
         # 7. 构建完整提示词（简化记忆处理）
@@ -193,9 +182,7 @@ class SmallModelPromptBuilder:
         if formatted_query:
             parts.append(f"\n\n对话历史：\n{formatted_query}")
         if memories:
-            parts.append(
-                f"\n\n你回忆起了：\n{MemoryFormatter.format_memories_for_display(memories)}"
-            )
+            parts.append(f"\n\n你回忆起了：\n{MemoryFormatter.format_memories_for_display(memories)}")
         parts.append("\n\n请按照任务进行处理")
 
         return "".join(parts)
@@ -243,14 +230,8 @@ class SmallModelPromptBuilder:
         # 添加记忆信息
         if raw_memories:
             for memory in raw_memories:
-                short_id = (
-                    memory_id_mapping.get(memory.id, memory.id)
-                    if memory_id_mapping
-                    else memory.id
-                )
-                created_at = SmallModelPromptBuilder._format_memory_created_at(
-                    getattr(memory, "created_at", None)
-                )
+                short_id = memory_id_mapping.get(memory.id, memory.id) if memory_id_mapping else memory.id
+                created_at = SmallModelPromptBuilder._format_memory_created_at(getattr(memory, "created_at", None))
                 stamp = f" {created_at}" if created_at else ""
                 data_context += f"id:{short_id}{stamp} - {memory.judgment}\n"
         else:

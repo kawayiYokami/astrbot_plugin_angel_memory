@@ -50,9 +50,7 @@ def test_read_recent_supports_offset(tmp_path):
 def test_long_text_compressed_on_disk_and_restored(tmp_path):
     store = TraceStore(tmp_path)
     text = "记忆内容" * 4000
-    store.append_sync(
-        {"type": "sleep", "prompt": text, "system_prompt": "固定规则", "response": "模型返回"}
-    )
+    store.append_sync({"type": "sleep", "prompt": text, "system_prompt": "固定规则", "response": "模型返回"})
 
     raw_line = store.path.read_text(encoding="utf-8").strip()
     payload = json.loads(raw_line)
@@ -87,10 +85,7 @@ def test_extra_fields_are_preserved(tmp_path):
 
 def test_delete_records_keeps_others(tmp_path):
     store = TraceStore(tmp_path)
-    ids = [
-        store.append_sync({"type": "reflection", "session_id": f"s{i}"})["id"]
-        for i in range(3)
-    ]
+    ids = [store.append_sync({"type": "reflection", "session_id": f"s{i}"})["id"] for i in range(3)]
 
     removed = store.delete_records_sync([ids[1]])
 

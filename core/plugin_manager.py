@@ -29,9 +29,7 @@ class PluginManager:
         self.init_manager = InitializationManager(self.context)
 
         # 后台初始化器（共享主线程的PluginContext）
-        self.background_initializer = BackgroundInitializer(
-            self.init_manager, self.config, plugin_context
-        )
+        self.background_initializer = BackgroundInitializer(self.init_manager, self.config, plugin_context)
 
         # 主线程组件实例（将在初始化完成后由主插件设置）
         self.main_thread_components = {}
@@ -114,9 +112,7 @@ class PluginManager:
                 deepmind = components.get("deepmind")
 
             if deepmind:
-                self.logger.debug(
-                    "找到 DeepMind 组件，开始执行 organize_and_inject_memories"
-                )
+                self.logger.debug("找到 DeepMind 组件，开始执行 organize_and_inject_memories")
                 # 直接使用 await 处理异步任务
                 await deepmind.organize_and_inject_memories(event, request)
                 self.logger.debug("organize_and_inject_memories 执行完成")
@@ -156,9 +152,7 @@ class PluginManager:
                 deepmind = components.get("deepmind")
 
             if deepmind:
-                self.logger.debug(
-                    "找到 DeepMind 组件，开始执行 async_analyze_and_update_memory"
-                )
+                self.logger.debug("找到 DeepMind 组件，开始执行 async_analyze_and_update_memory")
                 # 调用异步分析方法
                 await deepmind.async_analyze_and_update_memory(event, response)
                 self.logger.debug("async_analyze_and_update_memory 执行完成")

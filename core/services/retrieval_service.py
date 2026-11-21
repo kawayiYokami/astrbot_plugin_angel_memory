@@ -10,9 +10,7 @@ class DeepMindRetrievalService:
     def __init__(self, deepmind):
         self.deepmind = deepmind
 
-    def parse_memory_context(
-        self, event: AstrMessageEvent
-    ) -> dict[str, Any] | None:
+    def parse_memory_context(self, event: AstrMessageEvent) -> dict[str, Any] | None:
         if not hasattr(event, "angelmemory_context"):
             return None
 
@@ -70,9 +68,7 @@ class DeepMindRetrievalService:
                         scores = getattr(mem, "soul_state", None)
                         if not isinstance(scores, dict) or not scores:
                             continue
-                        entries.append(
-                            {"scores": scores, "strength": getattr(mem, "strength", 1)}
-                        )
+                        entries.append({"scores": scores, "strength": getattr(mem, "strength", 1)})
                     if entries:
                         deepmind.soul.resonate(entries)
 

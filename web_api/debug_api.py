@@ -196,7 +196,7 @@ class DebugAPI:
                         "elapsed_ms": 0,
                         "success": False,
                         "timed_out": False,
-                        "error": f"整体探针超时（>{overall_budget}s），剩余 {len(batches)-idx} 批未执行",
+                        "error": f"整体探针超时（>{overall_budget}s），剩余 {len(batches) - idx} 批未执行",
                     }
                 )
                 failed += len(batches) - idx

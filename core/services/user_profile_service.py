@@ -108,9 +108,7 @@ class UserProfileService:
 
         started_at = time.time()
         try:
-            profiles = await asyncio.to_thread(
-                self._recall_profiles, user_ids, memory_scope
-            )
+            profiles = await asyncio.to_thread(self._recall_profiles, user_ids, memory_scope)
         except Exception as e:
             if self.logger:
                 self.logger.warning(
@@ -125,9 +123,7 @@ class UserProfileService:
         self._session_profiles[sid] = profiles
         return profiles
 
-    def _recall_profiles(
-        self, user_ids: Sequence[str], memory_scope: str
-    ) -> list[BaseMemory]:
+    def _recall_profiles(self, user_ids: Sequence[str], memory_scope: str) -> list[BaseMemory]:
         """按标签筛出画像类记忆。库里没有画像索引，只能取回后按 tag 归类。"""
         from ..memory_runtime.pmemory_runtime import to_base_memory
 
@@ -157,9 +153,7 @@ class UserProfileService:
                 judgments.add(normalized)
         return profile_ids, judgments
 
-    def filter_regular_memories(
-        self, session_id: str, memories: Iterable[Any]
-    ) -> list[Any]:
+    def filter_regular_memories(self, session_id: str, memories: Iterable[Any]) -> list[Any]:
         profile_ids, judgments = self.get_profile_dedupe_keys(session_id)
         if not profile_ids and not judgments:
             return list(memories or [])
@@ -181,9 +175,7 @@ class UserProfileService:
             return ""
 
         grouped: dict[str, list[BaseMemory]] = defaultdict(list)
-        user_names = self._session_user_names.get(
-            str(session_id or "").strip(), {}
-        )
+        user_names = self._session_user_names.get(str(session_id or "").strip(), {})
         known_user_ids = self._session_user_ids.get(str(session_id or "").strip(), [])
         for memory in profiles:
             user_ids = extract_user_ids_from_tags(

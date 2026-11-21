@@ -59,9 +59,7 @@ class TraceAPI:
 
     async def _collect_records(self, deepmind) -> list[dict[str, Any]]:
         store = getattr(deepmind, "trace_store", None)
-        persisted = (
-            await store.read_recent(limit=self.TRACE_LIMIT) if store is not None else []
-        )
+        persisted = await store.read_recent(limit=self.TRACE_LIMIT) if store is not None else []
 
         # 内存中仍处于 pending 的反思记录尚未落盘，一并展示
         pending: list[dict[str, Any]] = []
@@ -88,8 +86,6 @@ class TraceAPI:
         if timestamp > 0:
             return timestamp
         try:
-            return time.mktime(
-                time.strptime(str(record.get("time", "")), "%Y-%m-%d %H:%M:%S")
-            )
+            return time.mktime(time.strptime(str(record.get("time", "")), "%Y-%m-%d %H:%M:%S"))
         except (TypeError, ValueError):
             return 0.0

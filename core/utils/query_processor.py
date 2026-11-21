@@ -210,7 +210,7 @@ class QueryProcessor:
             # 定义一个阈值，如果查询词已经很短，就不需要进一步过滤和截断
             # 这个阈值需要根据实际情况调整。考虑到RAG查询通常是高度精炼的关键词和实体，
             # 短于该阈值的RAG查询，我们认为它已经足够精准，无需额外处理。
-            PREPROCESS_THRESHOLD_CHARACTERS = 100 # 例如100个字符，可调整
+            PREPROCESS_THRESHOLD_CHARACTERS = 100  # 例如100个字符，可调整
 
             # 只有当rag_query非空且其长度小于阈值时，才跳过后续预处理
             if rag_query and len(final_query.strip()) <= PREPROCESS_THRESHOLD_CHARACTERS:
@@ -262,6 +262,7 @@ class QueryProcessor:
         """
         # 笔记检索也使用统一的RAG字段处理逻辑
         return self.process_query(query, event)
+
 
 # 全局单例实例
 _query_processor_instance = None

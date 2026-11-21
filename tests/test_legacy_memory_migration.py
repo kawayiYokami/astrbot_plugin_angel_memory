@@ -385,9 +385,7 @@ def test_self_backup_round_trips_inline_tags():
     pmemory.close()
 
     backup_dir = Path(tempfile.mkdtemp(prefix="pmem-bak-"))
-    (backup_dir / "memory_backup_20260101.json").write_text(
-        json.dumps(snapshot, ensure_ascii=False), encoding="utf-8"
-    )
+    (backup_dir / "memory_backup_20260101.json").write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
 
     root2, store2 = _setup_env()
     sql, _db = _make_source()
