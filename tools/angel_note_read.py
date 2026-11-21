@@ -46,9 +46,11 @@ class NoteRecallTool(FunctionTool):
         offset: int = 1,
         limit: int | None = None,
     ) -> str:
-        if not hasattr(event, "plugin_context") or event.plugin_context is None:
+        plugin_context = getattr(event, "plugin_context", None)
+        if plugin_context is None:
+            plugin_context = getattr(self, "plugin_context", None)
+        if plugin_context is None:
             return "错误：无法获取插件上下文。"
-        plugin_context = event.plugin_context
 
         note_index = plugin_context.get_component("note_index")
         if note_index is None:

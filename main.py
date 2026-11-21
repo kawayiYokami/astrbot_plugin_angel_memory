@@ -50,6 +50,11 @@ class AngelMemoryPlugin(Star):
     插件启动后异步初始化核心实例，terminate时安全清理资源。
     """
 
+    def _bind_tool_context(self, tool):
+        """Tool 调用事件可能不保留 on_llm_request 添加的自定义属性。"""
+        tool.plugin_context = self.plugin_context
+        return tool
+
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
 
@@ -84,13 +89,13 @@ class AngelMemoryPlugin(Star):
         self._llm_tools = []  # 持有引用，供配置保存钩子动态增删 NoteCreateTool
         try:
             llm_tools = [
-                CoreMemoryRememberTool(),
-                CoreMemoryRecallTool(),
-                NoteRecallTool(),
+                self._bind_tool_context(CoreMemoryRememberTool()),
+                self._bind_tool_context(CoreMemoryRecallTool()),
+                self._bind_tool_context(NoteRecallTool()),
             ]
             note_config = self.plugin_context.get_config("note_assistant", {}) or {}
             if note_config.get("enable_create", True):
-                llm_tools.append(NoteCreateTool())
+                llm_tools.append(self._bind_tool_context(NoteCreateTool()))
 
             self._llm_tools = llm_tools
             self.context.add_llm_tools(*llm_tools)
@@ -138,7 +143,7 @@ class AngelMemoryPlugin(Star):
         registered = any(t.name == "angel_note_create" for t in self._llm_tools)
         try:
             if enabled and not registered:
-                tool = NoteCreateTool()
+                tool = self._bind_tool_context(NoteCreateTool())
                 self.context.add_llm_tools(tool)
                 self._llm_tools.append(tool)
                 self.logger.info("AngelMemory: 已热注册 LLM 工具 angel_note_create")
@@ -302,17 +307,46 @@ class AngelMemoryPlugin(Star):
         try:
             resp_text = self._resolve_agent_response_text(run_context, response)
 
-            # 仍写回 llm_response：记忆整理链要靠它取得本轮 response
-            if hasattr(event, "angelmemory_context"):
+            # 有些 Agent/工具调用链不会保留 on_llm_request 添加的自定义属性，
+            # 这里缺上下文就构造一份最小的，避免 after_message_sent 直接跳过记忆整理。
+            context_data = {}
+            raw_context = getattr(event, "angelmemory_context", None)
+            if raw_context:
                 try:
-                    context_data = json.loads(event.angelmemory_context)
-                    context_data["llm_response"] = {
-                        "completion_text": resp_text,
-                        "timestamp": time.time(),
-                    }
-                    event.angelmemory_context = json.dumps(context_data)
-                except (json.JSONDecodeError, AttributeError, TypeError) as e:
-                    self.logger.warning(f"存储响应数据失败: {e}")
+                    parsed = json.loads(raw_context)
+                    if isinstance(parsed, dict):
+                        context_data = parsed
+                except (json.JSONDecodeError, TypeError):
+                    self.logger.warning("读取已有记忆上下文失败，将构造最小上下文")
+
+            raw_chat_records = []
+            angelheart_context = getattr(event, "angelheart_context", None)
+            if angelheart_context:
+                try:
+                    heart_data = json.loads(angelheart_context)
+                    records = heart_data.get("chat_records", [])
+                    if isinstance(records, list):
+                        # 整份快照就是本轮该看的对话，不再按已退役的 is_processed 过滤
+                        raw_chat_records = [msg for msg in records if isinstance(msg, dict)]
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    pass
+
+            context_data.setdefault("session_id", str(getattr(event, "unified_msg_origin", "") or ""))
+            context_data.setdefault("recall_query", "")
+            context_data.setdefault("user_list", [])
+            context_data.setdefault("raw_chat_records", raw_chat_records)
+            context_data.setdefault("raw_memories", [])
+            context_data.setdefault("raw_notes", [])
+            context_data.setdefault("core_topic", "")
+            context_data.setdefault("memory_id_mapping", {})
+            context_data.setdefault("note_id_mapping", {})
+            context_data["llm_response"] = {
+                "completion_text": resp_text,
+                "timestamp": time.time(),
+            }
+            if getattr(event, "plugin_context", None) is None:
+                event.plugin_context = self.plugin_context
+            event.angelmemory_context = json.dumps(context_data, ensure_ascii=False)
 
             request = event.get_extra("angel_provider_request") or event.get_extra("provider_request")
             sender_id, sender_name = self._event_sender_identity(event)
