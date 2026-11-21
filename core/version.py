@@ -4,4 +4,4 @@
 避免两处各写一份、升级时漏改。
 """
 
-PLUGIN_VERSION = "3.0.0"
+PLUGIN_VERSION = "3.1.0"
