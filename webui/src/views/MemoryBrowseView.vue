@@ -37,6 +37,8 @@
         :items="items"
         :items-length="total"
         :loading="loading"
+        height="calc(100vh - 360px)"
+        fixed-header
         v-model:page="page"
         v-model:items-per-page="pageSize"
         :items-per-page-options="[10, 20, 50, 100]"
