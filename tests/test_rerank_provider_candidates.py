@@ -1,7 +1,8 @@
-"""重排模型候选列表按能力筛：带 rerank() 的提供商才算候选。
+"""重排与嵌入候选列表的取法。
 
-框架的 Context 没有 get_all_rerank_providers，取它恒为空，
-所以候选只能从 get_all_providers() 里按能力筛，与 component_factory 解析重排提供商同口径。
+框架按 ProviderType 分类装载：RerankProvider 只进 provider_manager.rerank_provider_insts，
+不进 provider_insts。所以从 get_all_providers() 里按能力筛永远筛不出重排模型——
+候选必须在框架的重排实例列表上取。老框架没有这个列表时退回按能力筛。
 """
 
 from types import SimpleNamespace
@@ -26,22 +27,24 @@ class _Provider:
 
 
 class _Host:
-    """宿主上下文替身：故意不提供 get_all_rerank_providers，真实框架也没有这个方法。"""
+    """宿主替身：重排实例挂在 provider_manager 上，与真实框架一致。"""
 
-    def __init__(self, providers, embedding=()):
-        self._providers = list(providers)
+    def __init__(self, chat=(), embedding=(), rerank=None, with_manager=True):
+        self._chat = list(chat)
         self._embedding = list(embedding)
+        if with_manager:
+            self.provider_manager = SimpleNamespace(rerank_provider_insts=list(rerank or ()))
 
     def get_all_providers(self):
-        return list(self._providers)
+        return list(self._chat)
 
     def get_all_embedding_providers(self):
         return list(self._embedding)
 
 
-def _handler(providers, embedding=()):
+def _handler(host):
     handler = api.PluginConfigAPI.__new__(api.PluginConfigAPI)
-    handler._ctx = SimpleNamespace(astrbot_context=_Host(providers, embedding), config={})
+    handler._ctx = SimpleNamespace(astrbot_context=host, config={})
     handler._plugin = None
     handler._config = {}
     handler._schema = {}
@@ -59,44 +62,45 @@ def _providers_payload(handler):
     return captured["payload"]["data"]["providers"]
 
 
-def test_rerank_candidates_only_include_capable_providers():
-    """三个聊天提供商里两个带 rerank，候选必须正好是那两个。"""
-    host_providers = [
-        _Provider("siliconflow-chat"),
-        _Provider("siliconflow-rerank", supports_rerank=True),
-        _Provider("jina-rerank", supports_rerank=True),
-    ]
+def test_rerank_candidates_come_from_framework_rerank_instances():
+    """候选只认框架 rerank_provider_insts；chat 列表里带 rerank() 的不算。"""
+    host = _Host(
+        chat=[_Provider("deepseek-chat"), _Provider("sneaky-chat", supports_rerank=True)],
+        rerank=[_Provider("siliconflow-rerank"), _Provider("jina-rerank")],
+    )
 
-    providers = _providers_payload(_handler(host_providers))
+    providers = _providers_payload(_handler(host))
 
-    assert providers["chat"] == ["siliconflow-chat", "siliconflow-rerank", "jina-rerank"]
     assert providers["rerank"] == ["siliconflow-rerank", "jina-rerank"]
+    assert providers["chat"] == ["deepseek-chat", "sneaky-chat"]
 
 
-def test_rerank_candidates_empty_when_no_provider_supports_it():
-    """一个都不带 rerank 时返回空数组，且不抛异常。"""
-    host_providers = [_Provider("siliconflow-chat"), _Provider("deepseek-chat")]
+def test_rerank_candidates_fall_back_to_capability_scan_on_old_framework():
+    """宿主没有 provider_manager 时，退回按 rerank() 能力筛。"""
+    host = _Host(
+        chat=[_Provider("plain-chat"), _Provider("bge-reranker", supports_rerank=True)],
+        with_manager=False,
+    )
 
-    providers = _providers_payload(_handler(host_providers))
-
-    assert providers["rerank"] == []
-    assert providers["chat"] == ["siliconflow-chat", "deepseek-chat"]
-
-
-def test_rerank_candidates_survive_host_without_rerank_getter():
-    """宿主连 get_all_rerank_providers 都没有时，仍能筛出候选。"""
-    host_providers = [_Provider("bge-reranker", supports_rerank=True)]
-    handler = _handler(host_providers)
-    assert not hasattr(handler._ctx.astrbot_context, "get_all_rerank_providers")
-
-    providers = _providers_payload(handler)
+    providers = _providers_payload(_handler(host))
 
     assert providers["rerank"] == ["bge-reranker"]
 
 
-def test_embedding_candidates_still_come_from_embedding_getter():
-    """嵌入候选仍走 get_all_embedding_providers，不被本次改动影响。"""
-    providers = _providers_payload(_handler([_Provider("chat-a")], embedding=[_Provider("bge-m3")]))
+def test_rerank_candidates_empty_when_nothing_configured():
+    """一个重排模型都没配时返回空数组，且不抛异常。"""
+    providers = _providers_payload(_handler(_Host()))
 
-    assert providers["embedding"] == ["bge-m3"]
     assert providers["rerank"] == []
+    assert providers["chat"] == []
+
+
+def test_embedding_candidates_are_deduplicated():
+    """同一嵌入实例被重复装载时，候选只出现一次。"""
+    host = _Host(
+        embedding=[_Provider("bge-m3"), _Provider("bge-m3"), _Provider("other-embed")],
+    )
+
+    providers = _providers_payload(_handler(host))
+
+    assert providers["embedding"] == ["bge-m3", "other-embed"]
