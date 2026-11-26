@@ -28,6 +28,21 @@ def _ERR(message, status_code=400):
     return error_response(message, status_code=status_code)
 
 
+def _rerank_provider_ids(host) -> list[str]:
+    """重排模型的候选 id。
+
+    框架按 ProviderType 分类装载，RerankProvider 只进 rerank_provider_insts，
+    不进 provider_insts——所以从 get_all_providers() 里按能力筛永远筛不出重排
+    模型，候选恒为空。这里直接读框架的重排实例列表；老框架没有这个列表时，
+    退回按 rerank() 能力筛。
+    """
+    manager = getattr(host, "provider_manager", None)
+    insts = getattr(manager, "rerank_provider_insts", None)
+    if isinstance(insts, list):
+        return [p.meta().id for p in insts]
+    return [p.meta().id for p in host.get_all_providers() if hasattr(p, "rerank")]
+
+
 def _convert_value(value, meta, path: str) -> tuple[list[str], Any]:
     """按 schema 元数据校验并转换单个值，返回 (errors, converted)。"""
     t = meta.get("type")
@@ -84,14 +99,17 @@ class PluginConfigAPI:
         try:
             host = self._ctx.astrbot_context
             for p in host.get_all_providers():
-                provider_meta = p.meta()
-                providers["chat"].append(provider_meta.id)
-                # 重排候选按能力筛：框架没有 get_all_rerank_providers，
-                # 与 component_factory 解析重排提供商同理，凡带 rerank() 的都算候选。
-                if hasattr(p, "rerank"):
-                    providers["rerank"].append(provider_meta.id)
+                providers["chat"].append(p.meta().id)
+            providers["rerank"] = _rerank_provider_ids(host)
+            # 嵌入实例可能被重复装载，候选按 id 去重后再给前端，否则同一个
+            # provider 会渲染成多行、选中态也跟着重复。
+            seen_embedding: set[str] = set()
             for p in host.get_all_embedding_providers():
-                providers["embedding"].append(p.meta().id)
+                provider_id = p.meta().id
+                if provider_id in seen_embedding:
+                    continue
+                seen_embedding.add(provider_id)
+                providers["embedding"].append(provider_id)
         except Exception as e:
             logger.warning(f"AngelMemory: 获取 provider 列表失败: {e}")
 

@@ -16,14 +16,14 @@
         "description": "嵌入模型（可选）",
         "_special": "select_provider",
         "default": "",
-        "hint": "让检索能按意思比对，换个说法也找得到。一般不用配，默认的文字匹配已经够用。"
+        "hint": "让检索能按意思比对，换个说法也找得到。一般不用配，默认的文字匹配已经够用。插件市场的设置页只列对话模型、显示不出嵌入模型下拉，要选请到插件自带的 WebUI 里设置。"
       },
       "rerank_provider_id": {
         "type": "string",
         "description": "重排模型（推荐）",
         "_special": "select_provider",
         "default": "",
-        "hint": "把检索出的候选重新排一遍，最贴合当前话题的排前面。留空会自动复用核心模型。"
+        "hint": "把检索出的候选重新排一遍，最贴合当前话题的排前面。留空会自动复用核心模型。插件市场的设置页只列对话模型、显示不出重排模型下拉，要选请到插件自带的 WebUI 里设置。"
       },
       "embedding_batch_size": {
         "type": "int",
